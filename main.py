@@ -3,9 +3,10 @@ from functools import partial
 from dotenv import load_dotenv
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 from bot.handlers.user import start, menu, meetup, events, bitdevs, website, button_click
-from bot.handlers.admin import broadcast
+from bot.handlers.admin import broadcast, draft, handle_draft_selection
 from core.promoter import check_calendar
 from tools.local.data_manager import load_json, load_reminder_rules
+from services.openai_service import OpenAIService
 
 # Load environment
 load_dotenv()
@@ -14,6 +15,7 @@ load_dotenv()
 CONFIG = {
     'BOT_TOKEN': os.getenv("TELEGRAM_BOT_TOKEN"),
     'ADMIN_ID': int(os.getenv("TELEGRAM_ADMIN_ID", "0")),
+    'OPENAI_API_KEY': os.getenv("OPENAI_API_KEY"),
     'CALENDAR_ID': os.getenv("GOOGLE_CALENDAR_ID"),
     'SERVICE_ACCOUNT_FILE': "google_calendar.json",
     'SCOPES': ["https://www.googleapis.com/auth/calendar.readonly"],
@@ -32,6 +34,9 @@ STATE = {
 # Add reminder rules to config
 CONFIG['REMINDER_RULES'] = load_reminder_rules(CONFIG['REMINDER_CONFIG_FILE'])
 
+# Initialize OpenAI Service
+AI_SERVICE = OpenAIService(CONFIG['OPENAI_API_KEY']) if CONFIG['OPENAI_API_KEY'] else None
+
 def main():
     if not CONFIG['BOT_TOKEN']:
         print("Error: TELEGRAM_BOT_TOKEN not found in .env")
@@ -39,7 +44,7 @@ def main():
 
     app = ApplicationBuilder().token(CONFIG['BOT_TOKEN']).build()
 
-    # Wrapper for the calendar job to avoid partial() name attribute issues
+    # Wrapper for the calendar job
     async def calendar_job(context):
         await check_calendar(context, config=CONFIG, state=STATE)
 
@@ -59,10 +64,18 @@ def main():
     app.add_handler(CommandHandler("bitdevs", bitdevs))
     app.add_handler(CommandHandler("website", website))
     
-    # Custom handlers for passing extra arguments
+    # Admin Handlers
     app.add_handler(CommandHandler("broadcast", 
         partial(broadcast, admin_id=CONFIG['ADMIN_ID'], subscribers=STATE['subscribers'])))
     
+    app.add_handler(CommandHandler("draft",
+        partial(draft, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
+    
+    # Callback Handlers
+    app.add_handler(CallbackQueryHandler(
+        partial(handle_draft_selection, admin_id=CONFIG['ADMIN_ID'], ai_service=AI_SERVICE),
+        pattern="^select_draft_"))
+
     app.add_handler(CallbackQueryHandler(
         partial(button_click, subscribers=STATE['subscribers'])))
 
