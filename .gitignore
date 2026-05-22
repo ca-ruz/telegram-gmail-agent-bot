@@ -9,6 +9,8 @@ __pycache__/
 google_calendar.json
 
 # Local Data
+data/subscribers.json
+data/sent_reminders.json
 subscribers.json
 sent_reminders.json
 *.tmp
