@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+
+# Secrets & Configuration
+.env
+google_calendar.json
+
+# Local Data
+subscribers.json
+sent_reminders.json
+*.tmp
+
+# Agent Documentation
+AGENTS.md
+GEMINI.md
+
+# IDEs
+.vscode/
+.idea/
