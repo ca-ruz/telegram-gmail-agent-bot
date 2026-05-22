@@ -55,7 +55,7 @@ A Telegram bot designed to manage event reminders for the Bitcoin Guadalajara (B
 ### Running the Bot
 Ensure you are inside your virtual environment, then run:
 ```bash
-python bot.py
+python main.py
 ```
 
 ### Testing the Calendar Connection
@@ -67,8 +67,8 @@ python test_calendar.py
 ## Internal Files (Ignored by Git)
 *   `.env`: Sensitive credentials.
 *   `google_calendar.json`: Google API private keys.
-*   `subscribers.json`: List of active subscriber IDs.
-*   `sent_reminders.json`: History of sent notifications.
+*   `data/subscribers.json`: List of active subscriber IDs.
+*   `data/sent_reminders.json`: History of sent notifications.
 
 ## License
 MIT License.
