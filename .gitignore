@@ -11,9 +11,13 @@ google_calendar.json
 # Local Data
 data/subscribers.json
 data/sent_reminders.json
+data/notified_promos.json
+data/groups.json
+data/bot.log
 subscribers.json
 sent_reminders.json
 *.tmp
+*.log
 
 # Agent Documentation
 AGENTS.md
