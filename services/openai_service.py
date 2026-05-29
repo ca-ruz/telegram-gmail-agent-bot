@@ -19,7 +19,10 @@ class OpenAIService:
             )
             return response.choices[0].message.content
         except Exception as e:
-            print(f"Error generating promo text: {e}")
+            if "insufficient_quota" in str(e).lower():
+                print("⚠️  OpenAI Error: Insufficient Quota. Draft and flyer generation aborted.")
+                return "QUOTA_EXCEEDED"
+            print(f"❌ OpenAI Error generating promo text: {e}")
             return None
 
     async def generate_image(self, image_prompt):
@@ -34,9 +37,8 @@ class OpenAIService:
             )
             return response.data[0].url
         except Exception as e:
-            # Check for specific quota/limit errors
             if "insufficient_quota" in str(e).lower():
-                print("OpenAI Error: Insufficient Quota.")
+                print("⚠️  OpenAI Error: Insufficient Quota for image generation.")
                 return "QUOTA_EXCEEDED"
-            print(f"Error generating image: {e}")
+            print(f"❌ OpenAI Error generating image: {e}")
             return None

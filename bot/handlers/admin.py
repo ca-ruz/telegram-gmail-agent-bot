@@ -44,7 +44,6 @@ async def draft(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, co
         for i, event in enumerate(events[:5]): # Show up to 5
             summary = event.get('summary', 'Sin título')
             start = event.get('start', {}).get('dateTime', event.get('start', {}).get('date', ''))
-            # Format date for button (DD/MM)
             date_str = ""
             if 'T' in start:
                 date_str = start.split('T')[0][5:].replace('-', '/')
@@ -67,7 +66,6 @@ async def handle_draft_selection(update: Update, context: ContextTypes.DEFAULT_T
 
     await query.answer()
     
-    # Extract index from callback data: select_draft_N
     try:
         index = int(query.data.split('_')[-1])
         events = context.user_data.get('draft_events', [])
@@ -86,28 +84,42 @@ async def handle_draft_selection(update: Update, context: ContextTypes.DEFAULT_T
             "location": event.get("location")
         }
 
-        # Call OpenAI
+        # 1. GENERATE TEXT & PROMPT
         raw_response = await ai_service.generate_event_promo(json.dumps(event_info), PROMOTER_SYSTEM_PROMPT)
         
-        if not raw_response:
+        if raw_response == "QUOTA_EXCEEDED":
+            await context.bot.send_message(admin_id, "⚠️ OpenAI Limit Reached: Please check your credit balance. Draft and flyer generation aborted.")
+            return
+        elif not raw_response:
             await context.bot.send_message(admin_id, "❌ Failed to generate draft from OpenAI.")
             return
 
         promo_data = json.loads(raw_response)
         draft_text = promo_data.get("telegram_copy", "Error: No copy generated.")
+        image_prompt = promo_data.get("image_prompt")
         
         await context.bot.send_message(
             admin_id,
             f"<b>📝 DRAFT GENERATED:</b>\n\n{draft_text}",
             parse_mode=ParseMode.HTML
         )
-        
-        await context.bot.send_message(
-            admin_id,
-            f"<b>🎨 IMAGE PROMPT:</b>\n\n{promo_data.get('image_prompt')}",
-            parse_mode=ParseMode.HTML
-        )
 
+        # 2. GENERATE IMAGE
+        if image_prompt:
+            await context.bot.send_message(admin_id, "🎨 Generating your flyer... please wait ~20 seconds.")
+            image_result = await ai_service.generate_image(image_prompt)
+            
+            if image_result == "QUOTA_EXCEEDED":
+                await context.bot.send_message(admin_id, "⚠️ Flyer generation failed: Insufficient OpenAI credits.")
+            elif image_result:
+                await context.bot.send_photo(
+                    admin_id,
+                    photo=image_result,
+                    caption=f"🎨 Suggested Flyer for: {event.get('summary')}"
+                )
+            else:
+                await context.bot.send_message(admin_id, "❌ Error: Failed to generate flyer image.")
+        
     except Exception as e:
         print(f"Error in handle_draft_selection: {e}")
         await context.bot.send_message(admin_id, f"❌ Error: {str(e)}")
