@@ -69,6 +69,7 @@ python test_calendar.py
 *   `google_calendar.json`: Google API private keys.
 *   `data/subscribers.json`: List of active subscriber IDs.
 *   `data/sent_reminders.json`: History of sent notifications.
+*   `data/notified_promos.json`: History of events already notified to the admin.
 
 ## License
 MIT License.
