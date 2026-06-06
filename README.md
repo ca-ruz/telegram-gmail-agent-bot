@@ -9,6 +9,7 @@ A Telegram bot designed to manage event reminders for the Bitcoin Guadalajara (B
 *   **Link Extraction:** Automatically finds registration links in the Google Calendar event description.
 *   **Timezone Aware:** Correctly handles and displays times for Guadalajara (`America/Mexico_City`).
 *   **Deduplication:** Ensures users don't receive redundant notifications for the same event.
+*   **AI Flyer Drafts:** Generates admin-approved promo copy and flyers with OpenAI.
 *   **Admin Broadcast:** Allows the administrator to send manual updates to all subscribers.
 
 ## Prerequisites
@@ -46,6 +47,9 @@ A Telegram bot designed to manage event reminders for the Bitcoin Guadalajara (B
     *   `TELEGRAM_BOT_TOKEN`: Your bot API key.
     *   `TELEGRAM_ADMIN_ID`: Your Telegram numeric user ID.
     *   `GOOGLE_CALENDAR_ID`: Your Gmail or the ID of the shared calendar.
+    *   `OPENAI_API_KEY`: Your OpenAI Platform API key.
+    *   `OPENAI_IMAGE_MODEL`: Flyer image model. Start with `gpt-image-1-mini`.
+    *   `OPENAI_IMAGE_QUALITY`: Flyer quality. Start with `medium` for cost control.
 
 5.  **Google Calendar Credentials:**
     Place your Service Account JSON file in the root directory and name it `google_calendar.json`.
@@ -64,12 +68,22 @@ You can verify that your Google credentials and Calendar ID are correct by runni
 python test_calendar.py
 ```
 
+### Admin Prompt History
+Generated flyer prompts are stored locally in `data/prompt_history.json`.
+
+*   `/checkprompt`: Show the most recent image prompt.
+*   `/checkprompts`: Show the last 5 image prompts.
+*   `/helpadmin`: Show the admin command list.
+*   `/pendingpromo`: Show the currently staged promo with publish/delete buttons.
+
 ## Internal Files (Ignored by Git)
 *   `.env`: Sensitive credentials.
 *   `google_calendar.json`: Google API private keys.
 *   `data/subscribers.json`: List of active subscriber IDs.
 *   `data/sent_reminders.json`: History of sent notifications.
 *   `data/notified_promos.json`: History of events already notified to the admin.
+*   `data/prompt_history.json`: History of generated flyer prompts.
+*   `data/pending_promos.json`: Restart-safe staged promo waiting for publication.
 
 ## License
 MIT License.
