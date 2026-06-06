@@ -1,5 +1,6 @@
-import os
 import logging
+import base64
+from io import BytesIO
 from openai import OpenAI
 
 # Initialize logger for this module
@@ -10,7 +11,7 @@ class OpenAIService:
     Handles interactions with the OpenAI API for text and image generation.
     """
     
-    def __init__(self, api_key, image_model="dall-e-3", image_quality="standard"):
+    def __init__(self, api_key, image_model="gpt-image-1-mini", image_quality="medium"):
         """
         Initializes the OpenAI client with model and quality settings.
         """
@@ -21,7 +22,7 @@ class OpenAIService:
 
     async def generate_event_promo(self, event_details, system_prompt):
         """
-        Generates a Telegram post and a DALL-E prompt based on event details.
+        Generates a Telegram post and an image prompt based on event details.
         """
         try:
             response = self.client.chat.completions.create(
@@ -79,7 +80,14 @@ class OpenAIService:
                 quality=self.image_quality,
                 n=1,
             )
-            return response.data[0].url
+            image_data = response.data[0]
+            if getattr(image_data, "b64_json", None):
+                image_bytes = base64.b64decode(image_data.b64_json)
+                image_file = BytesIO(image_bytes)
+                image_file.name = "btcgdl-flyer.png"
+                return image_file
+
+            return image_data.url
         except Exception as e:
             if "insufficient_quota" in str(e).lower():
                 logger.warning("⚠️  OpenAI Error: Insufficient Quota for image generation.")
