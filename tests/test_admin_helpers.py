@@ -42,17 +42,12 @@ def test_save_prompt_history_appends_record(tmp_path):
         "OPENAI_IMAGE_MODEL": "gpt-image-1-mini",
         "OPENAI_IMAGE_QUALITY": "medium",
     }
-    event = {
-        "summary": "Stand Up",
-        "start": {"dateTime": "2026-06-05T10:20:00-06:00"},
-    }
-
-    save_prompt_history(config, event, "Create a flyer.")
+    
+    save_prompt_history(config, "Stand Up", "Create a flyer.")
 
     history = load_json(str(file_path), [])
     assert len(history) == 1
     assert history[0]["event"] == "Stand Up"
-    assert history[0]["event_start"] == event["start"]
     assert history[0]["image_model"] == "gpt-image-1-mini"
     assert history[0]["image_quality"] == "medium"
     assert history[0]["image_prompt"] == "Create a flyer."
@@ -72,7 +67,7 @@ def test_save_prompt_history_keeps_last_50_records(tmp_path):
     ]
     save_json(str(file_path), existing)
 
-    save_prompt_history(config, {"summary": "Newest", "start": {}}, "Newest prompt")
+    save_prompt_history(config, "Newest", "Newest prompt")
 
     history = load_json(str(file_path), [])
     assert len(history) == 50
