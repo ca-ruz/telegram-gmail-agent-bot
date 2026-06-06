@@ -11,6 +11,7 @@ def make_service_with_image_response(image_data):
     service = OpenAIService.__new__(OpenAIService)
     service.image_model = "gpt-image-1-mini"
     service.image_quality = "medium"
+    service.image_size = "1024x1536"
     service.client = MagicMock()
     service.client.images.generate.return_value = SimpleNamespace(data=[image_data])
     return service
@@ -42,3 +43,16 @@ def test_generate_image_returns_url_response():
     result = asyncio.run(service.generate_image("Create a flyer"))
 
     assert result == "https://example.com/flyer.png"
+
+
+def test_generate_image_uses_configured_size():
+    """The configured image size is passed through to OpenAI."""
+    image_data = SimpleNamespace(
+        b64_json=None,
+        url="https://example.com/flyer.png",
+    )
+    service = make_service_with_image_response(image_data)
+
+    asyncio.run(service.generate_image("Create a flyer"))
+
+    assert service.client.images.generate.call_args.kwargs["size"] == "1024x1536"

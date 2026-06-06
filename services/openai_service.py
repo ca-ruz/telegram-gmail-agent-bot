@@ -11,7 +11,7 @@ class OpenAIService:
     Handles interactions with the OpenAI API for text and image generation.
     """
     
-    def __init__(self, api_key, image_model="gpt-image-1-mini", image_quality="medium"):
+    def __init__(self, api_key, image_model="gpt-image-1-mini", image_quality="medium", image_size="1024x1536"):
         """
         Initializes the OpenAI client with model and quality settings.
         """
@@ -19,6 +19,7 @@ class OpenAIService:
         self.text_model = "gpt-4o"
         self.image_model = image_model
         self.image_quality = image_quality
+        self.image_size = image_size
 
     async def generate_event_promo(self, event_details, system_prompt):
         """
@@ -76,7 +77,7 @@ class OpenAIService:
             response = self.client.images.generate(
                 model=self.image_model,
                 prompt=image_prompt,
-                size="1024x1024",
+                size=self.image_size,
                 quality=self.image_quality,
                 n=1,
             )
