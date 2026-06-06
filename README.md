@@ -50,6 +50,7 @@ A Telegram bot designed to manage event reminders for the Bitcoin Guadalajara (B
     *   `OPENAI_API_KEY`: Your OpenAI Platform API key.
     *   `OPENAI_IMAGE_MODEL`: Flyer image model. Start with `gpt-image-1-mini`.
     *   `OPENAI_IMAGE_QUALITY`: Flyer quality. Start with `medium` for cost control.
+    *   `OPENAI_IMAGE_SIZE`: Flyer dimensions. Start with `1024x1536` for portrait flyers.
 
 5.  **Google Calendar Credentials:**
     Place your Service Account JSON file in the root directory and name it `google_calendar.json`.
