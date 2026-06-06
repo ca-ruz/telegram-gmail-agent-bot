@@ -2,12 +2,12 @@ import os
 import logging
 from functools import partial
 from dotenv import load_dotenv
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from bot.handlers.user import start, menu, meetup, events, bitdevs, website, button_click
 from bot.handlers.admin import (
     broadcast, draft, handle_draft_selection, handle_auto_draft, 
     handle_publish, handle_clear_pending_promo, add_group, remove_group,
-    list_groups, check_prompt, check_prompts, help_admin, pending_promo, status
+    list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, handle_admin_reply
 )
 from core.promoter import check_calendar
 from tools.local.data_manager import load_json, load_reminder_rules
@@ -160,6 +160,20 @@ def main():
 
     app.add_handler(CallbackQueryHandler(
         partial(button_click, subscribers=STATE['subscribers'])))
+
+    app.add_handler(MessageHandler(
+        filters.REPLY
+        & filters.TEXT
+        & ~filters.COMMAND
+        & filters.User(user_id=CONFIG['ADMIN_ID']),
+        partial(
+            handle_admin_reply,
+            admin_id=CONFIG['ADMIN_ID'],
+            ai_service=AI_SERVICE,
+            state=STATE,
+            config=CONFIG,
+        ),
+    ))
 
     print(r"""
   ____ _____ ____    ____ ____  _       ____   ___ _____ 
