@@ -12,14 +12,17 @@ from datetime import datetime, timezone
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
 
-def save_prompt_history(config, event_summary, image_prompt):
+def save_prompt_history(config, event, image_prompt):
     """
     Stores a generated image prompt for later admin review.
     """
+    event_summary = event.get("summary", "Sin título") if isinstance(event, dict) else str(event)
+    event_start = event.get("start", {}) if isinstance(event, dict) else {}
     prompt_history = load_json(config['PROMPT_HISTORY_FILE'], [])
     prompt_history.append({
         "created_at": datetime.now(timezone.utc).isoformat(),
         "event": event_summary,
+        "event_start": event_start,
         "image_model": config.get("OPENAI_IMAGE_MODEL"),
         "image_quality": config.get("OPENAI_IMAGE_QUALITY"),
         "image_prompt": image_prompt,
@@ -163,6 +166,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id
     Sends a manual broadcast message to all bot subscribers.
     """
     if update.effective_user.id != admin_id:
+        logger.warning(f"Unauthorized broadcast attempt by user {update.effective_user.id}")
         return
 
     if not context.args:
@@ -179,6 +183,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id
             logger.error(f"Failed to send broadcast to {user_id}: {e}")
 
     await update.message.reply_text(f"Broadcast sent to {count} users!")
+    logger.info(f"Admin {admin_id} sent a broadcast to {count} users.")
 
 async def add_group(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
     """
@@ -223,6 +228,7 @@ async def remove_group(update: Update, context: ContextTypes.DEFAULT_TYPE, admin
     if chat_id in state['groups']:
         state['groups'].discard(chat_id)
         save_json(config['GROUPS_FILE'], list(state['groups']))
+        logger.info(f"Admin {admin_id} removed group: {chat_id}")
         await update.message.reply_text("✅ Group removed from broadcast list.")
     else:
         await update.message.reply_text("❌ This group is not in the list.")
@@ -261,10 +267,11 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
         "location": event.get("location")
     }
 
-    # Tracking keys
-    event_id = event.get("id", "unknown")
-    start_raw = event.get("start", {}).get("dateTime", event.get("start", {}).get("date", "unknown"))
-    time_suffix = start_raw.replace(":", "").replace("-", "")[:15] if start_raw != "unknown" else "unknown"
+    # Use the same event-instance key format as the calendar poller.
+    event_id = event["id"]
+    start_raw = event["start"].get("dateTime", event["start"].get("date"))
+    event_time = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+    time_suffix = event_time.strftime("%Y%m%dT%H%M%SZ")
     storage_key = f"{event_id}_{time_suffix}"
 
     # Update state: mark flyer as created (or in progress)
@@ -273,6 +280,10 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
     promo_state["flyer_created"] = True
     notified_promos[storage_key] = promo_state
     save_json(config['PROMOTED_FILE'], notified_promos)
+
+    logger.info(
+        f"{'Refining' if instructions else 'Generating'} AI copy for event: {event_summary}"
+    )
 
     # PHASE 1: Text Copywriting
     if instructions:
@@ -289,7 +300,11 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
         raw_response = await ai_service.generate_event_promo(json.dumps(event_info), PROMOTER_SYSTEM_PROMPT)
     
     if raw_response == "QUOTA_EXCEEDED":
-        await context.bot.send_message(admin_id, "⚠️ OpenAI Limit Reached: Generation aborted.")
+        await context.bot.send_message(
+            admin_id,
+            "⚠️ OpenAI Limit Reached: Please check your credit balance. "
+            "Draft and flyer generation aborted."
+        )
         return
     elif not raw_response:
         await context.bot.send_message(admin_id, "❌ Failed to generate draft from OpenAI.")
@@ -297,21 +312,33 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
 
     try:
         promo_data = json.loads(raw_response)
-        draft_text = promo_data.get("telegram_copy", "Error: No copy.")
+        draft_text = promo_data.get("telegram_copy", "Error: No copy generated.")
         image_prompt = promo_data.get("image_prompt")
         
         if image_prompt:
-            save_prompt_history(config, event_summary, image_prompt)
+            save_prompt_history(config, event, image_prompt)
         
-        await context.bot.send_message(admin_id, f"<b>📝 DRAFT REFINED:</b>\n\n{draft_text}", parse_mode=ParseMode.HTML) if instructions else await context.bot.send_message(admin_id, f"<b>📝 DRAFT GENERATED:</b>\n\n{draft_text}", parse_mode=ParseMode.HTML)
+        draft_label = "DRAFT REFINED" if instructions else "DRAFT GENERATED"
+        await context.bot.send_message(
+            admin_id,
+            f"<b>📝 {draft_label}:</b>\n\n{draft_text}",
+            parse_mode=ParseMode.HTML,
+        )
 
         # PHASE 2: Image Generation
         if image_prompt:
-            await context.bot.send_message(admin_id, "🎨 Generando flyer... espera unos segundos.")
+            logger.info(f"Generating AI image for event: {event_summary}")
+            await context.bot.send_message(
+                admin_id,
+                "🎨 Generating your flyer... please wait ~20 seconds."
+            )
             image_result = await ai_service.generate_image(image_prompt)
             
             if image_result == "QUOTA_EXCEEDED":
-                await context.bot.send_message(admin_id, "⚠️ Image limit reached.")
+                await context.bot.send_message(
+                    admin_id,
+                    "⚠️ Flyer generation failed: Insufficient OpenAI credits."
+                )
             elif image_result:
                 # Stage for publishing
                 state['pending_promos'][str(admin_id)] = {
@@ -319,7 +346,9 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
                     "image": image_result,
                     "summary": event_summary,
                     "storage_key": storage_key,
-                    "event_info": event # Store full event for later refinement
+                    "event_id": event_id,
+                    "event_start": start_raw,
+                    "event_info": event,
                 }
                 
                 keyboard = [
@@ -343,11 +372,18 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
                 if preview.photo:
                     state['pending_promos'][str(admin_id)]["image"] = preview.photo[-1].file_id
                     save_pending_promos(config, state)
+                logger.info(f"Flyer successfully generated and staged for: {event_summary}")
             else:
-                await context.bot.send_message(admin_id, "❌ Error generating image.")
+                await context.bot.send_message(
+                    admin_id,
+                    "❌ Error: Failed to generate flyer image."
+                )
     except Exception as e:
-        logger.error(f"Generation Error: {e}")
-        await context.bot.send_message(admin_id, "❌ Error processing AI response.")
+        logger.error(f"Error processing AI response for {event_summary}: {e}")
+        await context.bot.send_message(
+            admin_id,
+            "❌ Error processing the AI response."
+        )
 
 async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, state, config):
     """
@@ -360,78 +396,152 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE,
     staged = state['pending_promos'].get(str(admin_id))
     
     if not staged:
+        await update.message.reply_text(
+            "❌ No pending promo is available to edit. Generate one with /draft first."
+        )
         return
 
+    if not staged.get("event_info"):
+        await update.message.reply_text(
+            "❌ This older draft cannot be edited. Generate it again with /draft."
+        )
+        return
+
+    logger.info(f"Admin {admin_id} requested promo refinement for: {staged.get('summary')}")
     await update.message.reply_text("🔄 Refinando promoción... (Esto generará un nuevo texto e imagen con costo de créditos).")
     await generate_promo_for_event(staged['event_info'], context, admin_id, ai_service, state, config, instructions=instructions)
 
 async def draft(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config):
-    """Manual /draft command."""
+    """Lists upcoming events so the admin can choose one for promo generation."""
     if update.effective_user.id != admin_id:
         return
-    await update.message.reply_text("🔍 Checking upcoming events...")
+
+    logger.info(f"Admin {admin_id} requested a manual draft list.")
+    await update.message.reply_text("🔍 Checking upcoming events for drafting...")
     try:
         service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
         events, _ = fetch_upcoming_events(service, config['CALENDAR_ID'], days=30)
         if not events:
-            await update.message.reply_text("📅 No events found.")
+            await update.message.reply_text("📅 No upcoming events found in the next 30 days.")
             return
         context.user_data['draft_events'] = events
         keyboard = []
         for i, event in enumerate(events[:5]):
             summary = event.get('summary', 'Sin título')
             start = event.get('start', {}).get('dateTime', event.get('start', {}).get('date', ''))
-            date_str = start[5:10].replace('-', '/') if start else "??/??"
+            date_str = ""
+            if start:
+                day_part = start.split('T')[0]
+                if '-' in day_part:
+                    parts = day_part.split('-')
+                    date_str = f"{parts[2]}/{parts[1]}"
             keyboard.append([InlineKeyboardButton(f"{date_str} - {summary}", callback_data=f"select_draft_{i}")])
-        await update.message.reply_text("¿Para qué evento quieres el borrador?", reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(
+            "Which event would you like to draft a promo for?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
+        logger.error(f"Error listing events for manual draft: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def handle_draft_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, state, config):
+    """Handles an event selection from the manual /draft list."""
     query = update.callback_query
-    if query.from_user.id != admin_id: return
+    if query.from_user.id != admin_id:
+        await query.answer("Access denied.")
+        return
     await query.answer()
     try:
         index = int(query.data.split('_')[-1])
         events = context.user_data.get('draft_events', [])
         if not events or index >= len(events):
-            await query.edit_message_text("❌ Session expired. Run /draft again.")
+            await query.edit_message_text(
+                "❌ Error: Event list expired. Please run /draft again."
+            )
             return
-        await query.edit_message_text(f"🚀 Generating promo for: {events[index].get('summary')}")
-        await generate_promo_for_event(events[index], context, admin_id, ai_service, state, config)
+        event = events[index]
+        await query.edit_message_text(
+            f"🚀 Generating promo for: {event.get('summary')}\nPlease wait..."
+        )
+        await generate_promo_for_event(event, context, admin_id, ai_service, state, config)
     except Exception as e:
-        await context.bot.send_message(admin_id, f"❌ Error: {e}")
+        logger.error(f"Error in handle_draft_selection callback: {e}")
+        await context.bot.send_message(admin_id, f"❌ Error: {str(e)}")
 
 async def handle_auto_draft(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, state, config):
+    """Handles the proactive Crear Flyer button for a detected event."""
     query = update.callback_query
-    if query.from_user.id != admin_id: return
+    if query.from_user.id != admin_id:
+        await query.answer("Access denied.")
+        return
     await query.answer()
     try:
         index = int(query.data.split('_')[-1])
         events = context.bot_data.get('current_events', [])
         if not events or index >= len(events):
-            await query.edit_message_text("❌ Data expired.")
+            await query.edit_message_text(
+                "❌ Error: Event data not found or session expired."
+            )
             return
-        await query.edit_message_text(f"🚀 Generating promo for: {events[index].get('summary')}")
-        await generate_promo_for_event(events[index], context, admin_id, ai_service, state, config)
+        event = events[index]
+        logger.info(f"Admin {admin_id} triggered automated draft for: {event.get('summary')}")
+        await query.edit_message_text(
+            f"🚀 Generating promo for: {event.get('summary')}\nPlease wait..."
+        )
+        await generate_promo_for_event(event, context, admin_id, ai_service, state, config)
     except Exception as e:
-        await context.bot.send_message(admin_id, f"❌ Error: {e}")
+        logger.error(f"Error in handle_auto_draft callback: {e}")
+        await context.bot.send_message(admin_id, f"❌ Error: {str(e)}")
 
 async def handle_publish(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
+    """Publishes the staged promo to all configured groups and subscribers."""
     query = update.callback_query
-    if query.from_user.id != admin_id: return
+    if query.from_user.id != admin_id:
+        await query.answer("Access denied.")
+        return
     await query.answer()
     staged = state['pending_promos'].get(str(admin_id))
     if not staged:
-        await query.edit_message_caption("❌ No staged draft found.")
+        await query.edit_message_caption(
+            "❌ Error: No staged draft found. Please generate a new one."
+        )
         return
-    await query.edit_message_caption("🚀 Publishing...")
+
+    await query.edit_message_caption("🚀 Publishing to community... please wait.")
+
+    group_count = 0
     for group_id in state['groups']:
-        try: await context.bot.send_photo(group_id, photo=staged['image'], caption=staged['text'], parse_mode=ParseMode.HTML)
-        except: pass
-    for user_id in state['subscribers']: # Fixed to use state
-        try: await context.bot.send_photo(user_id, photo=staged['image'], caption=staged['text'], parse_mode=ParseMode.HTML)
-        except: pass
-    await query.edit_message_caption(f"✅ Published successfully!")
+        try:
+            await context.bot.send_photo(
+                group_id,
+                photo=staged['image'],
+                caption=staged['text'],
+                parse_mode=ParseMode.HTML,
+            )
+            group_count += 1
+        except Exception as e:
+            logger.error(f"Failed to publish to group {group_id}: {e}")
+
+    sub_count = 0
+    for user_id in state['subscribers']:
+        try:
+            await context.bot.send_photo(
+                user_id,
+                photo=staged['image'],
+                caption=staged['text'],
+                parse_mode=ParseMode.HTML,
+            )
+            sub_count += 1
+        except Exception as e:
+            logger.error(f"Failed to publish to subscriber {user_id}: {e}")
+
+    await query.edit_message_caption(
+        f"✅ Published successfully!\n"
+        f"Sent to {group_count} groups and {sub_count} subscribers."
+    )
+    logger.info(
+        f"Admin {admin_id} published promo for '{staged['summary']}' "
+        f"to {group_count} groups and {sub_count} subscribers."
+    )
     del state['pending_promos'][str(admin_id)]
     save_pending_promos(config, state)
