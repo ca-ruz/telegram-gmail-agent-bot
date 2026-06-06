@@ -13,6 +13,8 @@ data/subscribers.json
 data/sent_reminders.json
 data/notified_promos.json
 data/groups.json
+data/pending_promos.json
+data/prompt_history.json
 data/bot.log
 subscribers.json
 sent_reminders.json

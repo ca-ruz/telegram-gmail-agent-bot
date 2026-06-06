@@ -4,7 +4,7 @@ from functools import partial
 from dotenv import load_dotenv
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 from bot.handlers.user import start, menu, meetup, events, bitdevs, website, button_click
-from bot.handlers.admin import broadcast, draft, handle_draft_selection, handle_auto_draft, handle_publish, add_group
+from bot.handlers.admin import broadcast, draft, handle_draft_selection, handle_auto_draft, handle_publish, handle_clear_pending_promo, add_group, check_prompt, check_prompts, help_admin, pending_promo
 from core.promoter import check_calendar
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
@@ -37,6 +37,8 @@ CONFIG = {
     'BOT_TOKEN': os.getenv("TELEGRAM_BOT_TOKEN"),
     'ADMIN_ID': int(os.getenv("TELEGRAM_ADMIN_ID", "0")),
     'OPENAI_API_KEY': os.getenv("OPENAI_API_KEY"),
+    'OPENAI_IMAGE_MODEL': os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1-mini"),
+    'OPENAI_IMAGE_QUALITY': os.getenv("OPENAI_IMAGE_QUALITY", "medium"),
     'CALENDAR_ID': os.getenv("GOOGLE_CALENDAR_ID"),
     'SERVICE_ACCOUNT_FILE': "google_calendar.json",
     'SCOPES': ["https://www.googleapis.com/auth/calendar.readonly"],
@@ -45,7 +47,9 @@ CONFIG = {
     'REMINDER_CONFIG_FILE': "data/reminder_config.json",
     'SUBSCRIBERS_FILE': "data/subscribers.json",
     'PROMOTED_FILE': "data/notified_promos.json",
-    'GROUPS_FILE': "data/groups.json"
+    'GROUPS_FILE': "data/groups.json",
+    'PROMPT_HISTORY_FILE': "data/prompt_history.json",
+    'PENDING_PROMOS_FILE': "data/pending_promos.json"
 }
 
 # Load state
@@ -59,14 +63,22 @@ STATE = {
     'groups': set(load_json(CONFIG['GROUPS_FILE'], [])),
     'sent_reminders': load_json(CONFIG['REMINDERS_FILE'], {}),
     'notified_promos': raw_notified,
-    'pending_promos': {}
+    'pending_promos': load_json(CONFIG['PENDING_PROMOS_FILE'], {})
 }
 
 # Add reminder rules to config
 CONFIG['REMINDER_RULES'] = load_reminder_rules(CONFIG['REMINDER_CONFIG_FILE'])
 
 # Initialize OpenAI Service
-AI_SERVICE = OpenAIService(CONFIG['OPENAI_API_KEY']) if CONFIG['OPENAI_API_KEY'] else None
+AI_SERVICE = (
+    OpenAIService(
+        CONFIG['OPENAI_API_KEY'],
+        image_model=CONFIG['OPENAI_IMAGE_MODEL'],
+        image_quality=CONFIG['OPENAI_IMAGE_QUALITY'],
+    )
+    if CONFIG['OPENAI_API_KEY']
+    else None
+)
 
 def main():
     """Main entry point for the bot."""
@@ -103,6 +115,18 @@ def main():
     
     app.add_handler(CommandHandler("addgroup",
         partial(add_group, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG)))
+
+    app.add_handler(CommandHandler("checkprompt",
+        partial(check_prompt, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
+
+    app.add_handler(CommandHandler("checkprompts",
+        partial(check_prompts, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
+
+    app.add_handler(CommandHandler("helpadmin",
+        partial(help_admin, admin_id=CONFIG['ADMIN_ID'])))
+
+    app.add_handler(CommandHandler("pendingpromo",
+        partial(pending_promo, admin_id=CONFIG['ADMIN_ID'], state=STATE)))
     
     # Callback Handlers
     app.add_handler(CallbackQueryHandler(
@@ -114,8 +138,12 @@ def main():
         pattern="^auto_draft_"))
 
     app.add_handler(CallbackQueryHandler(
-        partial(handle_publish, admin_id=CONFIG['ADMIN_ID'], state=STATE),
+        partial(handle_publish, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG),
         pattern="^publish_draft$"))
+
+    app.add_handler(CallbackQueryHandler(
+        partial(handle_clear_pending_promo, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG),
+        pattern="^clear_pending_promo$"))
 
     app.add_handler(CallbackQueryHandler(
         partial(button_click, subscribers=STATE['subscribers'])))

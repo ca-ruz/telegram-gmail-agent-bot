@@ -1,15 +1,162 @@
 import json
 import logging
+from html import escape
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from tools.local.calendar_api import get_calendar_service_with_creds, fetch_upcoming_events
-from tools.local.data_manager import save_json
+from tools.local.data_manager import load_json, save_json
 from core.prompts import PROMOTER_SYSTEM_PROMPT
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
+
+def save_prompt_history(config, event, image_prompt):
+    """
+    Stores a generated image prompt for later admin review.
+    """
+    prompt_history = load_json(config['PROMPT_HISTORY_FILE'], [])
+    prompt_history.append({
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "event": event.get("summary", "Sin título"),
+        "event_start": event.get("start", {}),
+        "image_model": config.get("OPENAI_IMAGE_MODEL"),
+        "image_quality": config.get("OPENAI_IMAGE_QUALITY"),
+        "image_prompt": image_prompt,
+    })
+    save_json(config['PROMPT_HISTORY_FILE'], prompt_history[-50:])
+
+
+def format_prompt_history_entry(entry, prompt_limit=900):
+    """
+    Formats one prompt history record for Telegram.
+    """
+    prompt = entry.get("image_prompt", "")
+    if len(prompt) > prompt_limit:
+        prompt = prompt[:prompt_limit].rstrip() + "..."
+
+    return (
+        f"<b>{escape(entry.get('event', 'Sin título'))}</b>\n"
+        f"Modelo: <code>{escape(entry.get('image_model', 'unknown'))}</code> / "
+        f"<code>{escape(entry.get('image_quality', 'unknown'))}</code>\n"
+        f"Fecha: <code>{escape(entry.get('created_at', 'unknown'))}</code>\n\n"
+        f"{escape(prompt)}"
+    )
+
+
+async def check_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config):
+    """
+    Admin-only command that shows the most recent generated image prompt.
+    """
+    if update.effective_user.id != admin_id:
+        return
+
+    reply_message = update.effective_message
+    prompt_history = load_json(config['PROMPT_HISTORY_FILE'], [])
+    if not prompt_history:
+        await reply_message.reply_text("No prompt history yet.")
+        return
+
+    await reply_message.reply_text(
+        format_prompt_history_entry(prompt_history[-1], prompt_limit=3200),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def check_prompts(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config):
+    """
+    Admin-only command that shows the most recent generated image prompts.
+    """
+    if update.effective_user.id != admin_id:
+        return
+
+    reply_message = update.effective_message
+    prompt_history = load_json(config['PROMPT_HISTORY_FILE'], [])
+    if not prompt_history:
+        await reply_message.reply_text("No prompt history yet.")
+        return
+
+    recent_prompts = prompt_history[-5:]
+    prompt_message = "\n\n---\n\n".join(
+        format_prompt_history_entry(entry, prompt_limit=500)
+        for entry in reversed(recent_prompts)
+    )
+    await reply_message.reply_text(prompt_message, parse_mode=ParseMode.HTML)
+
+
+async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):
+    """
+    Admin-only command that lists available admin commands.
+    """
+    if update.effective_user.id != admin_id:
+        return
+
+    reply_message = update.effective_message
+    await reply_message.reply_text(
+        "<b>Admin commands</b>\n\n"
+        "/draft - Generate a promo for an upcoming event\n"
+        "/pendingpromo - Show staged promo with publish/delete buttons\n"
+        "/checkprompt - Show the latest image prompt\n"
+        "/checkprompts - Show the last 5 image prompts\n"
+        "/broadcast - Send a manual message to subscribers\n"
+        "/addgroup - Add this group to broadcast targets",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+def save_pending_promos(config, state):
+    """
+    Persists staged promos so publish buttons can survive bot restarts.
+    """
+    save_json(config['PENDING_PROMOS_FILE'], state['pending_promos'])
+
+
+async def pending_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state):
+    """
+    Admin-only command that shows the currently staged promo with a publish button.
+    """
+    if update.effective_user.id != admin_id:
+        return
+
+    reply_message = update.effective_message
+    staged = state['pending_promos'].get(str(admin_id))
+    if not staged:
+        await reply_message.reply_text("No pending promo is staged right now.")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Publicar en Grupos", callback_data="publish_draft")],
+        [InlineKeyboardButton("🗑 Eliminar promo pendiente", callback_data="clear_pending_promo")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await reply_message.reply_photo(
+        photo=staged['image'],
+        caption=(
+            f"Pending promo: {staged.get('summary', 'Sin título')}\n\n"
+            "Do you want to publish this to all groups and subscribers?"
+        ),
+        reply_markup=reply_markup,
+    )
+
+async def handle_clear_pending_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
+    """
+    Handles the pending promo delete button.
+    """
+    query = update.callback_query
+    if query.from_user.id != admin_id:
+        await query.answer("Access denied.")
+        return
+
+    await query.answer()
+
+    if str(admin_id) not in state['pending_promos']:
+        await query.edit_message_caption("No pending promo is staged right now.")
+        return
+
+    staged = state['pending_promos'].pop(str(admin_id))
+    save_pending_promos(config, state)
+    await query.edit_message_caption(f"🗑 Pending promo deleted: {staged.get('summary', 'Sin título')}")
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, subscribers):
     """
@@ -125,7 +272,7 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
     notified_promos[storage_key] = promo_state
     save_json(config['PROMOTED_FILE'], notified_promos)
 
-    # PHASE 1: Generate the Telegram Post Copy and DALL-E Prompt
+    # PHASE 1: Generate the Telegram post copy and image prompt
     logger.info(f"Generating AI copy for event: {event.get('summary')}")
     raw_response = await ai_service.generate_event_promo(json.dumps(event_info), PROMOTER_SYSTEM_PROMPT)
     
@@ -140,6 +287,8 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
         promo_data = json.loads(raw_response)
         draft_text = promo_data.get("telegram_copy", "Error: No copy generated.")
         image_prompt = promo_data.get("image_prompt")
+        if image_prompt:
+            save_prompt_history(config, event, image_prompt)
         
         # Show the text draft first
         await context.bot.send_message(
@@ -158,21 +307,31 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
                 await context.bot.send_message(admin_id, "⚠️ Flyer generation failed: Insufficient OpenAI credits.")
             elif image_result:
                 # Stage the draft for publishing
-                state['pending_promos'][admin_id] = {
+                state['pending_promos'][str(admin_id)] = {
                     "text": draft_text,
                     "image": image_result,
-                    "summary": event.get('summary')
+                    "summary": event.get('summary'),
+                    "storage_key": storage_key,
+                    "event_id": event_id,
+                    "event_start": start_raw,
                 }
                 
-                keyboard = [[InlineKeyboardButton("✅ Publicar en Grupos", callback_data="publish_draft")]]
+                keyboard = [
+                    [InlineKeyboardButton("✅ Publicar en Grupos", callback_data="publish_draft")],
+                    [InlineKeyboardButton("🗑 Eliminar promo pendiente", callback_data="clear_pending_promo")],
+                ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
-                await context.bot.send_photo(
+                preview_message = await context.bot.send_photo(
                     admin_id,
                     photo=image_result,
                     caption=f"🎨 Suggested Flyer for: {event.get('summary')}\n\nDo you want to publish this to all groups and subscribers?",
                     reply_markup=reply_markup
                 )
+                if preview_message.photo:
+                    state['pending_promos'][str(admin_id)]["image"] = preview_message.photo[-1].file_id
+                    save_pending_promos(config, state)
+
                 logger.info(f"Flyer successfully generated and staged for: {event.get('summary')}")
             else:
                 await context.bot.send_message(admin_id, "❌ Error: Failed to generate flyer image.")
@@ -180,7 +339,7 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
         logger.error(f"Error processing AI response: {e}")
         await context.bot.send_message(admin_id, "❌ Error processing the AI response.")
 
-async def handle_publish(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state):
+async def handle_publish(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
     """
     Handles the 'Publicar' button. Sends the staged draft to all groups and subscribers.
     """
@@ -191,7 +350,7 @@ async def handle_publish(update: Update, context: ContextTypes.DEFAULT_TYPE, adm
 
     await query.answer()
     
-    staged = state['pending_promos'].get(admin_id)
+    staged = state['pending_promos'].get(str(admin_id))
     if not staged:
         await query.edit_message_text("❌ Error: No staged draft found. Please generate a new one.")
         return
@@ -223,7 +382,8 @@ async def handle_publish(update: Update, context: ContextTypes.DEFAULT_TYPE, adm
     logger.info(f"Admin {admin_id} published promo for '{staged['summary']}' to {group_count} groups and {sub_count} subs.")
     
     # Clear the staged draft
-    del state['pending_promos'][admin_id]
+    del state['pending_promos'][str(admin_id)]
+    save_pending_promos(config, state)
 
 async def handle_draft_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, state, config):
     """

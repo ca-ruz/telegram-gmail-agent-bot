@@ -1,5 +1,6 @@
-import os
 import logging
+import base64
+from io import BytesIO
 from openai import OpenAI
 
 # Initialize logger for this module
@@ -10,19 +11,23 @@ class OpenAIService:
     Handles interactions with the OpenAI API for text and image generation.
     """
     
-    def __init__(self, api_key):
+    def __init__(self, api_key, image_model="gpt-image-1-mini", image_quality="medium"):
         """
         Initializes the OpenAI client.
         
         Args:
             api_key (str): The OpenAI API key.
+            image_model (str): The model used for flyer image generation.
+            image_quality (str): The quality setting for generated images.
         """
         self.client = OpenAI(api_key=api_key)
         self.model = "gpt-4o"  # High-reasoning model for copywriting
+        self.image_model = image_model
+        self.image_quality = image_quality
 
     async def generate_event_promo(self, event_details, system_prompt):
         """
-        Generates a Telegram post and a DALL-E prompt based on event details.
+        Generates a Telegram post and an image prompt based on event details.
         
         Args:
             event_details (str): JSON-stringified event information.
@@ -51,7 +56,7 @@ class OpenAIService:
 
     async def generate_image(self, image_prompt):
         """
-        Generates a flyer image using DALL-E 3.
+        Generates a flyer image using the configured OpenAI image model.
         
         Args:
             image_prompt (str): The visual description for the flyer.
@@ -62,13 +67,20 @@ class OpenAIService:
         """
         try:
             response = self.client.images.generate(
-                model="dall-e-3",
+                model=self.image_model,
                 prompt=image_prompt,
                 size="1024x1024",
-                quality="standard",
+                quality=self.image_quality,
                 n=1,
             )
-            return response.data[0].url
+            image_data = response.data[0]
+            if getattr(image_data, "b64_json", None):
+                image_bytes = base64.b64decode(image_data.b64_json)
+                image_file = BytesIO(image_bytes)
+                image_file.name = "btcgdl-flyer.png"
+                return image_file
+
+            return image_data.url
         except Exception as e:
             if "insufficient_quota" in str(e).lower():
                 logger.warning("OpenAI Quota Exceeded during image generation.")
