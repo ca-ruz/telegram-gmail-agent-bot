@@ -95,6 +95,7 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
     reply_message = update.effective_message
     await reply_message.reply_text(
         "<b>Admin commands</b>\n\n"
+        "/status - Show bot health and configuration\n"
         "/draft - Generate a promo for an upcoming event\n"
         "/pendingpromo - Show staged promo with publish/delete buttons\n"
         "/checkprompt - Show the latest image prompt\n"
@@ -103,6 +104,29 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "/addgroup - Add this group to broadcast targets",
         parse_mode=ParseMode.HTML,
     )
+
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
+    """
+    Admin-only command to show the bot's current status and configuration.
+    """
+    if update.effective_user.id != admin_id:
+        return
+
+    openai_status = "✅ Configured" if config.get('OPENAI_API_KEY') else "❌ Missing API Key"
+    image_model = config.get('OPENAI_IMAGE_MODEL', 'Not set')
+    
+    msg = (
+        "📊 <b>BTC GDL Bot Status</b>\n\n"
+        f"👥 <b>Subscribers:</b> {len(state['subscribers'])}\n"
+        f"📢 <b>Broadcast Groups:</b> {len(state['groups'])}\n"
+        f"📝 <b>Pending Promos:</b> {len(state.get('pending_promos', {}))}\n\n"
+        f"🤖 <b>OpenAI:</b> {openai_status}\n"
+        f"🎨 <b>Image Model:</b> <code>{image_model}</code>\n"
+        f"⏱ <b>Poll Interval:</b> {config.get('CHECK_INTERVAL_MINUTES')} min"
+    )
+
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 
 def save_pending_promos(config, state):
