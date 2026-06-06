@@ -4,7 +4,11 @@ from functools import partial
 from dotenv import load_dotenv
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 from bot.handlers.user import start, menu, meetup, events, bitdevs, website, button_click
-from bot.handlers.admin import broadcast, draft, handle_draft_selection, handle_auto_draft, handle_publish, handle_clear_pending_promo, add_group, check_prompt, check_prompts, help_admin, pending_promo
+from bot.handlers.admin import (
+    broadcast, draft, handle_draft_selection, handle_auto_draft, 
+    handle_publish, handle_clear_pending_promo, add_group, remove_group,
+    list_groups, check_prompt, check_prompts, help_admin, pending_promo, status
+)
 from core.promoter import check_calendar
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
@@ -110,11 +114,20 @@ def main():
     app.add_handler(CommandHandler("broadcast", 
         partial(broadcast, admin_id=CONFIG['ADMIN_ID'], subscribers=STATE['subscribers'])))
     
+    app.add_handler(CommandHandler("status",
+        partial(status, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG)))
+    
+    app.add_handler(CommandHandler("groups",
+        partial(list_groups, admin_id=CONFIG['ADMIN_ID'], state=STATE)))
+    
     app.add_handler(CommandHandler("draft",
         partial(draft, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
     
     app.add_handler(CommandHandler("addgroup",
         partial(add_group, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG)))
+
+    app.add_handler(CommandHandler("removegroup",
+        partial(remove_group, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG)))
 
     app.add_handler(CommandHandler("checkprompt",
         partial(check_prompt, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
