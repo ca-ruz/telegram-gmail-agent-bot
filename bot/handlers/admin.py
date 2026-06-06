@@ -96,14 +96,48 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
     await reply_message.reply_text(
         "<b>Admin commands</b>\n\n"
         "/status - Show bot health and configuration\n"
+        "/groups - List all broadcast groups\n"
+        "/addgroup - Add this group to broadcast targets\n"
+        "/removegroup - Remove this group from broadcast targets\n"
         "/draft - Generate a promo for an upcoming event\n"
         "/pendingpromo - Show staged promo with publish/delete buttons\n"
         "/checkprompt - Show the latest image prompt\n"
         "/checkprompts - Show the last 5 image prompts\n"
-        "/broadcast - Send a manual message to subscribers\n"
-        "/addgroup - Add this group to broadcast targets",
+        "/broadcast - Send a manual message to subscribers",
         parse_mode=ParseMode.HTML,
     )
+
+
+async def list_groups(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state):
+    """
+    Admin-only command to list all registered broadcast groups.
+    """
+    if update.effective_user.id != admin_id:
+        return
+
+    if not state['groups']:
+        await update.message.reply_text("No broadcast groups configured.")
+        return
+
+    msg = "📢 <b>Broadcast Groups</b>\n\n" + "\n".join([f"• <code>{gid}</code>" for gid in state['groups']])
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+async def remove_group(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
+    """
+    Admin-only command to remove the current group from the broadcast list.
+    """
+    if update.effective_user.id != admin_id:
+        return
+
+    chat_id = update.effective_chat.id
+    if chat_id in state['groups']:
+        state['groups'].discard(chat_id)
+        save_json(config['GROUPS_FILE'], list(state['groups']))
+        logger.info(f"Admin {admin_id} removed group: {chat_id}")
+        await update.message.reply_text("✅ Group removed from broadcast list.")
+    else:
+        await update.message.reply_text("❌ This group is not in the broadcast list.")
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
