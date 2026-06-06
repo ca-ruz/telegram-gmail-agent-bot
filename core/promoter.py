@@ -38,6 +38,35 @@ def cleanup_sent_reminders(sent_reminders, reminders_file):
     
     return sent_reminders
 
+def cleanup_pending_promos(pending_promos, pending_promos_file):
+    """
+    Removes staged promos whose event start time has already passed.
+    """
+    now = datetime.now(timezone.utc)
+    to_delete = []
+
+    for admin_id, promo in pending_promos.items():
+        event_start = promo.get("event_start")
+        if not event_start:
+            continue
+
+        try:
+            event_time = datetime.fromisoformat(event_start.replace("Z", "+00:00"))
+            if event_time.tzinfo is None:
+                event_time = event_time.replace(tzinfo=timezone.utc)
+            if event_time.astimezone(timezone.utc) <= now:
+                to_delete.append(admin_id)
+        except Exception as e:
+            logger.error(f"Error parsing pending promo event_start for {admin_id}: {e}")
+
+    if to_delete:
+        for admin_id in to_delete:
+            del pending_promos[admin_id]
+        save_json(pending_promos_file, pending_promos)
+        logger.info(f"Cleaned up {len(to_delete)} expired pending promos.")
+
+    return pending_promos
+
 async def notify_admin_summary(context, admin_id, events_to_notify):
     """
     Sends a consolidated summary message to the admin for multiple events.
@@ -87,6 +116,10 @@ async def check_calendar(context, config, state):
     sent_reminders = state['sent_reminders']
     subscribers = state['subscribers']
     notified_promos = state['notified_promos']
+    state['pending_promos'] = cleanup_pending_promos(
+        state.get('pending_promos', {}),
+        config['PENDING_PROMOS_FILE'],
+    )
     
     service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
     sent_reminders = cleanup_sent_reminders(sent_reminders, config['REMINDERS_FILE'])
@@ -103,6 +136,11 @@ async def check_calendar(context, config, state):
     events_to_notify_admin = []
     processed_admin_series = set()
     processed_reminder_series = set() 
+    pending_promo_keys = {
+        promo.get("storage_key")
+        for promo in state.get("pending_promos", {}).values()
+        if promo.get("storage_key")
+    }
 
     for i, event in enumerate(events):
         # Use recurringEventId if available to correctly group series, otherwise use id
@@ -120,7 +158,11 @@ async def check_calendar(context, config, state):
         # --- PHASE A: PROACTIVE ADMIN DETECTION ---
         promo_state = notified_promos.get(storage_key, {"notified_thresholds": [], "flyer_created": False})
         
-        if not promo_state["flyer_created"] and series_id not in processed_admin_series:
+        if (
+            storage_key not in pending_promo_keys
+            and not promo_state["flyer_created"]
+            and series_id not in processed_admin_series
+        ):
             rules_ascending = sorted(config['REMINDER_RULES'].items(), key=lambda x: x[1])
             
             for key, threshold in rules_ascending:
