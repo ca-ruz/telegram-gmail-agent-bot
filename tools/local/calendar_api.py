@@ -104,3 +104,23 @@ def fetch_upcoming_events(service, calendar_id, days=8):
     except Exception as e:
         logger.error(f"Failed to fetch events from Google Calendar: {e}")
         raise
+
+def create_calendar_event(service, calendar_id, event_data):
+    """
+    Inserts a new event into the Google Calendar.
+    
+    Args:
+        service: The Google Calendar service object.
+        calendar_id (str): The ID of the calendar.
+        event_data (dict): The event details (summary, location, start, end).
+        
+    Returns:
+        dict: The created event object.
+    """
+    try:
+        event = service.events().insert(calendarId=calendar_id, body=event_data).execute()
+        logger.info(f"Event created: {event.get('htmlLink')}")
+        return event
+    except Exception as e:
+        logger.error(f"Failed to create calendar event: {e}")
+        raise
