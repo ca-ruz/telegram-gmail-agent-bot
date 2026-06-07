@@ -38,7 +38,7 @@ logging.getLogger("telegram").setLevel(logging.WARNING)
 logging.getLogger("googleapiclient").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.ERROR)
 
-# Config
+# Configuration
 CONFIG = {
     'BOT_TOKEN': os.getenv("TELEGRAM_BOT_TOKEN"),
     'ADMIN_ID': int(os.getenv("TELEGRAM_ADMIN_ID", "0")),
@@ -59,9 +59,11 @@ CONFIG = {
     'PENDING_PROMOS_FILE': "data/pending_promos.json"
 }
 
-# Load state
+# --- STATE INITIALIZATION & MIGRATION ---
 raw_notified = load_json(CONFIG['PROMOTED_FILE'], {})
+# Migration: If the file was an old list format, convert it to the new dict format
 if isinstance(raw_notified, list):
+    logger.info("Migrating notified_promos.json from list to dictionary format...")
     notified_dict = {event_id: {"notified_thresholds": ["initial"], "flyer_created": False} for event_id in raw_notified}
     raw_notified = notified_dict
 
@@ -91,11 +93,12 @@ AI_SERVICE = (
 def main():
     """Main entry point for the bot."""
     if not CONFIG['BOT_TOKEN']:
-        logger.error("TELEGRAM_BOT_TOKEN not found in .env")
+        logger.error("TELEGRAM_BOT_TOKEN not found in .env. Initialization aborted.")
         return
 
     app = ApplicationBuilder().token(CONFIG['BOT_TOKEN']).build()
 
+    # Schedule the proactive calendar checker
     async def calendar_job(context):
         await check_calendar(context, config=CONFIG, state=STATE)
 
@@ -106,7 +109,7 @@ def main():
         first=10,
     )
 
-    # Handlers
+    # User Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler("meetup", meetup))
@@ -114,43 +117,31 @@ def main():
     app.add_handler(CommandHandler("bitdevs", bitdevs))
     app.add_handler(CommandHandler("website", website))
     
-    # Admin Handlers
+    # Admin Command Handlers
     app.add_handler(CommandHandler("broadcast", 
         partial(broadcast, admin_id=CONFIG['ADMIN_ID'], subscribers=STATE['subscribers'])))
-    
     app.add_handler(CommandHandler("status",
         partial(status, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG)))
-    
     app.add_handler(CommandHandler("groups",
         partial(list_groups, admin_id=CONFIG['ADMIN_ID'], state=STATE)))
-    
     app.add_handler(CommandHandler("draft",
         partial(draft, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
-    
     app.add_handler(CommandHandler("addevent",
         partial(add_event, admin_id=CONFIG['ADMIN_ID'], ai_service=AI_SERVICE)))
-
     app.add_handler(CommandHandler("editevent",
         partial(edit_event_start, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
-
     app.add_handler(CommandHandler("deleteevent",
         partial(delete_event, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
-    
     app.add_handler(CommandHandler("addgroup",
         partial(add_group, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG)))
-
     app.add_handler(CommandHandler("removegroup",
         partial(remove_group, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG)))
-
     app.add_handler(CommandHandler("checkprompt",
         partial(check_prompt, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
-
     app.add_handler(CommandHandler("checkprompts",
         partial(check_prompts, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
-
     app.add_handler(CommandHandler("helpadmin",
         partial(help_admin, admin_id=CONFIG['ADMIN_ID'])))
-
     app.add_handler(CommandHandler("pendingpromo",
         partial(pending_promo, admin_id=CONFIG['ADMIN_ID'], state=STATE)))
     
@@ -158,38 +149,31 @@ def main():
     app.add_handler(CallbackQueryHandler(
         partial(handle_draft_selection, admin_id=CONFIG['ADMIN_ID'], ai_service=AI_SERVICE, state=STATE, config=CONFIG),
         pattern="^select_draft_"))
-
     app.add_handler(CallbackQueryHandler(
         partial(handle_auto_draft, admin_id=CONFIG['ADMIN_ID'], ai_service=AI_SERVICE, state=STATE, config=CONFIG),
         pattern="^auto_draft_"))
-
     app.add_handler(CallbackQueryHandler(
         partial(handle_publish, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG),
         pattern="^publish_draft$"))
-
     app.add_handler(CallbackQueryHandler(
         partial(handle_clear_pending_promo, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG),
         pattern="^clear_pending_promo$"))
-
     app.add_handler(CallbackQueryHandler(
         partial(handle_add_confirm, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
         pattern="^(confirm_add|cancel_add)$"))
-
     app.add_handler(CallbackQueryHandler(
         partial(handle_delete_selection, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
         pattern="^confirm_del_"))
-
     app.add_handler(CallbackQueryHandler(
         partial(handle_edit_selection, admin_id=CONFIG['ADMIN_ID']),
         pattern="^select_edit_"))
-
     app.add_handler(CallbackQueryHandler(
         partial(handle_edit_confirm, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
         pattern="^(confirm_edit|cancel_edit)$"))
-
     app.add_handler(CallbackQueryHandler(
         partial(button_click, subscribers=STATE['subscribers'])))
 
+    # Smart Admin Chat Handler (Natural Language)
     app.add_handler(MessageHandler(
         filters.TEXT
         & ~filters.COMMAND
@@ -203,6 +187,7 @@ def main():
         ),
     ))
 
+    # Terminal Branding
     print(r"""
   ____ _____ ____    ____ ____  _       ____   ___ _____ 
  | __ )_   _/ ___|  / ___|  _ \| |     | __ ) / _ \_   _|
@@ -211,8 +196,8 @@ def main():
  |____/ |_| \____|  \____|____/|_____| |____/ \___/ |_|  
     """)
     logger.info("------------------------------------------")
-    logger.info("Bot started. Press Ctrl+C to stop.")
-    logger.info(f"Polling interval: {CONFIG['CHECK_INTERVAL_MINUTES']} minutes.")
+    logger.info("Bot started successfully. Press Ctrl+C to stop.")
+    logger.info(f"Polling Google Calendar every {CONFIG['CHECK_INTERVAL_MINUTES']} minutes.")
     logger.info("First calendar check will run in 10 seconds...")
     logger.info("------------------------------------------")
     
