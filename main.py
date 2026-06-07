@@ -7,7 +7,9 @@ from bot.handlers.user import start, menu, meetup, events, bitdevs, website, but
 from bot.handlers.admin import (
     broadcast, draft, handle_draft_selection, handle_auto_draft, 
     handle_publish, handle_clear_pending_promo, add_group, remove_group,
-    list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, handle_admin_reply
+    list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
+    handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
+    edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat
 )
 from core.promoter import check_calendar
 from tools.local.data_manager import load_json, load_reminder_rules
@@ -46,7 +48,7 @@ CONFIG = {
     'OPENAI_IMAGE_SIZE': os.getenv("OPENAI_IMAGE_SIZE", "1024x1536"),
     'CALENDAR_ID': os.getenv("GOOGLE_CALENDAR_ID"),
     'SERVICE_ACCOUNT_FILE': "google_calendar.json",
-    'SCOPES': ["https://www.googleapis.com/auth/calendar.readonly"],
+    'SCOPES': ["https://www.googleapis.com/auth/calendar"],
     'CHECK_INTERVAL_MINUTES': 30,
     'REMINDERS_FILE': "data/sent_reminders.json",
     'REMINDER_CONFIG_FILE': "data/reminder_config.json",
@@ -125,6 +127,15 @@ def main():
     app.add_handler(CommandHandler("draft",
         partial(draft, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
     
+    app.add_handler(CommandHandler("addevent",
+        partial(add_event, admin_id=CONFIG['ADMIN_ID'], ai_service=AI_SERVICE)))
+
+    app.add_handler(CommandHandler("editevent",
+        partial(edit_event_start, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
+
+    app.add_handler(CommandHandler("deleteevent",
+        partial(delete_event, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
+    
     app.add_handler(CommandHandler("addgroup",
         partial(add_group, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG)))
 
@@ -161,15 +172,30 @@ def main():
         pattern="^clear_pending_promo$"))
 
     app.add_handler(CallbackQueryHandler(
+        partial(handle_add_confirm, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
+        pattern="^(confirm_add|cancel_add)$"))
+
+    app.add_handler(CallbackQueryHandler(
+        partial(handle_delete_selection, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
+        pattern="^confirm_del_"))
+
+    app.add_handler(CallbackQueryHandler(
+        partial(handle_edit_selection, admin_id=CONFIG['ADMIN_ID']),
+        pattern="^select_edit_"))
+
+    app.add_handler(CallbackQueryHandler(
+        partial(handle_edit_confirm, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
+        pattern="^(confirm_edit|cancel_edit)$"))
+
+    app.add_handler(CallbackQueryHandler(
         partial(button_click, subscribers=STATE['subscribers'])))
 
     app.add_handler(MessageHandler(
-        filters.REPLY
-        & filters.TEXT
+        filters.TEXT
         & ~filters.COMMAND
         & filters.User(user_id=CONFIG['ADMIN_ID']),
         partial(
-            handle_admin_reply,
+            handle_admin_chat,
             admin_id=CONFIG['ADMIN_ID'],
             ai_service=AI_SERVICE,
             state=STATE,
