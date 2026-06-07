@@ -38,9 +38,8 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
 
 3.  **Install dependencies:**
     ```bash
-    pip install python-telegram-bot google-api-python-client google-auth-httplib2 google-auth python-dotenv openai
+    pip install -r requirements.txt
     ```
-    *(Or use `pip install -r requirements.txt`)*
 
 4.  **Configure Environment Variables:**
     Copy the template and fill in your credentials:
