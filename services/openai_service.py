@@ -95,3 +95,21 @@ class OpenAIService:
                 return "QUOTA_EXCEEDED"
             logger.error(f"❌ OpenAI Image Generation Error: {e}")
             return None
+
+    async def transcribe_voice(self, voice_file):
+        """
+        Transcribes audio bytes into text using OpenAI Whisper.
+        """
+        try:
+            # Whisper expects a file-like object with a name
+            if not hasattr(voice_file, "name"):
+                voice_file.name = "audio.ogg"
+            
+            transcript = self.client.audio.transcriptions.create(
+                model="whisper-1",
+                file=voice_file
+            )
+            return transcript.text
+        except Exception as e:
+            logger.error(f"❌ OpenAI Transcription Error: {e}")
+            return None

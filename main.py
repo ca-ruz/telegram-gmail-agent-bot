@@ -2,14 +2,14 @@ import os
 import logging
 from functools import partial
 from dotenv import load_dotenv
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from bot.handlers.user import start, menu, meetup, events, bitdevs, website, button_click
 from bot.handlers.admin import (
     broadcast, draft, handle_draft_selection, handle_auto_draft, 
     handle_publish, handle_clear_pending_promo, add_group, remove_group,
     list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
-    edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat
+    edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin
 )
 from core.promoter import check_calendar
 from tools.local.data_manager import load_json, load_reminder_rules
@@ -186,6 +186,32 @@ def main():
             config=CONFIG,
         ),
     ))
+
+    # Voice Admin Handler
+    app.add_handler(MessageHandler(
+        filters.VOICE
+        & filters.User(user_id=CONFIG['ADMIN_ID']),
+        partial(
+            handle_voice_admin,
+            admin_id=CONFIG['ADMIN_ID'],
+            ai_service=AI_SERVICE,
+            state=STATE,
+            config=CONFIG,
+        ),
+    ))
+
+    # Global Error Handler
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Log the error and send a telegram message to notify the developer."""
+        logger.error(f"Exception while handling an update: {context.error}")
+        
+        # If the error is a NetworkError (like the httpx.ReadError seen), we just log it
+        # and let the bot continue polling.
+        if "httpx.ReadError" in str(context.error) or "NetworkError" in str(context.error):
+            logger.warning("Network interruption detected. Bot will retry automatically.")
+            return
+
+    app.add_error_handler(error_handler)
 
     # Terminal Branding
     print(r"""

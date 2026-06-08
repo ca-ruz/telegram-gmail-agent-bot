@@ -500,20 +500,21 @@ async def handle_auto_draft(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         await query.edit_message_text(f"🚀 Generando promoción para: {events[idx].get('summary')}\nPor favor espera...")
         await generate_promo_for_event(events[idx], context, admin_id, ai_service, state, config)
 
-async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, state, config):
+async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, state, config, forced_text=None):
     """
     Handles natural language messages from the Admin (no slash required).
     Determines intent (Add/Edit/Delete/Draft) using AI.
     """
-    if update.effective_user.id != admin_id or not update.message.text:
+    text = forced_text or (update.message.text if update.message else None)
+    
+    if update.effective_user.id != admin_id or not text:
         return
 
-    # Replies go to refinement logic
-    if update.message.reply_to_message:
+    # Replies go to refinement logic (only for text messages, not forced voice text)
+    if not forced_text and update.message and update.message.reply_to_message:
         await handle_admin_reply(update, context, admin_id, ai_service, state, config)
         return
 
-    text = update.message.text
     await update.message.reply_text("🤔 Entendiendo tu solicitud... Por favor espera.")
     
     res = await ai_service.generate_event_promo(text, INTENT_DETECTOR_PROMPT)
@@ -542,6 +543,42 @@ async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     except Exception as e:
         logger.error(f"Intent Error: {e}")
         await update.message.reply_text("❌ Error al procesar tu mensaje de chat.")
+
+async def handle_voice_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, state, config):
+    """
+    Downloads and transcribes voice notes from the admin, then routes them to the chat handler.
+    """
+    if update.effective_user.id != admin_id or not update.message.voice:
+        return
+
+    # Inform the user we're listening
+    await update.message.reply_chat_action("record_voice")
+    
+    try:
+        # Download the voice file
+        voice_file = await update.message.voice.get_file()
+        audio_buffer = BytesIO()
+        await voice_file.download_to_memory(out=audio_buffer)
+        audio_buffer.seek(0)
+        audio_buffer.name = "voice.ogg" # Whisper needs an extension to infer format
+
+        # Transcribe
+        await update.message.reply_text("🎤 Escuchando tu audio...")
+        text = await ai_service.transcribe_voice(audio_buffer)
+        
+        if not text or len(text.strip()) < 2:
+            await update.message.reply_text("❌ No pude entender el audio. ¿Podrías repetirlo o escribirlo?")
+            return
+
+        # Echo what we heard and process as text
+        await update.message.reply_text(f"📝 <i>Transripción:</i> \"{text}\"", parse_mode=ParseMode.HTML)
+        
+        # Process via handle_admin_chat using the forced_text parameter
+        await handle_admin_chat(update, context, admin_id, ai_service, state, config, forced_text=text)
+
+    except Exception as e:
+        logger.error(f"Voice Processing Error: {e}")
+        await update.message.reply_text("❌ Hubo un problema al procesar tu mensaje de voz.")
 
 # --- SHARED UTILS ---
 
