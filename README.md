@@ -4,7 +4,8 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
 
 ## Features
 
-*   **Natural Language Assistant:** Manage your community hands-free. The bot understands plain Spanish for adding, editing, or deleting events (optimized for talk-to-text dictation).
+*   **Natural Language Assistant:** Manage your community hands-free. The bot understands plain Spanish for adding, editing, or deleting events (optimized for voice notes and talk-to-text dictation).
+*   **AI Voice-to-Text:** Send voice messages directly to the bot. It uses OpenAI Whisper to transcribe your instructions and perform actions automatically.
 *   **Calendar Management:** Create, edit, and delete Google Calendar events directly from Telegram with the `/addevent`, `/editevent`, and `/deleteevent` commands.
 *   **Proactive AI Marketing:** Automatically detects new calendar events and offers to generate AI-powered flyers and Telegram posts using GPT-4o and DALL-E 3.
 *   **Interactive Refinement:** Don't like a draft? Just reply to it with instructions (e.g., "Make it more professional") and the AI will regenerate it.
@@ -83,17 +84,7 @@ python test_calendar.py
 *   `/checkprompts`: Show the last 5 image prompts.
 *   `/helpadmin`: Show all available admin tools.
 
-**💡 Pro Tip:** You can also just talk to the bot! Try saying *"Agrega un meetup para mañana a las 5pm"* or *"Cómo va el status?"* without any slashes.
-
-## Internal Files (Ignored by Git)
-*   `.env`: Sensitive credentials.
-*   `google_calendar.json`: Google API private keys.
-*   `data/subscribers.json`: List of active subscriber IDs.
-*   `data/sent_reminders.json`: History of sent notifications.
-*   `data/notified_promos.json`: History of events already notified to the admin.
-*   `data/prompt_history.json`: History of generated flyer prompts.
-*   `data/pending_promos.json`: Restart-safe staged promo waiting for publication.
-*   `data/bot.log`: Structured application logs.
+**💡 Pro Tip:** You can also just talk to the bot! Try sending a **voice note** or typing *"Agrega un meetup para mañana a las 5pm"* or *"Cómo va el status?"* without any slashes.
 
 ## License
 MIT License.
