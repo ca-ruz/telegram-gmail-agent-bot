@@ -113,3 +113,21 @@ class OpenAIService:
         except Exception as e:
             logger.error(f"❌ OpenAI Transcription Error: {e}")
             return None
+
+    async def generate_speech(self, text):
+        """
+        Converts text to speech (audio bytes) using OpenAI TTS.
+        """
+        try:
+            response = self.client.audio.speech.create(
+                model="tts-1",
+                voice="alloy",
+                input=text
+            )
+            # Return as BytesIO
+            audio_buffer = BytesIO(response.content)
+            audio_buffer.name = "response.ogg"
+            return audio_buffer
+        except Exception as e:
+            logger.error(f"❌ OpenAI TTS Error: {e}")
+            return None
