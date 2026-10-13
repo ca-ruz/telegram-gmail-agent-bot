@@ -14,27 +14,33 @@ SUBSCRIBERS_FILE = "data/subscribers.json"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handles the /start command. Sends a welcome image and message.
+    Handles the /start command. Sends a welcome image with a caption.
     """
     user = update.effective_user
     logger.info(f"User {user.id} (@{user.username}) started the bot.")
+
+    welcome_text = (
+        "¡Hola Bitcoiner! Bienvenido al bot de btc gdl, "
+        "suscríbete para recibir notificaciones de nuestros eventos."
+    )
 
     if os.path.exists(WELCOME_IMAGE_PATH):
         with open(WELCOME_IMAGE_PATH, "rb") as photo:
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
-                photo=photo
+                photo=photo,
+                caption=welcome_text,
+                reply_markup=get_main_keyboard()
             )
-
-    await update.message.reply_text(
-        "¡Hola Bitcoiner! Bienvenido al bot de btc gdl, "
-        "suscríbete para recibir notificaciones de nuestros eventos.",
-        reply_markup=get_main_keyboard()
-    )
+    else:
+        await update.message.reply_text(
+            welcome_text,
+            reply_markup=get_main_keyboard()
+        )
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handles the /menu command. Shows the main action buttons.
+    Handles the /menu command. Shows the main action buttons without the logo.
     """
     await update.message.reply_text(
         "¡Hola Bitcoiner! ¿Qué deseas hacer?.",
@@ -68,6 +74,7 @@ async def website(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE, subscribers):
     """
     Handles callback queries from inline keyboard buttons.
+    Edits existing message/caption to reduce clutter.
     """
     query = update.callback_query
     user = query.from_user
@@ -75,16 +82,20 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE, subsc
     
     await query.answer()
 
+    # Determine if we should edit text or caption
+    is_photo_msg = bool(query.message.photo)
+
     if data == "subscribe":
         if user.id not in subscribers:
             subscribers.add(user.id)
             save_json(SUBSCRIBERS_FILE, list(subscribers))
             logger.info(f"User {user.id} (@{user.username}) subscribed.")
         
-        await query.edit_message_text(
-            "¡Gracias por suscribirte!",
-            reply_markup=get_main_keyboard()
-        )
+        msg = "¡Gracias por suscribirte!"
+        if is_photo_msg:
+            await query.edit_message_caption(caption=msg, reply_markup=get_main_keyboard())
+        else:
+            await query.edit_message_text(text=msg, reply_markup=get_main_keyboard())
 
     elif data == "unsubscribe":
         if user.id in subscribers:
@@ -92,27 +103,36 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE, subsc
             save_json(SUBSCRIBERS_FILE, list(subscribers))
             logger.info(f"User {user.id} (@{user.username}) unsubscribed.")
         
-        await query.edit_message_text(
-            "Te has dado de baja del servcio, puedes volver a suscribirte en cualquier momento.",
-            reply_markup=get_main_keyboard()
-        )
+        msg = "Te has dado de baja del servicio, puedes volver a suscribirte en cualquier momento."
+        if is_photo_msg:
+            await query.edit_message_caption(caption=msg, reply_markup=get_main_keyboard())
+        else:
+            await query.edit_message_text(text=msg, reply_markup=get_main_keyboard())
 
     elif data == "meetup":
-        await query.edit_message_text(
-            "https://www.meetup.com/guadalajara-bitcoin-and-lightning/"
-        )
+        msg = "https://www.meetup.com/guadalajara-bitcoin-and-lightning/"
+        if is_photo_msg:
+            await query.edit_message_caption(caption=msg)
+        else:
+            await query.edit_message_text(text=msg)
 
     elif data == "events":
-        await query.edit_message_text(    
-            "https://btcgdl.com/eventos.html"
-        )
+        msg = "https://btcgdl.com/eventos.html"
+        if is_photo_msg:
+            await query.edit_message_caption(caption=msg)
+        else:
+            await query.edit_message_text(text=msg)
 
     elif data == "bitdevs":
-        await query.edit_message_text(
-            "https://bitdevs.btcgdl.com/"
-        )
+        msg = "https://bitdevs.btcgdl.com/"
+        if is_photo_msg:
+            await query.edit_message_caption(caption=msg)
+        else:
+            await query.edit_message_text(text=msg)
 
-    elif query.data == "website":
-        await query.edit_message_text(
-            "https://btcgdl.com/"
-        )
+    elif data == "website":
+        msg = "https://btcgdl.com/"
+        if is_photo_msg:
+            await query.edit_message_caption(caption=msg)
+        else:
+            await query.edit_message_text(text=msg)
