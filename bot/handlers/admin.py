@@ -114,7 +114,7 @@ def save_pending_promos(config, state):
         clean_pending[uid] = clean_data
     save_json(config['PENDING_PROMOS_FILE'], clean_pending)
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config, status_msg=None):
     """
     Admin-only command to show the bot's current status and configuration.
     """
@@ -127,7 +127,10 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
         f"🤖 <b>OpenAI:</b> {'✅ Configured' if config.get('OPENAI_API_KEY') else '❌ Missing Key'}\n"
         f"⏱ <b>Check Interval:</b> {config.get('CHECK_INTERVAL_MINUTES')} min"
     )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    if status_msg:
+        await status_msg.edit_text(msg, parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def pending_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state):
     """
@@ -208,12 +211,17 @@ async def handle_clear_pending_promo(update: Update, context: ContextTypes.DEFAU
 
 # --- CALENDAR ACTIONS (DELETE & EDIT) ---
 
-async def delete_event(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config):
+async def delete_event(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config, status_msg=None):
     """
     Admin-only command to list events and choose one for deletion.
     """
     if update.effective_user.id != admin_id: return
-    await update.message.reply_text("🔍 Buscando eventos próximos para eliminar...")
+    
+    if status_msg:
+        await status_msg.edit_text("🔍 Buscando eventos próximos para eliminar...")
+    else:
+        status_msg = await update.message.reply_text("🔍 Buscando eventos próximos para eliminar...")
+
     try:
         service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
         events, _ = fetch_upcoming_events(service, config['CALENDAR_ID'], days=30)
@@ -225,10 +233,10 @@ async def delete_event(update: Update, context: ContextTypes.DEFAULT_TYPE, admin
                 unique.append(e); processed.add(sid)
         context.user_data['delete_list'] = unique
         keyboard = [[InlineKeyboardButton(f"🗑 {e.get('summary')}", callback_data=f"confirm_del_{i}")] for i, e in enumerate(unique[:10])]
-        await update.message.reply_text("¿Qué evento quieres ELIMINAR del Google Calendar?", reply_markup=InlineKeyboardMarkup(keyboard))
+        await status_msg.edit_text("¿Qué evento quieres ELIMINAR del Google Calendar?", reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"Delete List Error: {e}")
-        await update.message.reply_text(f"❌ Error: {e}")
+        await status_msg.edit_text(f"❌ Error: {e}")
 
 async def handle_delete_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config):
     """
@@ -248,12 +256,17 @@ async def handle_delete_selection(update: Update, context: ContextTypes.DEFAULT_
         logger.info(f"Admin {admin_id} deleted event: {event.get('summary')}")
     except Exception as e: await query.edit_message_text(f"❌ Error: {e}")
 
-async def edit_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config):
+async def edit_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config, status_msg=None):
     """
     Initiates the interactive editing workflow for a calendar event.
     """
     if update.effective_user.id != admin_id: return
-    await update.message.reply_text("🔍 Selecciona un evento para editar sus detalles:")
+    
+    if status_msg:
+        await status_msg.edit_text("🔍 Selecciona un evento para editar sus detalles:")
+    else:
+        status_msg = await update.message.reply_text("🔍 Selecciona un evento para editar sus detalles:")
+
     try:
         service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
         events, _ = fetch_upcoming_events(service, config['CALENDAR_ID'], days=30)
@@ -265,8 +278,8 @@ async def edit_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE, a
                 unique.append(e); processed.add(sid)
         context.user_data['edit_list'] = unique
         keyboard = [[InlineKeyboardButton(f"✏️ {e.get('summary')}", callback_data=f"select_edit_{i}")] for i, e in enumerate(unique[:10])]
-        await update.message.reply_text("Elige el evento que quieres cambiar:", reply_markup=InlineKeyboardMarkup(keyboard))
-    except Exception as e: await update.message.reply_text(f"❌ Error: {e}")
+        await status_msg.edit_text("Elige el evento que quieres cambiar:", reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e: await status_msg.edit_text(f"❌ Error: {e}")
 
 async def handle_edit_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):
     """
@@ -303,7 +316,7 @@ async def handle_edit_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # --- ADD LOGIC ---
 
-async def add_event(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, forced_text=None):
+async def add_event(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, forced_text=None, status_msg=None):
     """
     Admin-only command to create a new calendar event using AI parsing.
     """
@@ -312,13 +325,17 @@ async def add_event(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id
         await update.message.reply_text("Uso: /addevent [descripción del evento]\nEjemplo: /addevent Meetup este viernes a las 6pm en Starbucks")
         return
     desc = forced_text if forced_text else " ".join(context.args)
-    await update.message.reply_text("⏳ Procesando detalles... Por favor espera.")
+    
+    if status_msg:
+        await status_msg.edit_text("⏳ Procesando detalles y buscando dirección... Por favor espera.")
+    else:
+        status_msg = await update.message.reply_text("⏳ Procesando detalles y buscando dirección... Por favor espera.")
     
     current_date = datetime.now().strftime("%Y-%m-%d")
     prompt = EVENT_PARSER_SYSTEM_PROMPT.format(current_date=current_date)
     res = await ai_service.generate_event_promo(desc, prompt)
     if not res: 
-        await update.message.reply_text("❌ Falló la generación del evento.")
+        await status_msg.edit_text("❌ Falló la generación del evento.")
         return
     try:
         data = json.loads(res)
@@ -327,14 +344,14 @@ async def add_event(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id
             f"📅 <b>CONFIRMAR NUEVO EVENTO</b>\n\n"
             f"<b>Título:</b> {escape(data['summary'])}\n"
             f"<b>Inicio:</b> {escape(data['start']['dateTime'])}\n"
-            f"<b>Ubicación:</b> {escape(data.get('location', 'N/A'))}\n\n"
+            f"<b>📍 Ubicación confirmada:</b> {escape(data.get('location', 'N/A'))}\n\n"
             f"¿Confirmar creación en Google Calendar?"
         )
         keyboard = [[InlineKeyboardButton("✅ Confirmar", callback_data="confirm_add"), InlineKeyboardButton("❌ Cancelar", callback_data="cancel_add")]]
-        await update.message.reply_text(summary, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+        await status_msg.edit_text(summary, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"Add Event Parse Error: {e}")
-        await update.message.reply_text("❌ Error al procesar los detalles del evento.")
+        await status_msg.edit_text("❌ Error al procesar los detalles del evento.")
 
 async def handle_add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config):
     """
@@ -455,13 +472,18 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE,
             except: await update.message.reply_text("❌ Error al procesar los cambios.")
         return
 
-async def draft(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config):
+async def draft(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config, status_msg=None):
     """
     Manual /draft command to pick an event and generate marketing content.
     """
     if update.effective_user.id != admin_id: return
     logger.info(f"Admin {admin_id} requested manual draft list.")
-    await update.message.reply_text("🔍 Buscando eventos próximos en el calendario...")
+    
+    if status_msg:
+        await status_msg.edit_text("🔍 Buscando eventos próximos en el calendario...")
+    else:
+        status_msg = await update.message.reply_text("🔍 Buscando eventos próximos en el calendario...")
+
     try:
         service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
         events, _ = fetch_upcoming_events(service, config['CALENDAR_ID'], days=30)
@@ -473,8 +495,8 @@ async def draft(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, co
                 unique.append(e); processed.add(sid)
         keyboard = [[InlineKeyboardButton(f"{e.get('summary')}", callback_data=f"select_draft_{i}")] for i, e in enumerate(unique[:5])]
         context.user_data['draft_events'] = unique
-        await update.message.reply_text("¿Para qué evento quieres generar un borrador?", reply_markup=InlineKeyboardMarkup(keyboard))
-    except Exception as e: await update.message.reply_text(f"❌ Error: {e}")
+        await status_msg.edit_text("¿Para qué evento quieres generar un borrador?", reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e: await status_msg.edit_text(f"❌ Error: {e}")
 
 async def handle_draft_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, state, config):
     """
@@ -500,7 +522,7 @@ async def handle_auto_draft(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         await query.edit_message_text(f"🚀 Generando promoción para: {events[idx].get('summary')}\nPor favor espera...")
         await generate_promo_for_event(events[idx], context, admin_id, ai_service, state, config)
 
-async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, state, config, forced_text=None):
+async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, state, config, forced_text=None, status_msg=None):
     """
     Handles natural language messages from the Admin (no slash required).
     Determines intent (Add/Edit/Delete/Draft) using AI.
@@ -515,11 +537,14 @@ async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         await handle_admin_reply(update, context, admin_id, ai_service, state, config)
         return
 
-    await update.message.reply_text("🤔 Entendiendo tu solicitud... Por favor espera.")
+    if not status_msg:
+        status_msg = await update.message.reply_text("🤔 Entendiendo tu solicitud... Por favor espera.")
+    else:
+        await status_msg.edit_text("🤔 Entendiendo tu solicitud... Por favor espera.")
     
     res = await ai_service.generate_event_promo(text, INTENT_DETECTOR_PROMPT)
     if not res:
-        await update.message.reply_text("❌ No pude entender tu solicitud. Intenta con un comando /helpadmin.")
+        await status_msg.edit_text("❌ No pude entender tu solicitud. Intenta con un comando /helpadmin.")
         return
 
     try:
@@ -527,22 +552,29 @@ async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         intent = intent_data.get("intent", "UNKNOWN")
         logger.info(f"AI detected admin intent: {intent}")
         
+        # TTS logic: If input was voice, read out the status
+        if forced_text:
+            voice_response = f"Entendido. Detecté que quieres {intent.lower().replace('_', ' ')}. Procesando..."
+            audio = await ai_service.generate_speech(voice_response)
+            if audio:
+                await update.message.reply_voice(voice=audio)
+
         if intent == "ADD_EVENT":
-            await add_event(update, context, admin_id, ai_service, forced_text=text)
+            await add_event(update, context, admin_id, ai_service, forced_text=text, status_msg=status_msg)
         elif intent == "DELETE_EVENT":
-            await delete_event(update, context, admin_id, config)
+            await delete_event(update, context, admin_id, config, status_msg=status_msg)
         elif intent == "EDIT_EVENT":
-            await edit_event_start(update, context, admin_id, config)
+            await edit_event_start(update, context, admin_id, config, status_msg=status_msg)
         elif intent == "DRAFT_PROMO":
-            await draft(update, context, admin_id, config)
+            await draft(update, context, admin_id, config, status_msg=status_msg)
         elif intent == "STATUS":
-            await status(update, context, admin_id, state, config)
+            await status(update, context, admin_id, state, config, status_msg=status_msg)
         else:
-            await update.message.reply_text("❓ No estoy seguro de qué quieres hacer. ¿Quieres agregar, editar o borrar un evento?")
+            await status_msg.edit_text("❓ No estoy seguro de qué quieres hacer. ¿Quieres agregar, editar o borrar un evento?")
             
     except Exception as e:
         logger.error(f"Intent Error: {e}")
-        await update.message.reply_text("❌ Error al procesar tu mensaje de chat.")
+        await status_msg.edit_text("❌ Error al procesar tu mensaje de chat.")
 
 async def handle_voice_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, ai_service, state, config):
     """
@@ -554,6 +586,9 @@ async def handle_voice_admin(update: Update, context: ContextTypes.DEFAULT_TYPE,
     # Inform the user we're listening
     await update.message.reply_chat_action("record_voice")
     
+    # Status message to be edited later
+    status_msg = await update.message.reply_text("🎤 Escuchando tu audio...")
+    
     try:
         # Download the voice file
         voice_file = await update.message.voice.get_file()
@@ -563,22 +598,21 @@ async def handle_voice_admin(update: Update, context: ContextTypes.DEFAULT_TYPE,
         audio_buffer.name = "voice.ogg" # Whisper needs an extension to infer format
 
         # Transcribe
-        await update.message.reply_text("🎤 Escuchando tu audio...")
         text = await ai_service.transcribe_voice(audio_buffer)
         
         if not text or len(text.strip()) < 2:
-            await update.message.reply_text("❌ No pude entender el audio. ¿Podrías repetirlo o escribirlo?")
+            await status_msg.edit_text("❌ No pude entender el audio. ¿Podrías repetirlo o escribirlo?")
             return
 
-        # Echo what we heard and process as text
-        await update.message.reply_text(f"📝 <i>Transripción:</i> \"{text}\"", parse_mode=ParseMode.HTML)
+        # Update status and process
+        await status_msg.edit_text(f"📝 <i>Transripción:</i> \"{text}\"", parse_mode=ParseMode.HTML)
         
         # Process via handle_admin_chat using the forced_text parameter
-        await handle_admin_chat(update, context, admin_id, ai_service, state, config, forced_text=text)
+        await handle_admin_chat(update, context, admin_id, ai_service, state, config, forced_text=text, status_msg=status_msg)
 
     except Exception as e:
         logger.error(f"Voice Processing Error: {e}")
-        await update.message.reply_text("❌ Hubo un problema al procesar tu mensaje de voz.")
+        await status_msg.edit_text("❌ Hubo un problema al procesar tu mensaje de voz.")
 
 # --- SHARED UTILS ---
 

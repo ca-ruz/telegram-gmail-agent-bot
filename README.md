@@ -6,8 +6,9 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
 
 *   **Natural Language Assistant:** Manage your community hands-free. The bot understands plain Spanish for adding, editing, or deleting events (optimized for voice notes and talk-to-text dictation).
 *   **AI Voice-to-Text:** Send voice messages directly to the bot. It uses OpenAI Whisper to transcribe your instructions and perform actions automatically.
+*   **Voice Feedback (TTS):** When you interact via voice, the bot responds with voice messages using OpenAI TTS, allowing for a fully hands-free experience.
 *   **Calendar Management:** Create, edit, and delete Google Calendar events directly from Telegram with the `/addevent`, `/editevent`, and `/deleteevent` commands.
-*   **Proactive AI Marketing:** Automatically detects new calendar events and offers to generate AI-powered flyers and Telegram posts using GPT-4o and DALL-E 3.
+*   **Proactive AI Marketing:** Automatically detects new calendar events and offers to generate AI-powered flyers and Telegram posts using GPT-4o and configurable GPT Image models.
 *   **Interactive Refinement:** Don't like a draft? Just reply to it with instructions (e.g., "Make it more professional") and the AI will regenerate it.
 *   **Automated Reminders:** Notifies subscribers at configurable intervals (1 week, 3 days, 24 hours, 1 hour before).
 *   **Smart Formatting:** Professional HTML-formatted messages with 12h AM/PM time and clean date display.

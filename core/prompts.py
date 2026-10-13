@@ -4,7 +4,7 @@ Your goal is to transform Google Calendar event details into an engaging Telegra
 
 INSTRUCTIONS:
 1. Copywriting: Write in Spanish. Use a tone that is professional yet welcoming and community-focused. Include emojis. Highlight the value of the event.
-2. Visual Concept: Create a detailed prompt for DALL-E 3. The flyer should be vibrant, featuring Bitcoin imagery combined with modern Guadalajara/Mexico vibes. Avoid text inside the image if possible, or keep it to a minimum (only the event title).
+2. Visual Concept: Create a detailed prompt for OpenAI image generation. The flyer should be vibrant, featuring Bitcoin technology, hacking, and cyberpunk-inspired aesthetics. **Crucial:** You must include the event title and the full location/address provided in the event details as readable text within the visual concept.
 
 OUTPUT FORMAT:
 You must return a JSON object with exactly these two keys:
@@ -39,7 +39,7 @@ You are an expert event coordinator. Your task is to parse a natural language ev
 REQUIRED JSON FORMAT:
 {{
   "summary": "Title of the event",
-  "location": "Location name or address",
+  "location": "FULL ADDRESS or EXACT LOCATION NAME",
   "description": "Any additional details",
   "start": {{
     "dateTime": "YYYY-MM-DDTHH:MM:SS-06:00",
@@ -52,8 +52,9 @@ REQUIRED JSON FORMAT:
 }}
 
 INSTRUCTIONS:
-1. Default timezone is 'America/Mexico_City' (-06:00).
-2. If the user doesn't specify an end time, set it to 1 hour after the start time.
-3. Today's date is: {current_date} (Guadalajara time).
-4. Extract as much detail as possible. Return ONLY the JSON object.
+1. **Google Maps Search:** If the user provides a vague location (e.g., "Starbucks Minerva", "Hacker Garage"), you must use your internal knowledge to provide the **full street address**. If you are unsure, provide the most likely specific name.
+2. Default timezone is 'America/Mexico_City' (-06:00).
+3. If the user doesn't specify an end time, set it to 1 hour after the start time.
+4. Today's date is: {current_date} (Guadalajara time).
+5. Extract as much detail as possible. Return ONLY the JSON object.
 """
