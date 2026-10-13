@@ -41,7 +41,7 @@ graph TD
 
 ### 2. **Core Layer (`core/`)**
 - **`core/promoter.py`**: The "brain" of the automated marketing. It polls the calendar, detects new events, and initiates the "draft -> refine -> publish" workflow.
-- **`core/prompts.py`**: Central repository for AI personas and system instructions (Intent detection, Copywriting, DALL-E flyers).
+- **`core/prompts.py`**: Central repository for AI personas and system instructions (Intent detection, Copywriting, GPT Image flyers).
 
 ### 3. **Service Layer (`services/`)**
 - **`services/openai_service.py`**: Abstracted wrapper for OpenAI. Handles GPT-4o text generation, Whisper transcription, OpenAI TTS-1 speech synthesis, and image generation.
