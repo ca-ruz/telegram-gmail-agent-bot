@@ -9,7 +9,8 @@ from bot.handlers.admin import (
     handle_publish, handle_clear_pending_promo, add_group, remove_group,
     list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
-    edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin
+    edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
+    coffee_host
 )
 from core.promoter import check_calendar
 from core.coffee_hosts import load_coffee_hosts, load_coffee_schedule, parse_reminder_rules
@@ -154,6 +155,13 @@ def main():
         partial(help_admin, admin_id=CONFIG['ADMIN_ID'])))
     app.add_handler(CommandHandler("pendingpromo",
         partial(pending_promo, admin_id=CONFIG['ADMIN_ID'], state=STATE)))
+    app.add_handler(CommandHandler("coffeehost",
+        partial(
+            coffee_host,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        )))
     
     # Callback Handlers
     app.add_handler(CallbackQueryHandler(

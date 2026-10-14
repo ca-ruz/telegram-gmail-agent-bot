@@ -1,6 +1,7 @@
 """Persistence and configuration helpers for weekly coffee host reminders."""
 
 import logging
+from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
 from tools.local.data_manager import load_json, save_json
@@ -54,3 +55,21 @@ def parse_reminder_rules(raw_rules):
         return VALID_REMINDER_RULES
 
     return tuple(dict.fromkeys(rules))
+
+
+def upcoming_saturdays(reference_date, count=4):
+    """Return the next Saturday dates, including the reference date when applicable."""
+    days_until_saturday = (5 - reference_date.weekday()) % 7
+    first_saturday = reference_date + timedelta(days=days_until_saturday)
+    return [first_saturday + timedelta(days=7 * index) for index in range(count)]
+
+
+def build_coffee_assignment(host_ids, venue, start_time, notes):
+    """Build a normalized Saturday assignment record."""
+    return {
+        "hosts": list(dict.fromkeys(host_ids)),
+        "venue": venue,
+        "start_time": start_time,
+        "notes": notes,
+        "reminders_sent": {},
+    }
