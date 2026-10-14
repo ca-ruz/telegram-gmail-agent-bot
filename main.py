@@ -13,7 +13,12 @@ from bot.handlers.admin import (
     coffee_host
 )
 from core.promoter import check_calendar
-from core.coffee_hosts import load_coffee_hosts, load_coffee_schedule, parse_reminder_rules
+from core.coffee_hosts import (
+    check_coffee_host_reminders,
+    load_coffee_hosts,
+    load_coffee_schedule,
+    parse_reminder_rules,
+)
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
 
@@ -113,11 +118,19 @@ def main():
     async def calendar_job(context):
         await check_calendar(context, config=CONFIG, state=STATE)
 
+    async def coffee_host_job(context):
+        await check_coffee_host_reminders(context, config=CONFIG, state=STATE)
+
     job_queue = app.job_queue
     job_queue.run_repeating(
         calendar_job,
         interval=CONFIG['CHECK_INTERVAL_MINUTES'] * 60,
         first=10,
+    )
+    job_queue.run_repeating(
+        coffee_host_job,
+        interval=CONFIG['CHECK_INTERVAL_MINUTES'] * 60,
+        first=20,
     )
 
     # User Handlers
