@@ -9,6 +9,7 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
 *   **Voice Feedback (TTS):** When you interact via voice, the bot responds with voice messages using OpenAI TTS, allowing for a fully hands-free experience.
 *   **Calendar Management:** Create, edit, and delete Google Calendar events directly from Telegram with the `/addevent`, `/editevent`, and `/deleteevent` commands.
 *   **Proactive AI Marketing:** Automatically detects new calendar events and offers to generate AI-powered flyers and Telegram posts using GPT-4o and configurable GPT Image models.
+*   **Manual Event Promos:** Admins can upload an existing flyer and publication text with `/manualpromo`; the bot schedules delivery without calling OpenAI.
 *   **Interactive Refinement:** Don't like a draft? Just reply to it with instructions (e.g., "Make it more professional") and the AI will regenerate it.
 *   **Automated Reminders:** Notifies subscribers at configurable intervals (1 week, 3 days, 24 hours, 1 hour before).
 *   **Smart Formatting:** Professional HTML-formatted messages with 12h AM/PM time and clean date display.
@@ -79,6 +80,7 @@ python test_calendar.py
 *   `/editevent`: Interactively edit an existing event.
 *   `/deleteevent`: Interactively delete an event from the calendar.
 *   `/draft`: Manually trigger a promo generation for an upcoming event.
+*   `/manualpromo AAAA-MM-DD HH:MM | Title | Text`: Stage an existing flyer for scheduled subscriber reminders, then upload the flyer as a photo.
 *   `/pendingpromo`: View and publish the currently staged draft.
 *   `/status`: Check bot health and configurations.
 *   `/checkprompt`: Show the most recent image prompt.
