@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from bot.handlers.admin import (
+    handle_manual_promo_cancel,
     handle_manual_promo_confirm,
     handle_manual_promo_photo,
     manual_promo,
@@ -147,6 +148,7 @@ def test_manual_promo_reminders_retry_only_failed_subscribers(tmp_path):
         asyncio.run(manual_promos.check_manual_promo_reminders(context, config, state))
 
     assert [message["chat_id"] for message in bot.sent] == [101]
+    assert "Coffee &amp; Co." in bot.sent[0]["caption"]
     assert state["manual_promos"]["manual-001"]["reminders_sent"] == {"24h": [101]}
 
     bot.failures.clear()
@@ -165,6 +167,113 @@ def test_manual_promo_reminders_ignore_pending_promos(tmp_path):
     promo = build_active_promo()
     promo["status"] = "pending"
     state = {"subscribers": {101}, "manual_promos": {"manual-001": promo}}
+    config = {
+        "MANUAL_PROMOS_FILE": str(tmp_path / "manual_promos.json"),
+        "REMINDER_RULES": {"24h": timedelta(days=1)},
+    }
+    bot = FakeBot()
+
+    with patch.object(manual_promos, "datetime", FrozenDateTime):
+        asyncio.run(
+            manual_promos.check_manual_promo_reminders(
+                SimpleNamespace(bot=bot), config, state
+            )
+        )
+
+    assert bot.sent == []
+
+
+def test_manual_promo_rejects_unauthorized_users():
+    """Non-admin users cannot start a manual promo draft."""
+    context = SimpleNamespace(user_data={})
+    message = SimpleNamespace(
+        text="/manualpromo 2026-12-01 11:00 | Event | Text",
+        reply_text=AsyncMock(),
+    )
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=99),
+        message=message,
+    )
+
+    asyncio.run(manual_promo(update, context, admin_id=42))
+
+    assert context.user_data == {}
+    message.reply_text.assert_not_awaited()
+
+
+def test_manual_promo_rejects_invalid_input():
+    """Missing fields and invalid dates produce usage feedback."""
+    context = SimpleNamespace(user_data={})
+    message = SimpleNamespace(
+        text="/manualpromo not-a-date | Event",
+        reply_text=AsyncMock(),
+    )
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        message=message,
+    )
+
+    asyncio.run(manual_promo(update, context, admin_id=42))
+
+    assert context.user_data == {}
+    assert message.reply_text.await_count == 1
+
+
+def test_manual_promo_photo_without_draft_is_ignored(tmp_path):
+    """A photo without a pending command does not create a promo."""
+    message = SimpleNamespace(
+        photo=[SimpleNamespace(file_id="photo-id")],
+        reply_photo=AsyncMock(),
+    )
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        message=message,
+    )
+    context = SimpleNamespace(user_data={})
+    state = {"manual_promos": {}}
+    config = {"MANUAL_PROMOS_FILE": str(tmp_path / "manual_promos.json")}
+
+    asyncio.run(handle_manual_promo_photo(update, context, 42, state, config))
+
+    assert state["manual_promos"] == {}
+    message.reply_photo.assert_not_awaited()
+
+
+def test_manual_promo_cancel_removes_persisted_promo(tmp_path):
+    """Canceling a staged promo removes it from memory and JSON storage."""
+    config = {"MANUAL_PROMOS_FILE": str(tmp_path / "manual_promos.json")}
+    state = {"manual_promos": {"manual-001": build_active_promo()}}
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=42),
+        data="manual_cancel_manual-001",
+        answer=AsyncMock(),
+        edit_message_caption=AsyncMock(),
+    )
+
+    asyncio.run(
+        handle_manual_promo_cancel(
+            SimpleNamespace(callback_query=query),
+            SimpleNamespace(),
+            42,
+            state,
+            config,
+        )
+    )
+
+    assert state["manual_promos"] == {}
+    assert load_json(config["MANUAL_PROMOS_FILE"], {"unexpected": True}) == {}
+
+
+def test_manual_promo_reminders_skip_expired_and_malformed_records(tmp_path):
+    """Expired and malformed manual promos are skipped without sending."""
+    expired = build_active_promo()
+    expired["event_start"] = "2026-10-15T10:00:00-06:00"
+    malformed = build_active_promo()
+    malformed["event_start"] = "not-a-date"
+    state = {
+        "subscribers": {101},
+        "manual_promos": {"expired": expired, "malformed": malformed},
+    }
     config = {
         "MANUAL_PROMOS_FILE": str(tmp_path / "manual_promos.json"),
         "REMINDER_RULES": {"24h": timedelta(days=1)},
