@@ -10,7 +10,8 @@ from bot.handlers.admin import (
     list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
-    coffee_host
+    coffee_host, manual_promo, handle_manual_promo_photo,
+    handle_manual_promo_confirm, handle_manual_promo_cancel,
 )
 from core.promoter import check_calendar
 from core.coffee_hosts import (
@@ -19,6 +20,7 @@ from core.coffee_hosts import (
     load_coffee_schedule,
     parse_reminder_rules,
 )
+from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
 
@@ -64,6 +66,7 @@ CONFIG = {
     'GROUPS_FILE': "data/groups.json",
     'PROMPT_HISTORY_FILE': "data/prompt_history.json",
     'PENDING_PROMOS_FILE': "data/pending_promos.json",
+    'MANUAL_PROMOS_FILE': os.getenv("MANUAL_PROMOS_FILE", "data/manual_promos.json"),
     'COFFEE_HOSTS_FILE': os.getenv("COFFEE_HOSTS_FILE", "data/coffee_hosts.json"),
     'COFFEE_HOST_SCHEDULE_FILE': os.getenv("COFFEE_HOST_SCHEDULE_FILE", "data/coffee_host_schedule.json"),
     'COFFEE_HOST_REMINDER_RULES': parse_reminder_rules(
@@ -87,6 +90,7 @@ STATE = {
     'sent_reminders': load_json(CONFIG['REMINDERS_FILE'], {}),
     'notified_promos': raw_notified,
     'pending_promos': load_json(CONFIG['PENDING_PROMOS_FILE'], {}),
+    'manual_promos': load_manual_promos(CONFIG['MANUAL_PROMOS_FILE']),
     'coffee_hosts': load_coffee_hosts(CONFIG['COFFEE_HOSTS_FILE']),
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
 }
@@ -121,6 +125,9 @@ def main():
     async def coffee_host_job(context):
         await check_coffee_host_reminders(context, config=CONFIG, state=STATE)
 
+    async def manual_promo_job(context):
+        await check_manual_promo_reminders(context, config=CONFIG, state=STATE)
+
     job_queue = app.job_queue
     job_queue.run_repeating(
         calendar_job,
@@ -131,6 +138,11 @@ def main():
         coffee_host_job,
         interval=CONFIG['CHECK_INTERVAL_MINUTES'] * 60,
         first=20,
+    )
+    job_queue.run_repeating(
+        manual_promo_job,
+        interval=CONFIG['CHECK_INTERVAL_MINUTES'] * 60,
+        first=30,
     )
 
     # User Handlers
@@ -175,6 +187,8 @@ def main():
             state=STATE,
             config=CONFIG,
         )))
+    app.add_handler(CommandHandler("manualpromo",
+        partial(manual_promo, admin_id=CONFIG['ADMIN_ID'])))
     
     # Callback Handlers
     app.add_handler(CallbackQueryHandler(
@@ -189,6 +203,22 @@ def main():
     app.add_handler(CallbackQueryHandler(
         partial(handle_clear_pending_promo, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG),
         pattern="^clear_pending_promo$"))
+    app.add_handler(CallbackQueryHandler(
+        partial(
+            handle_manual_promo_confirm,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        ),
+        pattern="^manual_confirm_"))
+    app.add_handler(CallbackQueryHandler(
+        partial(
+            handle_manual_promo_cancel,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        ),
+        pattern="^manual_cancel_"))
     app.add_handler(CallbackQueryHandler(
         partial(handle_add_confirm, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
         pattern="^(confirm_add|cancel_add)$"))
@@ -205,6 +235,17 @@ def main():
         partial(button_click, subscribers=STATE['subscribers'])))
 
     # Smart Admin Chat Handler (Natural Language)
+    app.add_handler(MessageHandler(
+        filters.PHOTO
+        & filters.User(user_id=CONFIG['ADMIN_ID']),
+        partial(
+            handle_manual_promo_photo,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        ),
+    ))
+
     app.add_handler(MessageHandler(
         filters.TEXT
         & ~filters.COMMAND
