@@ -9,9 +9,16 @@ from bot.handlers.admin import (
     handle_publish, handle_clear_pending_promo, add_group, remove_group,
     list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
-    edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin
+    edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
+    coffee_host
 )
 from core.promoter import check_calendar
+from core.coffee_hosts import (
+    check_coffee_host_reminders,
+    load_coffee_hosts,
+    load_coffee_schedule,
+    parse_reminder_rules,
+)
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
 
@@ -56,7 +63,14 @@ CONFIG = {
     'PROMOTED_FILE': "data/notified_promos.json",
     'GROUPS_FILE': "data/groups.json",
     'PROMPT_HISTORY_FILE': "data/prompt_history.json",
-    'PENDING_PROMOS_FILE': "data/pending_promos.json"
+    'PENDING_PROMOS_FILE': "data/pending_promos.json",
+    'COFFEE_HOSTS_FILE': os.getenv("COFFEE_HOSTS_FILE", "data/coffee_hosts.json"),
+    'COFFEE_HOST_SCHEDULE_FILE': os.getenv("COFFEE_HOST_SCHEDULE_FILE", "data/coffee_host_schedule.json"),
+    'COFFEE_HOST_REMINDER_RULES': parse_reminder_rules(
+        os.getenv("COFFEE_HOST_REMINDER_RULES", "7d,1d")
+    ),
+    'COFFEE_DEFAULT_START_TIME': os.getenv("COFFEE_DEFAULT_START_TIME", "11:00"),
+    'COFFEE_DEFAULT_VENUE': os.getenv("COFFEE_DEFAULT_VENUE", ""),
 }
 
 # --- STATE INITIALIZATION & MIGRATION ---
@@ -72,7 +86,9 @@ STATE = {
     'groups': set(load_json(CONFIG['GROUPS_FILE'], [])),
     'sent_reminders': load_json(CONFIG['REMINDERS_FILE'], {}),
     'notified_promos': raw_notified,
-    'pending_promos': load_json(CONFIG['PENDING_PROMOS_FILE'], {})
+    'pending_promos': load_json(CONFIG['PENDING_PROMOS_FILE'], {}),
+    'coffee_hosts': load_coffee_hosts(CONFIG['COFFEE_HOSTS_FILE']),
+    'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
 }
 
 # Add reminder rules to config
@@ -102,11 +118,19 @@ def main():
     async def calendar_job(context):
         await check_calendar(context, config=CONFIG, state=STATE)
 
+    async def coffee_host_job(context):
+        await check_coffee_host_reminders(context, config=CONFIG, state=STATE)
+
     job_queue = app.job_queue
     job_queue.run_repeating(
         calendar_job,
         interval=CONFIG['CHECK_INTERVAL_MINUTES'] * 60,
         first=10,
+    )
+    job_queue.run_repeating(
+        coffee_host_job,
+        interval=CONFIG['CHECK_INTERVAL_MINUTES'] * 60,
+        first=20,
     )
 
     # User Handlers
@@ -144,6 +168,13 @@ def main():
         partial(help_admin, admin_id=CONFIG['ADMIN_ID'])))
     app.add_handler(CommandHandler("pendingpromo",
         partial(pending_promo, admin_id=CONFIG['ADMIN_ID'], state=STATE)))
+    app.add_handler(CommandHandler("coffeehost",
+        partial(
+            coffee_host,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        )))
     
     # Callback Handlers
     app.add_handler(CallbackQueryHandler(

@@ -8,28 +8,39 @@ from telegram.constants import ParseMode
 from tools.local.calendar_api import get_calendar_service_with_creds, fetch_upcoming_events, create_calendar_event
 from tools.local.data_manager import load_json, save_json
 from core.prompts import PROMOTER_SYSTEM_PROMPT, EVENT_PARSER_SYSTEM_PROMPT, INTENT_DETECTOR_PROMPT
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from core.coffee_hosts import COFFEE_TIMEZONE, build_coffee_assignment, upcoming_saturdays
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
 
-def save_prompt_history(config, event_summary, image_prompt):
+def save_prompt_history(config, event, image_prompt):
     """
     Stores a generated image prompt for later admin review.
     
     Args:
         config (dict): Bot configuration dictionary.
-        event_summary (str): The summary/title of the event.
+        event (dict or str): The event object, or a legacy event title.
         image_prompt (str): The prompt used for DALL-E generation.
     """
     prompt_history = load_json(config['PROMPT_HISTORY_FILE'], [])
-    prompt_history.append({
+    if isinstance(event, dict):
+        event_summary = event.get("summary", "Sin título")
+        event_start = event.get("start")
+    else:
+        event_summary = event
+        event_start = None
+
+    entry = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "event": event_summary,
         "image_model": config.get("OPENAI_IMAGE_MODEL"),
         "image_quality": config.get("OPENAI_IMAGE_QUALITY"),
         "image_prompt": image_prompt,
-    })
+    }
+    if event_start is not None:
+        entry["event_start"] = event_start
+    prompt_history.append(entry)
     save_json(config['PROMPT_HISTORY_FILE'], prompt_history[-50:])
 
 def format_prompt_history_entry(entry, prompt_limit=900):
@@ -96,9 +107,113 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "/pendingpromo - Show currently staged promo with publish/delete buttons\n"
         "/checkprompt - Show the most recent image prompt\n"
         "/checkprompts - Show the last 5 image prompts\n"
+        "/coffeehost - View or assign Saturday coffee hosts\n"
         "/broadcast - Send a manual message to all subscribers\n\n"
         "💡 <i>Tip: Puedes responder a un borrador o a un evento seleccionado para editarlo con AI.</i>",
         parse_mode=ParseMode.HTML
+    )
+
+
+def format_coffee_host_schedule(schedule, hosts, reference_date):
+    """Format upcoming Saturday assignments for the admin command."""
+    lines = ["☕ <b>Próximos anfitriones del café</b>"]
+    for saturday in upcoming_saturdays(reference_date):
+        date_key = saturday.isoformat()
+        assignment = schedule.get(date_key)
+        if not assignment:
+            lines.append(f"\n<b>{saturday.strftime('%d/%m/%Y')}</b>: Sin asignar")
+            continue
+
+        host_names = [
+            hosts.get(host_id, {}).get("name", host_id)
+            for host_id in assignment.get("hosts", [])
+        ]
+        host_text = ", ".join(escape(name) for name in host_names) or "Sin anfitriones"
+        venue = escape(assignment.get("venue") or "Lugar pendiente")
+        start_time = escape(assignment.get("start_time") or "Hora pendiente")
+        lines.append(
+            f"\n<b>{saturday.strftime('%d/%m/%Y')}</b>: {host_text}"
+            f"\n📍 {venue} · ⏰ {start_time}"
+        )
+        if assignment.get("notes"):
+            lines.append(f"\n📝 {escape(assignment['notes'])}")
+
+    active_hosts = [
+        f"<code>{escape(host_id)}</code> - {escape(data.get('name', host_id))}"
+        for host_id, data in hosts.items()
+        if data.get("active", True)
+    ]
+    lines.append("\n<b>Anfitriones activos:</b>")
+    lines.extend(active_hosts or ["Ninguno configurado"])
+    lines.append(
+        "\nUso: <code>/coffeehost AAAA-MM-DD host-001,host-002 | Lugar | 11:00 | Notas</code>"
+    )
+    lines.append("Para borrar una asignación: <code>/coffeehost AAAA-MM-DD clear</code>")
+    return "".join(lines)
+
+
+async def coffee_host(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
+    """View or update Saturday coffee host assignments."""
+    if update.effective_user.id != admin_id:
+        return
+
+    raw_args = update.message.text.partition(" ")[2].strip()
+    schedule = state.setdefault("coffee_host_schedule", {})
+    hosts = state.setdefault("coffee_hosts", {})
+
+    if not raw_args:
+        today = datetime.now(COFFEE_TIMEZONE).date()
+        await update.message.reply_text(
+            format_coffee_host_schedule(schedule, hosts, today),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    command_parts = [part.strip() for part in raw_args.split("|")]
+    assignment_parts = command_parts[0].split()
+    if len(assignment_parts) < 2:
+        await update.message.reply_text(
+            "Uso: /coffeehost AAAA-MM-DD host-001,host-002 | Lugar | 11:00 | Notas"
+        )
+        return
+
+    date_key = assignment_parts[0]
+    try:
+        saturday = date.fromisoformat(date_key)
+    except ValueError:
+        await update.message.reply_text("❌ La fecha debe tener formato AAAA-MM-DD.")
+        return
+
+    if saturday.weekday() != 5:
+        await update.message.reply_text("❌ La fecha debe ser un sábado.")
+        return
+
+    host_ids = [host_id.strip() for host_id in assignment_parts[1].split(",") if host_id.strip()]
+    if len(host_ids) == 1 and host_ids[0].lower() == "clear":
+        if date_key in schedule:
+            del schedule[date_key]
+            save_json(config["COFFEE_HOST_SCHEDULE_FILE"], schedule)
+        await update.message.reply_text(f"✅ Asignación eliminada para {date_key}.")
+        return
+
+    missing_hosts = [
+        host_id for host_id in host_ids
+        if host_id not in hosts or not hosts[host_id].get("active", True)
+    ]
+    if missing_hosts:
+        missing = ", ".join(missing_hosts)
+        await update.message.reply_text(f"❌ Anfitriones no disponibles: {missing}")
+        return
+
+    venue = command_parts[1] if len(command_parts) > 1 and command_parts[1] else config["COFFEE_DEFAULT_VENUE"]
+    start_time = command_parts[2] if len(command_parts) > 2 and command_parts[2] else config["COFFEE_DEFAULT_START_TIME"]
+    notes = command_parts[3] if len(command_parts) > 3 else ""
+    schedule[date_key] = build_coffee_assignment(host_ids, venue, start_time, notes)
+    save_json(config["COFFEE_HOST_SCHEDULE_FILE"], schedule)
+    await update.message.reply_text(
+        f"✅ Anfitriones asignados para {date_key}: {', '.join(host_ids)}\n"
+        f"📍 {escape(venue)} · ⏰ {escape(start_time)}",
+        parse_mode=ParseMode.HTML,
     )
 
 def save_pending_promos(config, state):
@@ -177,11 +292,15 @@ async def handle_publish(update: Update, context: ContextTypes.DEFAULT_TYPE, adm
     image = staged['image']
     text = staged['text']
 
+    groups_sent = 0
+    subscribers_sent = 0
+
     # Groups
     for group_id in state['groups']:
         try:
             if isinstance(image, BytesIO): image.seek(0)
             await context.bot.send_photo(group_id, photo=image, caption=text, parse_mode=ParseMode.HTML)
+            groups_sent += 1
         except Exception as e:
             logger.error(f"Failed to publish to group {group_id}: {e}")
     
@@ -190,10 +309,13 @@ async def handle_publish(update: Update, context: ContextTypes.DEFAULT_TYPE, adm
         try:
             if isinstance(image, BytesIO): image.seek(0)
             await context.bot.send_photo(user_id, photo=image, caption=text, parse_mode=ParseMode.HTML)
+            subscribers_sent += 1
         except Exception as e:
-            logger.error(f"Failed to publish to user {user_id}: {e}")
+            logger.error(f"Failed to publish to subscriber {user_id}: {e}")
 
-    await query.edit_message_caption(f"✅ Published successfully to groups and subscribers!")
+    await query.edit_message_caption(
+        f"✅ Sent to {groups_sent} groups and {subscribers_sent} subscribers."
+    )
     del state['pending_promos'][str(admin_id)]
     save_pending_promos(config, state)
 
@@ -383,7 +505,12 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
     # Persistence tracking
     eid = event.get("id", "unk")
     start_raw = event.get("start", {}).get("dateTime", event.get("start", {}).get("date", "unk"))
-    storage_key = f"{eid}_{start_raw[:10]}"
+    try:
+        parsed_start = datetime.fromisoformat(start_raw)
+        storage_start = parsed_start.strftime("%Y%m%dT%H%M%SZ")
+    except (TypeError, ValueError):
+        storage_start = start_raw[:10].replace("-", "")
+    storage_key = f"{eid}_{storage_start}"
     
     notified = state['notified_promos']
     promo_state = notified.get(storage_key, {"notified_thresholds": [], "flyer_created": False})
@@ -410,7 +537,7 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
         prmpt = data.get("image_prompt")
         
         if prmpt:
-            save_prompt_history(config, event_summary, prmpt)
+            save_prompt_history(config, event, prmpt)
             
         label = "DRAFT REFINED" if instructions else "DRAFT GENERATED"
         await context.bot.send_message(admin_id, f"<b>📝 {label}:</b>\n\n{txt}", parse_mode=ParseMode.HTML)
@@ -434,6 +561,7 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
                     "text": txt, 
                     "image": stored_image, 
                     "summary": event_summary, 
+                    "storage_key": storage_key,
                     "event_id": eid,
                     "event_start": start_raw,
                     "event_info": event
@@ -453,6 +581,11 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE,
     # 1. Handle draft refinement
     staged = state['pending_promos'].get(str(admin_id))
     if staged:
+        if not staged.get("event_info"):
+            await update.message.reply_text(
+                "❌ This older draft cannot be edited because its event data is missing."
+            )
+            return
         await generate_promo_for_event(staged['event_info'], context, admin_id, ai_service, state, config, instructions=update.message.text)
         return
 
