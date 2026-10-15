@@ -10,6 +10,7 @@ from tools.local.data_manager import load_json, save_json
 from core.prompts import PROMOTER_SYSTEM_PROMPT, EVENT_PARSER_SYSTEM_PROMPT, INTENT_DETECTOR_PROMPT
 from datetime import date, datetime, timezone
 from core.coffee_hosts import COFFEE_TIMEZONE, build_coffee_assignment, upcoming_saturdays
+from core.manual_promos import build_manual_promo, save_manual_promos
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -104,6 +105,7 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "/editevent - Interactively edit an existing event\n"
         "/deleteevent - Interactively delete an event\n"
         "/draft - Manually generate a promo for an upcoming event\n"
+        "/manualpromo - Stage an existing flyer and publication text\n"
         "/pendingpromo - Show currently staged promo with publish/delete buttons\n"
         "/checkprompt - Show the most recent image prompt\n"
         "/checkprompts - Show the last 5 image prompts\n"
@@ -112,6 +114,146 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "💡 <i>Tip: Puedes responder a un borrador o a un evento seleccionado para editarlo con AI.</i>",
         parse_mode=ParseMode.HTML
     )
+
+
+async def manual_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):
+    """Start staging a manually supplied event flyer and publication text."""
+    if update.effective_user.id != admin_id:
+        return
+
+    raw_args = update.message.text.partition(" ")[2].strip()
+    parts = [part.strip() for part in raw_args.split("|", 2)]
+    if len(parts) != 3:
+        await update.message.reply_text(
+            "Uso: /manualpromo AAAA-MM-DD HH:MM | Título | Texto de publicación"
+        )
+        return
+
+    try:
+        event_start = datetime.fromisoformat(parts[0])
+    except ValueError:
+        await update.message.reply_text(
+            "❌ La fecha debe tener formato AAAA-MM-DD HH:MM."
+        )
+        return
+
+    if event_start.tzinfo is None:
+        event_start = event_start.replace(tzinfo=COFFEE_TIMEZONE)
+
+    if event_start <= datetime.now(event_start.tzinfo):
+        await update.message.reply_text("❌ La fecha del evento debe estar en el futuro.")
+        return
+
+    context.user_data["manual_promo_draft"] = {
+        "event_id": f"manual-{event_start.strftime('%Y%m%dT%H%M%S')}",
+        "summary": parts[1],
+        "event_start": event_start.isoformat(),
+        "text": parts[2],
+    }
+    await update.message.reply_text(
+        "✅ Datos guardados. Ahora envía el flyer como una foto para continuar."
+    )
+
+
+async def handle_manual_promo_photo(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+    config,
+):
+    """Store the admin's uploaded flyer and show a confirmation preview."""
+    if update.effective_user.id != admin_id:
+        return
+
+    draft = context.user_data.get("manual_promo_draft")
+    if not draft:
+        return
+
+    image_file_id = update.message.photo[-1].file_id
+    promo = build_manual_promo(
+        draft["event_id"],
+        draft["summary"],
+        draft["event_start"],
+        draft["text"],
+        image_file_id,
+    )
+    promo["status"] = "pending"
+    state.setdefault("manual_promos", {})[draft["event_id"]] = promo
+    save_manual_promos(config["MANUAL_PROMOS_FILE"], state["manual_promos"])
+    context.user_data.pop("manual_promo_draft", None)
+
+    caption = (
+        f"<b>{escape(promo['summary'])}</b>\n"
+        f"<b>Fecha:</b> {escape(promo['event_start'])}\n\n"
+        f"{escape(promo['text'])[:900]}\n\n"
+        "¿Activar este promo para los recordatorios?"
+    )
+    keyboard = [[
+        InlineKeyboardButton(
+            "✅ Activar",
+            callback_data=f"manual_confirm_{draft['event_id']}",
+        ),
+        InlineKeyboardButton(
+            "🗑 Eliminar",
+            callback_data=f"manual_cancel_{draft['event_id']}",
+        ),
+    ]]
+    await update.message.reply_photo(
+        photo=image_file_id,
+        caption=caption,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def handle_manual_promo_confirm(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+    config,
+):
+    """Activate a manually staged promo after admin confirmation."""
+    query = update.callback_query
+    if query.from_user.id != admin_id:
+        return
+
+    await query.answer()
+    promo_id = query.data.removeprefix("manual_confirm_")
+    promo = state.setdefault("manual_promos", {}).get(promo_id)
+    if not promo:
+        await query.edit_message_caption("❌ El promo manual ya no existe.")
+        return
+
+    promo["status"] = "active"
+    save_manual_promos(config["MANUAL_PROMOS_FILE"], state["manual_promos"])
+    await query.edit_message_caption(
+        f"✅ Promo activado para recordatorios: {escape(promo['summary'])}",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def handle_manual_promo_cancel(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+    config,
+):
+    """Delete a manually staged promo after admin cancellation."""
+    query = update.callback_query
+    if query.from_user.id != admin_id:
+        return
+
+    await query.answer()
+    promo_id = query.data.removeprefix("manual_cancel_")
+    promo = state.setdefault("manual_promos", {}).pop(promo_id, None)
+    if promo:
+        save_manual_promos(config["MANUAL_PROMOS_FILE"], state["manual_promos"])
+        await query.edit_message_caption("🗑 Promo manual eliminado.")
+    else:
+        await query.edit_message_caption("❌ El promo manual ya no existe.")
 
 
 def format_coffee_host_schedule(schedule, hosts, reference_date):

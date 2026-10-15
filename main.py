@@ -10,7 +10,8 @@ from bot.handlers.admin import (
     list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
-    coffee_host
+    coffee_host, manual_promo, handle_manual_promo_photo,
+    handle_manual_promo_confirm, handle_manual_promo_cancel,
 )
 from core.promoter import check_calendar
 from core.coffee_hosts import (
@@ -178,6 +179,8 @@ def main():
             state=STATE,
             config=CONFIG,
         )))
+    app.add_handler(CommandHandler("manualpromo",
+        partial(manual_promo, admin_id=CONFIG['ADMIN_ID'])))
     
     # Callback Handlers
     app.add_handler(CallbackQueryHandler(
@@ -192,6 +195,22 @@ def main():
     app.add_handler(CallbackQueryHandler(
         partial(handle_clear_pending_promo, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG),
         pattern="^clear_pending_promo$"))
+    app.add_handler(CallbackQueryHandler(
+        partial(
+            handle_manual_promo_confirm,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        ),
+        pattern="^manual_confirm_"))
+    app.add_handler(CallbackQueryHandler(
+        partial(
+            handle_manual_promo_cancel,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        ),
+        pattern="^manual_cancel_"))
     app.add_handler(CallbackQueryHandler(
         partial(handle_add_confirm, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
         pattern="^(confirm_add|cancel_add)$"))
@@ -208,6 +227,17 @@ def main():
         partial(button_click, subscribers=STATE['subscribers'])))
 
     # Smart Admin Chat Handler (Natural Language)
+    app.add_handler(MessageHandler(
+        filters.PHOTO
+        & filters.User(user_id=CONFIG['ADMIN_ID']),
+        partial(
+            handle_manual_promo_photo,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        ),
+    ))
+
     app.add_handler(MessageHandler(
         filters.TEXT
         & ~filters.COMMAND
