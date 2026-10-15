@@ -83,7 +83,8 @@ def test_check_calendar_sends_subscriber_reminders_and_deduplicates(tmp_path):
     ]
     assert {message["chat_id"] for message in subscriber_messages} == {101, 202}
     storage_key = "event-001_20261015T120000Z"
-    assert set(state["sent_reminders"][storage_key]) == {"1h", "24h"}
+    assert set(state["sent_reminders"][storage_key].keys()) == {"1h", "24h"}
+    assert set(state["sent_reminders"][storage_key]["1h"]) == {101, 202}
     assert "https://example.com/meetup" in subscriber_messages[0]["message"]
 
 
@@ -120,6 +121,9 @@ def test_check_calendar_retries_failed_subscriber_delivery(tmp_path):
     event = make_event()
 
     run_calendar_check([event], now, state, config, bot)
+
+    storage_key = "event-001_20261015T120000Z"
+    assert set(state["sent_reminders"][storage_key]["1h"]) == {101}
 
     bot.failures.clear()
     run_calendar_check([event], now, state, config, bot)

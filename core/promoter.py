@@ -187,31 +187,61 @@ async def check_calendar(context, config, state):
             formatted_date = event_time_gdl.strftime("%d/%m")
             formatted_time = event_time_gdl.strftime("%I:%M %p")
 
-            sent_for_event = sent_reminders.get(storage_key, [])
+            stored_sent = sent_reminders.get(storage_key, {})
+            if isinstance(stored_sent, list):
+                # Older state recorded only completed stages. Preserve that
+                # meaning by treating those stages as delivered to current subscribers.
+                sent_for_event = {
+                    stage: list(subscribers)
+                    for stage in stored_sent
+                }
+                sent_reminders[storage_key] = sent_for_event
+            elif isinstance(stored_sent, dict):
+                sent_for_event = stored_sent
+            else:
+                sent_for_event = {}
+
             rules_ascending = sorted(config['REMINDER_RULES'].items(), key=lambda x: x[1])
 
             for key, threshold in rules_ascending:
                 if delta <= threshold and delta > timedelta(0):
-                    if key not in sent_for_event:
-                        actual_delta_desc = friendly_delta(delta)
-                        message = (
-                            f"📅 <b>Próximo evento: {title}</b>\n\n"
-                            f"🗓 <b>Fecha:</b> {formatted_date}\n"
-                            f"⏰ <b>Hora:</b> {formatted_time}\n"
-                            f"⏳ <b>Faltan:</b> {actual_delta_desc}\n\n"
-                            f"🔗 <a href='{link}'>Más información y registro</a>"
-                        )
+                    sent_for_stage = set(sent_for_event.get(key, []))
+                    pending_users = [
+                        user_id for user_id in subscribers
+                        if user_id not in sent_for_stage
+                    ]
+                    if not pending_users:
+                        break
 
-                        for user_id in subscribers:
-                            try:
-                                await context.bot.send_message(user_id, message, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
-                            except Exception as e:
-                                logger.error(f"Could not send reminder to {user_id}: {e}")
+                    actual_delta_desc = friendly_delta(delta)
+                    message = (
+                        f"📅 <b>Próximo evento: {title}</b>\n\n"
+                        f"🗓 <b>Fecha:</b> {formatted_date}\n"
+                        f"⏰ <b>Hora:</b> {formatted_time}\n"
+                        f"⏳ <b>Faltan:</b> {actual_delta_desc}\n\n"
+                        f"🔗 <a href='{link}'>Más información y registro</a>"
+                    )
 
+                    delivered_users = []
+                    for user_id in pending_users:
+                        try:
+                            await context.bot.send_message(
+                                user_id,
+                                message,
+                                parse_mode=ParseMode.HTML,
+                                disable_web_page_preview=False,
+                            )
+                            delivered_users.append(user_id)
+                        except Exception as e:
+                            logger.error(f"Could not send reminder to {user_id}: {e}")
+
+                    if delivered_users:
                         for k, t in rules_ascending:
-                            if delta <= t and k not in sent_for_event:
-                                sent_for_event.append(k)
-                        
+                            if delta <= t:
+                                delivered_for_stage = set(sent_for_event.get(k, []))
+                                delivered_for_stage.update(delivered_users)
+                                sent_for_event[k] = list(delivered_for_stage)
+
                         sent_reminders[storage_key] = sent_for_event
                         save_json(config['REMINDERS_FILE'], sent_reminders)
                         logger.info(f"Reminder [{key}] sent for: {title}")
