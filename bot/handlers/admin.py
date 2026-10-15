@@ -14,23 +14,33 @@ from core.coffee_hosts import COFFEE_TIMEZONE, build_coffee_assignment, upcoming
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
 
-def save_prompt_history(config, event_summary, image_prompt):
+def save_prompt_history(config, event, image_prompt):
     """
     Stores a generated image prompt for later admin review.
     
     Args:
         config (dict): Bot configuration dictionary.
-        event_summary (str): The summary/title of the event.
+        event (dict or str): The event object, or a legacy event title.
         image_prompt (str): The prompt used for DALL-E generation.
     """
     prompt_history = load_json(config['PROMPT_HISTORY_FILE'], [])
-    prompt_history.append({
+    if isinstance(event, dict):
+        event_summary = event.get("summary", "Sin título")
+        event_start = event.get("start")
+    else:
+        event_summary = event
+        event_start = None
+
+    entry = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "event": event_summary,
         "image_model": config.get("OPENAI_IMAGE_MODEL"),
         "image_quality": config.get("OPENAI_IMAGE_QUALITY"),
         "image_prompt": image_prompt,
-    })
+    }
+    if event_start is not None:
+        entry["event_start"] = event_start
+    prompt_history.append(entry)
     save_json(config['PROMPT_HISTORY_FILE'], prompt_history[-50:])
 
 def format_prompt_history_entry(entry, prompt_limit=900):
@@ -282,11 +292,15 @@ async def handle_publish(update: Update, context: ContextTypes.DEFAULT_TYPE, adm
     image = staged['image']
     text = staged['text']
 
+    groups_sent = 0
+    subscribers_sent = 0
+
     # Groups
     for group_id in state['groups']:
         try:
             if isinstance(image, BytesIO): image.seek(0)
             await context.bot.send_photo(group_id, photo=image, caption=text, parse_mode=ParseMode.HTML)
+            groups_sent += 1
         except Exception as e:
             logger.error(f"Failed to publish to group {group_id}: {e}")
     
@@ -295,10 +309,13 @@ async def handle_publish(update: Update, context: ContextTypes.DEFAULT_TYPE, adm
         try:
             if isinstance(image, BytesIO): image.seek(0)
             await context.bot.send_photo(user_id, photo=image, caption=text, parse_mode=ParseMode.HTML)
+            subscribers_sent += 1
         except Exception as e:
-            logger.error(f"Failed to publish to user {user_id}: {e}")
+            logger.error(f"Failed to publish to subscriber {user_id}: {e}")
 
-    await query.edit_message_caption(f"✅ Published successfully to groups and subscribers!")
+    await query.edit_message_caption(
+        f"✅ Sent to {groups_sent} groups and {subscribers_sent} subscribers."
+    )
     del state['pending_promos'][str(admin_id)]
     save_pending_promos(config, state)
 
@@ -488,7 +505,12 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
     # Persistence tracking
     eid = event.get("id", "unk")
     start_raw = event.get("start", {}).get("dateTime", event.get("start", {}).get("date", "unk"))
-    storage_key = f"{eid}_{start_raw[:10]}"
+    try:
+        parsed_start = datetime.fromisoformat(start_raw)
+        storage_start = parsed_start.strftime("%Y%m%dT%H%M%SZ")
+    except (TypeError, ValueError):
+        storage_start = start_raw[:10].replace("-", "")
+    storage_key = f"{eid}_{storage_start}"
     
     notified = state['notified_promos']
     promo_state = notified.get(storage_key, {"notified_thresholds": [], "flyer_created": False})
@@ -515,7 +537,7 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
         prmpt = data.get("image_prompt")
         
         if prmpt:
-            save_prompt_history(config, event_summary, prmpt)
+            save_prompt_history(config, event, prmpt)
             
         label = "DRAFT REFINED" if instructions else "DRAFT GENERATED"
         await context.bot.send_message(admin_id, f"<b>📝 {label}:</b>\n\n{txt}", parse_mode=ParseMode.HTML)
@@ -539,6 +561,7 @@ async def generate_promo_for_event(event, context, admin_id, ai_service, state, 
                     "text": txt, 
                     "image": stored_image, 
                     "summary": event_summary, 
+                    "storage_key": storage_key,
                     "event_id": eid,
                     "event_start": start_raw,
                     "event_info": event
@@ -558,6 +581,11 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE,
     # 1. Handle draft refinement
     staged = state['pending_promos'].get(str(admin_id))
     if staged:
+        if not staged.get("event_info"):
+            await update.message.reply_text(
+                "❌ This older draft cannot be edited because its event data is missing."
+            )
+            return
         await generate_promo_for_event(staged['event_info'], context, admin_id, ai_service, state, config, instructions=update.message.text)
         return
 
