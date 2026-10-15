@@ -20,7 +20,7 @@ from core.coffee_hosts import (
     load_coffee_schedule,
     parse_reminder_rules,
 )
-from core.manual_promos import load_manual_promos
+from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
 
@@ -125,6 +125,9 @@ def main():
     async def coffee_host_job(context):
         await check_coffee_host_reminders(context, config=CONFIG, state=STATE)
 
+    async def manual_promo_job(context):
+        await check_manual_promo_reminders(context, config=CONFIG, state=STATE)
+
     job_queue = app.job_queue
     job_queue.run_repeating(
         calendar_job,
@@ -135,6 +138,11 @@ def main():
         coffee_host_job,
         interval=CONFIG['CHECK_INTERVAL_MINUTES'] * 60,
         first=20,
+    )
+    job_queue.run_repeating(
+        manual_promo_job,
+        interval=CONFIG['CHECK_INTERVAL_MINUTES'] * 60,
+        first=30,
     )
 
     # User Handlers
