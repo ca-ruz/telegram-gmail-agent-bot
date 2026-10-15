@@ -19,6 +19,7 @@ from core.coffee_hosts import (
     load_coffee_schedule,
     parse_reminder_rules,
 )
+from core.manual_promos import load_manual_promos
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
 
@@ -64,6 +65,7 @@ CONFIG = {
     'GROUPS_FILE': "data/groups.json",
     'PROMPT_HISTORY_FILE': "data/prompt_history.json",
     'PENDING_PROMOS_FILE': "data/pending_promos.json",
+    'MANUAL_PROMOS_FILE': os.getenv("MANUAL_PROMOS_FILE", "data/manual_promos.json"),
     'COFFEE_HOSTS_FILE': os.getenv("COFFEE_HOSTS_FILE", "data/coffee_hosts.json"),
     'COFFEE_HOST_SCHEDULE_FILE': os.getenv("COFFEE_HOST_SCHEDULE_FILE", "data/coffee_host_schedule.json"),
     'COFFEE_HOST_REMINDER_RULES': parse_reminder_rules(
@@ -87,6 +89,7 @@ STATE = {
     'sent_reminders': load_json(CONFIG['REMINDERS_FILE'], {}),
     'notified_promos': raw_notified,
     'pending_promos': load_json(CONFIG['PENDING_PROMOS_FILE'], {}),
+    'manual_promos': load_manual_promos(CONFIG['MANUAL_PROMOS_FILE']),
     'coffee_hosts': load_coffee_hosts(CONFIG['COFFEE_HOSTS_FILE']),
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
 }
