@@ -371,17 +371,33 @@ def save_pending_promos(config, state):
         clean_pending[uid] = clean_data
     save_json(config['PENDING_PROMOS_FILE'], clean_pending)
 
+
+def _has_configured_openai_key(value):
+    """Return whether an OpenAI key value is non-empty and not a template placeholder."""
+    normalized = str(value or "").strip().lower()
+    return bool(normalized) and not (
+        normalized.startswith("your_")
+        or normalized in {"changeme", "replace_me", "placeholder"}
+    )
+
+
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config, status_msg=None):
     """
     Admin-only command to show the bot's current status and configuration.
     """
     if update.effective_user.id != admin_id: return
+    calendar_enabled = config.get("ENABLE_CALENDAR_POLLING", True)
+    coffee_enabled = config.get("ENABLE_COFFEE_HOST_REMINDERS", True)
+    manual_promos_enabled = config.get("ENABLE_MANUAL_PROMO_REMINDERS", True)
     msg = (
         f"📊 <b>BTC GDL Bot Status</b>\n\n"
         f"👥 <b>Subscribers:</b> {len(state['subscribers'])}\n"
         f"📢 <b>Broadcast Groups:</b> {len(state['groups'])}\n"
         f"📝 <b>Pending Promos:</b> {len(state['pending_promos'])}\n\n"
-        f"🤖 <b>OpenAI:</b> {'✅ Configured' if config.get('OPENAI_API_KEY') else '❌ Missing Key'}\n"
+        f"🤖 <b>OpenAI:</b> {'✅ Configured' if _has_configured_openai_key(config.get('OPENAI_API_KEY')) else '❌ Missing or placeholder key'}\n"
+        f"📅 <b>Calendar polling:</b> {'✅ Enabled' if calendar_enabled else '⛔ Disabled'}\n"
+        f"☕ <b>Coffee reminders:</b> {'✅ Enabled' if coffee_enabled else '⛔ Disabled'}\n"
+        f"📰 <b>Manual promo reminders:</b> {'✅ Enabled' if manual_promos_enabled else '⛔ Disabled'}\n"
         f"⏱ <b>Check Interval:</b> {config.get('CHECK_INTERVAL_MINUTES')} min"
     )
     if status_msg:
