@@ -1,5 +1,35 @@
-from bot.handlers.admin import format_prompt_history_entry, save_prompt_history
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+from bot.handlers.admin import format_prompt_history_entry, save_prompt_history, status
 from tools.local.data_manager import load_json, save_json
+
+
+def test_status_reports_disabled_services_and_placeholder_openai_key():
+    """Admin status accurately reports runtime service configuration."""
+    reply_text = AsyncMock()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        message=SimpleNamespace(reply_text=reply_text),
+    )
+    state = {"subscribers": set(), "groups": set(), "pending_promos": {}}
+    config = {
+        "OPENAI_API_KEY": "your_openai_api_key_here",
+        "ENABLE_CALENDAR_POLLING": False,
+        "ENABLE_COFFEE_HOST_REMINDERS": True,
+        "ENABLE_MANUAL_PROMO_REMINDERS": False,
+        "CHECK_INTERVAL_MINUTES": 30,
+    }
+
+    asyncio.run(status(update, SimpleNamespace(), 42, state, config))
+
+    message = reply_text.await_args.args[0]
+    assert "Missing or placeholder key" in message
+    assert "Calendar polling:</b> ⛔ Disabled" in message
+    assert "Coffee reminders:</b> ✅ Enabled" in message
+    assert "Manual promo reminders:</b> ⛔ Disabled" in message
+    assert "Check Interval:</b> 30 min" in message
 
 
 def test_format_prompt_history_entry_escapes_html():
