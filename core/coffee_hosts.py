@@ -1,6 +1,7 @@
 """Persistence and configuration helpers for weekly coffee host reminders."""
 
 import logging
+import re
 from datetime import date, datetime, time, timedelta
 from html import escape
 from zoneinfo import ZoneInfo
@@ -41,6 +42,28 @@ def save_coffee_hosts(file_path, hosts):
 def save_coffee_schedule(file_path, schedule):
     """Persist Saturday coffee host assignments atomically."""
     save_json(file_path, schedule)
+
+
+def build_coffee_host(name, telegram_id):
+    """Build a normalized active coffee host record."""
+    return {
+        "name": name,
+        "telegram_id": telegram_id,
+        "active": True,
+    }
+
+
+def next_coffee_host_id(hosts):
+    """Return the next available sequential coffee host identifier."""
+    used_ids = {
+        int(match.group(1))
+        for host_id in hosts
+        if (match := re.fullmatch(r"host-(\d+)", str(host_id)))
+    }
+    next_number = max(used_ids, default=0) + 1
+    while f"host-{next_number:03d}" in hosts:
+        next_number += 1
+    return f"host-{next_number:03d}"
 
 
 def parse_reminder_rules(raw_rules):
