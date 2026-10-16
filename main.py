@@ -47,6 +47,23 @@ logging.getLogger("telegram").setLevel(logging.WARNING)
 logging.getLogger("googleapiclient").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.ERROR)
 
+
+def parse_env_bool(name, default):
+    """Parse a boolean environment variable with a safe fallback."""
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+
+    logger.warning("Invalid boolean value for %s; using default %s.", name, default)
+    return default
+
+
 # Configuration
 CONFIG = {
     'BOT_TOKEN': os.getenv("TELEGRAM_BOT_TOKEN"),
@@ -59,6 +76,9 @@ CONFIG = {
     'SERVICE_ACCOUNT_FILE': "google_calendar.json",
     'SCOPES': ["https://www.googleapis.com/auth/calendar"],
     'CHECK_INTERVAL_MINUTES': 30,
+    'ENABLE_CALENDAR_POLLING': parse_env_bool('ENABLE_CALENDAR_POLLING', True),
+    'ENABLE_COFFEE_HOST_REMINDERS': parse_env_bool('ENABLE_COFFEE_HOST_REMINDERS', True),
+    'ENABLE_MANUAL_PROMO_REMINDERS': parse_env_bool('ENABLE_MANUAL_PROMO_REMINDERS', True),
     'REMINDERS_FILE': "data/sent_reminders.json",
     'REMINDER_CONFIG_FILE': "data/reminder_config.json",
     'SUBSCRIBERS_FILE': "data/subscribers.json",
@@ -129,21 +149,13 @@ def main():
         await check_manual_promo_reminders(context, config=CONFIG, state=STATE)
 
     job_queue = app.job_queue
-    job_queue.run_repeating(
-        calendar_job,
-        interval=CONFIG['CHECK_INTERVAL_MINUTES'] * 60,
-        first=10,
-    )
-    job_queue.run_repeating(
-        coffee_host_job,
-        interval=CONFIG['CHECK_INTERVAL_MINUTES'] * 60,
-        first=20,
-    )
-    job_queue.run_repeating(
-        manual_promo_job,
-        interval=CONFIG['CHECK_INTERVAL_MINUTES'] * 60,
-        first=30,
-    )
+    interval_seconds = CONFIG['CHECK_INTERVAL_MINUTES'] * 60
+    if CONFIG.get('ENABLE_CALENDAR_POLLING', True):
+        job_queue.run_repeating(calendar_job, interval=interval_seconds, first=10)
+    if CONFIG.get('ENABLE_COFFEE_HOST_REMINDERS', True):
+        job_queue.run_repeating(coffee_host_job, interval=interval_seconds, first=20)
+    if CONFIG.get('ENABLE_MANUAL_PROMO_REMINDERS', True):
+        job_queue.run_repeating(manual_promo_job, interval=interval_seconds, first=30)
 
     # User Handlers
     app.add_handler(CommandHandler("start", start))
@@ -295,8 +307,13 @@ def main():
     """)
     logger.info("------------------------------------------")
     logger.info("Bot started successfully. Press Ctrl+C to stop.")
-    logger.info(f"Polling Google Calendar every {CONFIG['CHECK_INTERVAL_MINUTES']} minutes.")
-    logger.info("First calendar check will run in 10 seconds...")
+    logger.info(
+        "Scheduled services: calendar=%s, coffee=%s, manual_promos=%s; interval=%s minutes.",
+        CONFIG.get('ENABLE_CALENDAR_POLLING', True),
+        CONFIG.get('ENABLE_COFFEE_HOST_REMINDERS', True),
+        CONFIG.get('ENABLE_MANUAL_PROMO_REMINDERS', True),
+        CONFIG['CHECK_INTERVAL_MINUTES'],
+    )
     logger.info("------------------------------------------")
     
     app.run_polling()
