@@ -18,10 +18,92 @@ def make_update(text, user_id=42):
 def make_config(tmp_path):
     """Build the coffee-host command configuration."""
     return {
+        "COFFEE_HOSTS_FILE": str(tmp_path / "coffee_hosts.json"),
         "COFFEE_HOST_SCHEDULE_FILE": str(tmp_path / "coffee_host_schedule.json"),
         "COFFEE_DEFAULT_START_TIME": "11:00",
         "COFFEE_DEFAULT_VENUE": "Default Café",
     }
+
+
+def test_coffee_host_adds_and_persists_host(tmp_path):
+    """The admin can add a host through Telegram and receive a generated ID."""
+    config = make_config(tmp_path)
+    state = {
+        "coffee_hosts": {
+            "host-001": {"name": "Existing Host", "telegram_id": 111, "active": True}
+        },
+        "coffee_host_schedule": {},
+    }
+    update = make_update("/coffeehost add | New Host | 222")
+
+    asyncio.run(coffee_host(update, SimpleNamespace(), 42, state, config))
+
+    assert state["coffee_hosts"]["host-002"] == {
+        "name": "New Host",
+        "telegram_id": 222,
+        "active": True,
+    }
+    assert load_json(config["COFFEE_HOSTS_FILE"], {}) == state["coffee_hosts"]
+    assert "host-002" in update.message.reply_text.await_args.args[0]
+
+
+def test_coffee_host_rejects_duplicate_or_invalid_telegram_ids(tmp_path):
+    """Duplicate and invalid Telegram IDs are rejected without changing the roster."""
+    config = make_config(tmp_path)
+    state = {
+        "coffee_hosts": {
+            "host-001": {"name": "Existing Host", "telegram_id": 111, "active": True}
+        },
+        "coffee_host_schedule": {},
+    }
+
+    duplicate_update = make_update("/coffeehost add | Duplicate | 111")
+    asyncio.run(coffee_host(duplicate_update, SimpleNamespace(), 42, state, config))
+    assert list(state["coffee_hosts"]) == ["host-001"]
+    assert "ya está registrado" in duplicate_update.message.reply_text.await_args.args[0]
+
+    invalid_update = make_update("/coffeehost add | Invalid | not-a-number")
+    asyncio.run(coffee_host(invalid_update, SimpleNamespace(), 42, state, config))
+    assert list(state["coffee_hosts"]) == ["host-001"]
+    assert "numérico" in invalid_update.message.reply_text.await_args.args[0]
+
+
+def test_coffee_host_remove_deactivates_and_persists_host(tmp_path):
+    """Removing a host deactivates it and preserves the roster record."""
+    config = make_config(tmp_path)
+    state = {
+        "coffee_hosts": {
+            "host-001": {"name": "Host", "telegram_id": 111, "active": True}
+        },
+        "coffee_host_schedule": {},
+    }
+    update = make_update("/coffeehost remove | host-001")
+
+    asyncio.run(coffee_host(update, SimpleNamespace(), 42, state, config))
+
+    assert state["coffee_hosts"]["host-001"]["active"] is False
+    assert load_json(config["COFFEE_HOSTS_FILE"], {}) == state["coffee_hosts"]
+    assert "desactivado" in update.message.reply_text.await_args.args[0]
+
+
+def test_coffee_host_view_lists_active_and_inactive_hosts(tmp_path):
+    """The roster view includes both active and inactive hosts."""
+    state = {
+        "coffee_hosts": {
+            "host-001": {"name": "Active Host", "active": True},
+            "host-002": {"name": "Inactive Host", "active": False},
+        },
+        "coffee_host_schedule": {},
+    }
+    update = make_update("/coffeehost")
+
+    asyncio.run(coffee_host(update, SimpleNamespace(), 42, state, make_config(tmp_path)))
+
+    message = update.message.reply_text.await_args.args[0]
+    assert "Active Host" in message
+    assert "Inactive Host" in message
+    assert "Anfitriones activos" in message
+    assert "Anfitriones inactivos" in message
 
 
 def test_coffee_host_assigns_and_persists_active_hosts(tmp_path):
