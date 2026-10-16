@@ -9,7 +9,14 @@ from tools.local.calendar_api import get_calendar_service_with_creds, fetch_upco
 from tools.local.data_manager import load_json, save_json
 from core.prompts import PROMOTER_SYSTEM_PROMPT, EVENT_PARSER_SYSTEM_PROMPT, INTENT_DETECTOR_PROMPT
 from datetime import date, datetime, timezone
-from core.coffee_hosts import COFFEE_TIMEZONE, build_coffee_assignment, upcoming_saturdays
+from core.coffee_hosts import (
+    COFFEE_TIMEZONE,
+    build_coffee_assignment,
+    build_coffee_host,
+    next_coffee_host_id,
+    save_coffee_hosts,
+    upcoming_saturdays,
+)
 from core.manual_promos import build_manual_promo, save_manual_promos
 
 # Initialize logger for this module
@@ -109,7 +116,9 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "/pendingpromo - Show currently staged promo with publish/delete buttons\n"
         "/checkprompt - Show the most recent image prompt\n"
         "/checkprompts - Show the last 5 image prompts\n"
-        "/coffeehost - View or assign Saturday coffee hosts\n"
+        "/coffeehost - View or manage Saturday coffee hosts\n"
+        "/coffeehost add | Name | Telegram ID\n"
+        "/coffeehost remove | host-id\n"
         "/broadcast - Send a manual message to all subscribers\n\n"
         "💡 <i>Tip: Puedes responder a un borrador o a un evento seleccionado para editarlo con AI.</i>",
         parse_mode=ParseMode.HTML
@@ -283,12 +292,21 @@ def format_coffee_host_schedule(schedule, hosts, reference_date):
     active_hosts = [
         f"<code>{escape(host_id)}</code> - {escape(data.get('name', host_id))}"
         for host_id, data in hosts.items()
-        if data.get("active", True)
+        if isinstance(data, dict) and data.get("active", True)
+    ]
+    inactive_hosts = [
+        f"<code>{escape(host_id)}</code> - {escape(data.get('name', host_id))}"
+        for host_id, data in hosts.items()
+        if isinstance(data, dict) and not data.get("active", True)
     ]
     lines.append("\n<b>Anfitriones activos:</b>")
     lines.extend(active_hosts or ["Ninguno configurado"])
+    lines.append("\n<b>Anfitriones inactivos:</b>")
+    lines.extend(inactive_hosts or ["Ninguno"])
     lines.append(
-        "\nUso: <code>/coffeehost AAAA-MM-DD host-001,host-002 | Lugar | 11:00 | Notas</code>"
+        "\nUso: <code>/coffeehost add | Nombre | Telegram ID</code>"
+        "\n<code>/coffeehost remove | host-id</code>"
+        "\n<code>/coffeehost AAAA-MM-DD host-001,host-002 | Lugar | 11:00 | Notas</code>"
     )
     lines.append("Para borrar una asignación: <code>/coffeehost AAAA-MM-DD clear</code>")
     return "".join(lines)
@@ -312,6 +330,61 @@ async def coffee_host(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_
         return
 
     command_parts = [part.strip() for part in raw_args.split("|")]
+    action = command_parts[0].lower()
+
+    if action == "add":
+        if len(command_parts) != 3 or not command_parts[1] or not command_parts[2]:
+            await update.message.reply_text(
+                "Uso: /coffeehost add | Nombre | Telegram ID"
+            )
+            return
+
+        try:
+            telegram_id = int(command_parts[2])
+        except ValueError:
+            await update.message.reply_text("❌ El Telegram ID debe ser numérico.")
+            return
+
+        if telegram_id <= 0:
+            await update.message.reply_text("❌ El Telegram ID debe ser positivo.")
+            return
+
+        if any(
+            isinstance(host, dict) and host.get("telegram_id") == telegram_id
+            for host in hosts.values()
+        ):
+            await update.message.reply_text("❌ Ese Telegram ID ya está registrado.")
+            return
+
+        host_id = next_coffee_host_id(hosts)
+        hosts[host_id] = build_coffee_host(command_parts[1], telegram_id)
+        save_coffee_hosts(config["COFFEE_HOSTS_FILE"], hosts)
+        await update.message.reply_text(
+            f"✅ Anfitrión agregado: {host_id} - {escape(command_parts[1])}",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if action == "remove":
+        if len(command_parts) != 2 or not command_parts[1]:
+            await update.message.reply_text("Uso: /coffeehost remove | host-id")
+            return
+
+        host_id = command_parts[1]
+        host = hosts.get(host_id)
+        if not isinstance(host, dict):
+            await update.message.reply_text(f"❌ Anfitrión no encontrado: {host_id}")
+            return
+
+        if not host.get("active", True):
+            await update.message.reply_text(f"ℹ️ El anfitrión ya estaba inactivo: {host_id}")
+            return
+
+        host["active"] = False
+        save_coffee_hosts(config["COFFEE_HOSTS_FILE"], hosts)
+        await update.message.reply_text(f"✅ Anfitrión desactivado: {host_id}")
+        return
+
     assignment_parts = command_parts[0].split()
     if len(assignment_parts) < 2:
         await update.message.reply_text(
