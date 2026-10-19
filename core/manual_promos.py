@@ -244,6 +244,27 @@ async def deliver_manual_promo(
     return result
 
 
+async def deliver_manual_promo_test(context, promo, admin_id):
+    """Send a manual promo test only to the administrator without persisting state."""
+    caption = format_manual_promo_caption(promo)
+    test_caption = f"🧪 <b>MODO PRUEBA</b>\n\n{caption}"[:1024]
+    try:
+        await context.bot.send_photo(
+            chat_id=admin_id,
+            photo=promo["image_file_id"],
+            caption=test_caption,
+            parse_mode="HTML",
+        )
+    except Exception:
+        logger.exception(
+            "Failed to send manual promo test to administrator %s.",
+            admin_id,
+        )
+        return {"sent": 0, "failures": 1}
+
+    return {"sent": 1, "failures": 0}
+
+
 async def check_manual_promo_reminders(context, config, state):
     """Deliver active manual promos to subscribers with per-stage deduplication."""
     now = datetime.now(MANUAL_PROMO_TIMEZONE)
