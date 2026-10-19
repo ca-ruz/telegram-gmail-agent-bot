@@ -15,6 +15,7 @@ from core.coffee_hosts import (
     build_coffee_host,
     next_coffee_host_id,
     save_coffee_hosts,
+    send_immediate_coffee_host_reminder,
     upcoming_saturdays,
 )
 from core.manual_promos import (
@@ -626,6 +627,12 @@ async def coffee_host(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_
     notes = command_parts[3] if len(command_parts) > 3 else ""
     schedule[date_key] = build_coffee_assignment(host_ids, venue, start_time, notes)
     save_json(config["COFFEE_HOST_SCHEDULE_FILE"], schedule)
+    immediate_result = await send_immediate_coffee_host_reminder(
+        context,
+        config,
+        state,
+        date_key,
+    )
     disabled_hosts = []
     notification_preferences = state.get("notification_preferences")
     if notification_preferences is not None:
@@ -644,9 +651,16 @@ async def coffee_host(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_
             "\n⚠️ Notificaciones de café desactivadas para: "
             f"{', '.join(disabled_hosts)}. Deben activarlas en /suscripciones."
         )
+    delivery_note = ""
+    if immediate_result["sent"]:
+        delivery_note = "\n📨 Recordatorio inmediato enviado."
+    elif immediate_result["failed"]:
+        delivery_note = "\n⚠️ No se pudo enviar el recordatorio inmediato."
+    elif immediate_result["skipped"]:
+        delivery_note = "\nℹ️ El recordatorio inmediato no se envió a los anfitriones omitidos."
     await update.message.reply_text(
         f"✅ Anfitriones asignados para {date_key}: {', '.join(host_ids)}\n"
-        f"📍 {escape(venue)} · ⏰ {escape(start_time)}{warning}",
+        f"📍 {escape(venue)} · ⏰ {escape(start_time)}{warning}{delivery_note}",
         parse_mode=ParseMode.HTML,
     )
 

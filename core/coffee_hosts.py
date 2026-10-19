@@ -131,9 +131,13 @@ def _coffee_reminder_stage(event_datetime, now, reminder_rules):
 
 def _coffee_reminder_message(assignment, saturday_text, stage):
     """Build the Spanish private reminder sent to an assigned host."""
-    stage_text = "en una semana" if stage == "7d" else "mañana"
+    stage_text = {
+        "assigned": "tu turno ha sido asignado",
+        "7d": "tu turno es en una semana",
+        "1d": "tu turno es mañana",
+    }.get(stage, "tu turno está próximo")
     lines = [
-        f"☕ <b>Recordatorio de anfitrión</b>: tu turno es {stage_text}.",
+        f"☕ <b>Recordatorio de anfitrión</b>: {stage_text}.",
         f"<b>Sábado:</b> {escape(saturday_text)}",
         f"<b>Hora:</b> {escape(assignment.get('start_time', 'por confirmar'))}",
     ]
@@ -146,12 +150,78 @@ def _coffee_reminder_message(assignment, saturday_text, stage):
     return "\n".join(lines)
 
 
+async def _send_coffee_host_stage(context, state, saturday_text, assignment, stage):
+    """Send one reminder stage to assigned hosts and return delivery counts."""
+    hosts = state.setdefault("coffee_hosts", {})
+    notification_preferences = state.get("notification_preferences")
+    reminders_sent = assignment.setdefault("reminders_sent", {})
+    sent_hosts = set(reminders_sent.get(stage, []))
+    result = {"sent": 0, "failed": 0, "skipped": 0}
+
+    for host_id in assignment.get("hosts", []):
+        if host_id in sent_hosts:
+            continue
+
+        host = hosts.get(host_id)
+        telegram_id = host.get("telegram_id") if isinstance(host, dict) else None
+        if not host or not host.get("active", True) or not telegram_id:
+            logger.warning("Coffee host %s is missing or has no Telegram ID.", host_id)
+            result["skipped"] += 1
+            continue
+        if not is_notification_enabled(
+            notification_preferences,
+            telegram_id,
+            "coffee",
+        ):
+            logger.info(
+                "Skipping coffee host reminder for %s because coffee notifications are disabled.",
+                host_id,
+            )
+            result["skipped"] += 1
+            continue
+
+        try:
+            await context.bot.send_message(
+                chat_id=telegram_id,
+                text=_coffee_reminder_message(assignment, saturday_text, stage),
+                parse_mode="HTML",
+            )
+        except Exception:
+            result["failed"] += 1
+            logger.exception("Failed to send coffee host reminder to %s.", host_id)
+            continue
+
+        sent_hosts.add(host_id)
+        result["sent"] += 1
+
+    if result["sent"]:
+        reminders_sent[stage] = sorted(sent_hosts)
+    return result
+
+
+async def send_immediate_coffee_host_reminder(context, config, state, saturday_text):
+    """Send the assignment-stage reminder immediately after scheduling a coffee host."""
+    assignment = state.get("coffee_host_schedule", {}).get(saturday_text)
+    if not isinstance(assignment, dict):
+        logger.warning("Cannot send immediate reminder for missing assignment %s.", saturday_text)
+        return {"sent": 0, "failed": 0, "skipped": 0}
+
+    result = await _send_coffee_host_stage(
+        context,
+        state,
+        saturday_text,
+        assignment,
+        "assigned",
+    )
+    if result["sent"]:
+        save_coffee_schedule(config["COFFEE_HOST_SCHEDULE_FILE"], state["coffee_host_schedule"])
+    return result
+
+
 async def check_coffee_host_reminders(context, config, state):
     """Send due private reminders to assigned coffee hosts and persist successful deliveries."""
     now = datetime.now(COFFEE_TIMEZONE)
     schedule = state.setdefault("coffee_host_schedule", {})
-    hosts = state.setdefault("coffee_hosts", {})
-    notification_preferences = state.get("notification_preferences")
     changed = False
 
     for saturday_text, assignment in schedule.items():
@@ -174,41 +244,14 @@ async def check_coffee_host_reminders(context, config, state):
         if stage is None:
             continue
 
-        reminders_sent = assignment.setdefault("reminders_sent", {})
-        sent_hosts = set(reminders_sent.get(stage, []))
-        for host_id in assignment.get("hosts", []):
-            if host_id in sent_hosts:
-                continue
-
-            host = hosts.get(host_id)
-            telegram_id = host.get("telegram_id") if isinstance(host, dict) else None
-            if not host or not host.get("active", True) or not telegram_id:
-                logger.warning("Coffee host %s is missing or has no Telegram ID.", host_id)
-                continue
-            if not is_notification_enabled(
-                notification_preferences,
-                telegram_id,
-                "coffee",
-            ):
-                logger.info(
-                    "Skipping coffee host reminder for %s because coffee notifications are disabled.",
-                    host_id,
-                )
-                continue
-
-            try:
-                await context.bot.send_message(
-                    chat_id=telegram_id,
-                    text=_coffee_reminder_message(assignment, saturday_text, stage),
-                    parse_mode="HTML",
-                )
-            except Exception:
-                logger.exception("Failed to send coffee host reminder to %s.", host_id)
-                continue
-
-            sent_hosts.add(host_id)
-            reminders_sent[stage] = sorted(sent_hosts)
-            changed = True
+        result = await _send_coffee_host_stage(
+            context,
+            state,
+            saturday_text,
+            assignment,
+            stage,
+        )
+        changed = changed or bool(result["sent"])
 
     if changed:
         save_coffee_schedule(config["COFFEE_HOST_SCHEDULE_FILE"], schedule)
