@@ -11,6 +11,7 @@ from bot.handlers.admin import (
     handle_manual_promo_schedule,
     handle_manual_promo_schedule_input,
     handle_manual_promo_send_now,
+    format_manual_promo_preview,
     manual_promo,
 )
 from core import manual_promos
@@ -55,6 +56,7 @@ def build_active_promo():
         "2026-10-16T11:00:00-06:00",
         "Meet us at Coffee & Co.",
         "telegram-photo-id",
+        location="Café Adentro",
     )
     promo["status"] = "active"
     return promo
@@ -69,6 +71,7 @@ def test_manual_promo_persistence_round_trip(tmp_path):
 
     loaded = manual_promos.load_manual_promos(str(file_path))
     assert loaded["manual-001"]["image_file_id"] == "telegram-photo-id"
+    assert loaded["manual-001"]["location"] == "Café Adentro"
     assert loaded["manual-001"]["status"] == "active"
     assert loaded["manual-001"]["reminders_sent"] == {}
 
@@ -79,7 +82,7 @@ def test_manual_promo_staging_and_confirmation(tmp_path):
     state = {"manual_promos": {}}
     context = SimpleNamespace(user_data={})
     command_message = SimpleNamespace(
-        text="/manualpromo 2026-12-01 11:00 | Bitcoin Meetup | Join us & learn.",
+        text="/manualpromo 2026-12-01 11:00 | Bitcoin Meetup | LSS | Join us & learn.",
         reply_text=AsyncMock(),
     )
     command_update = SimpleNamespace(
@@ -110,6 +113,13 @@ def test_manual_promo_staging_and_confirmation(tmp_path):
     promo_id = next(iter(state["manual_promos"]))
     assert state["manual_promos"][promo_id]["status"] == "pending"
     assert state["manual_promos"][promo_id]["image_file_id"] == "photo-id"
+    assert state["manual_promos"][promo_id]["location"] == "LSS"
+    assert state["manual_promos"][promo_id]["text"] == "Join us & learn."
+    preview_caption = photo_message.reply_photo.await_args.kwargs["caption"]
+    assert "📅 Martes 1 de diciembre" in preview_caption
+    assert "🕕 11 AM" in preview_caption
+    assert "📍 LSS" in preview_caption
+    assert "Join us &amp; learn." in preview_caption
     assert load_json(config["MANUAL_PROMOS_FILE"], {})[promo_id]["status"] == "pending"
 
     query = SimpleNamespace(
@@ -130,6 +140,35 @@ def test_manual_promo_staging_and_confirmation(tmp_path):
     )
 
     assert state["manual_promos"][promo_id]["status"] == "active"
+
+
+def test_manual_promo_preview_uses_spanish_date_and_time():
+    """Manual promo previews use Spanish metadata and preserve the location."""
+    preview = format_manual_promo_preview({
+        "summary": "Forks Meetup",
+        "event_start": "2026-10-20T18:00:00-06:00",
+        "location": "LSS",
+        "text": "Publication text",
+    })
+
+    assert "📅 Martes 20 de octubre" in preview
+    assert "🕕 6 PM" in preview
+    assert "📍 LSS" in preview
+    assert "Publication text" in preview
+
+
+def test_legacy_manual_promo_preview_omits_missing_location():
+    """Legacy promos without a location remain readable."""
+    preview = format_manual_promo_preview({
+        "summary": "Legacy event",
+        "event_start": "2026-10-20T18:00:00-06:00",
+        "text": "Legacy publication text",
+    })
+
+    assert "Legacy event" in preview
+    assert "📅 Martes 20 de octubre" in preview
+    assert "📍" not in preview
+    assert "Legacy publication text" in preview
 
 
 def test_manual_promo_reminders_retry_only_failed_subscribers(tmp_path):
