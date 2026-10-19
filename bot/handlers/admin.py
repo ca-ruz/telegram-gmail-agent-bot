@@ -29,6 +29,59 @@ from core.manual_promos import (
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
 
+SPANISH_WEEKDAYS = (
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo",
+)
+SPANISH_MONTHS = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
+
+
+def format_manual_promo_preview(promo):
+    """Format manual promo metadata and publication text for Telegram preview."""
+    event_start = datetime.fromisoformat(
+        str(promo["event_start"]).replace("Z", "+00:00")
+    )
+    if event_start.tzinfo is None:
+        event_start = event_start.replace(tzinfo=MANUAL_PROMO_TIMEZONE)
+    event_start = event_start.astimezone(MANUAL_PROMO_TIMEZONE)
+
+    weekday = SPANISH_WEEKDAYS[event_start.weekday()].capitalize()
+    month = SPANISH_MONTHS[event_start.month - 1]
+    hour = event_start.hour % 12 or 12
+    period = "AM" if event_start.hour < 12 else "PM"
+    time = f"{hour} {period}"
+    if event_start.minute:
+        time = f"{hour}:{event_start.minute:02d} {period}"
+
+    location = str(promo.get("location", "")).strip()
+    location_line = f"📍 {escape(location)}\n" if location else ""
+    return (
+        f"<b>{escape(str(promo.get('summary', 'Sin título')))}</b>\n\n"
+        f"📅 {weekday} {event_start.day} de {month}\n"
+        f"🕕 {time}\n"
+        f"{location_line}\n"
+        f"{escape(str(promo.get('text', '')))[:900]}\n\n"
+        "¿Cómo deseas enviar este promo?"
+    )
+
 def save_prompt_history(config, event, image_prompt):
     """
     Stores a generated image prompt for later admin review.
@@ -201,12 +254,7 @@ async def handle_manual_promo_photo(
     save_manual_promos(config["MANUAL_PROMOS_FILE"], state["manual_promos"])
     context.user_data.pop("manual_promo_draft", None)
 
-    caption = (
-        f"<b>{escape(promo['summary'])}</b>\n"
-        f"<b>Fecha:</b> {escape(promo['event_start'])}\n\n"
-        f"{escape(promo['text'])[:900]}\n\n"
-        "¿Cómo deseas enviar este promo?"
-    )
+    caption = format_manual_promo_preview(promo)
     keyboard = [[
         InlineKeyboardButton(
             "✅ Enviar ahora",
