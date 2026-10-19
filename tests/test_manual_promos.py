@@ -157,6 +157,38 @@ def test_manual_promo_preview_uses_spanish_date_and_time():
     assert "Publication text" in preview
 
 
+def test_manual_promo_caption_appends_missing_event_details():
+    """Final captions append localized date, time, and location details."""
+    caption = manual_promos.format_manual_promo_caption({
+        "event_start": "2026-10-20T18:00:00-06:00",
+        "location": "LSS",
+        "text": "¿Qué pasa cuando Bitcoin toma caminos diferentes?⚡",
+    })
+
+    assert "¿Qué pasa cuando Bitcoin toma caminos diferentes?⚡" in caption
+    assert "📅 Martes 20 de octubre" in caption
+    assert "🕕 6 PM" in caption
+    assert "📍 LSS" in caption
+
+
+def test_manual_promo_caption_does_not_duplicate_existing_details():
+    """Existing matching metadata is not appended a second time."""
+    caption = manual_promos.format_manual_promo_caption({
+        "event_start": "2026-10-20T18:00:00-06:00",
+        "location": "LSS",
+        "text": (
+            "Publication text\n\n"
+            "📅 Martes 20 de octubre\n"
+            "🕕 6 PM\n"
+            "📍 LSS"
+        ),
+    })
+
+    assert caption.count("📅 Martes 20 de octubre") == 1
+    assert caption.count("🕕 6 PM") == 1
+    assert caption.count("📍 LSS") == 1
+
+
 def test_legacy_manual_promo_preview_omits_missing_location():
     """Legacy promos without a location remain readable."""
     preview = format_manual_promo_preview({
@@ -259,6 +291,10 @@ def test_manual_promo_immediate_delivery_reaches_subscribers_and_groups(tmp_path
         )
 
     assert {message["chat_id"] for message in bot.sent} == {101, -100}
+    expected_caption = manual_promos.format_manual_promo_caption(
+        state["manual_promos"]["manual-001"]
+    )
+    assert {message["caption"] for message in bot.sent} == {expected_caption}
     promo = state["manual_promos"]["manual-001"]
     assert promo["status"] == "active"
     assert promo["first_notification_sent"] is True
