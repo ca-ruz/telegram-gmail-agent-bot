@@ -138,10 +138,10 @@ async def manual_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin
         return
 
     raw_args = update.message.text.partition(" ")[2].strip()
-    parts = [part.strip() for part in raw_args.split("|", 2)]
-    if len(parts) != 3:
+    parts = [part.strip() for part in raw_args.split("|", 3)]
+    if len(parts) != 4 or any(not part for part in parts):
         await update.message.reply_text(
-            "Uso: /manualpromo AAAA-MM-DD HH:MM | Título | Texto de publicación"
+            "Uso: /manualpromo AAAA-MM-DD HH:MM | Título | Lugar | Texto de publicación"
         )
         return
 
@@ -163,8 +163,9 @@ async def manual_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin
     context.user_data["manual_promo_draft"] = {
         "event_id": f"manual-{event_start.strftime('%Y%m%dT%H%M%S')}",
         "summary": parts[1],
+        "location": parts[2],
         "event_start": event_start.isoformat(),
-        "text": parts[2],
+        "text": parts[3],
     }
     await update.message.reply_text(
         "✅ Datos guardados. Ahora envía el flyer como una foto para continuar."
@@ -193,6 +194,7 @@ async def handle_manual_promo_photo(
         draft["event_start"],
         draft["text"],
         image_file_id,
+        location=draft["location"],
     )
     promo["status"] = "pending"
     state.setdefault("manual_promos", {})[draft["event_id"]] = promo
