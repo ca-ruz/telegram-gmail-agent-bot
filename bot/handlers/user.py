@@ -2,8 +2,8 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
-from bot.interface import get_main_keyboard
-from tools.local.data_manager import save_json
+from bot.interface import get_main_keyboard, get_main_menu_text
+from tools.local.data_manager import load_json, save_json
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 # Configuration constants
 WELCOME_IMAGE_PATH = "btcgdl.png"
 SUBSCRIBERS_FILE = "data/subscribers.json"
+WELCOMED_USERS_FILE = "data/welcomed_users.json"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -18,13 +19,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     user = update.effective_user
     logger.info(f"User {user.id} (@{user.username}) started the bot.")
+    welcomed_users = set(load_json(WELCOMED_USERS_FILE, []))
+    is_first_welcome = user.id not in welcomed_users
 
     welcome_text = (
-        "¡Hola Bitcoiner! Bienvenido al bot de btc gdl, "
-        "suscríbete para recibir notificaciones de nuestros eventos."
+        "¡Hola Bitcoiner! Bienvenido a Bitcoin & Lightning GDL.\n\n"
+        f"{get_main_menu_text()}"
     )
 
-    if os.path.exists(WELCOME_IMAGE_PATH):
+    if is_first_welcome and os.path.exists(WELCOME_IMAGE_PATH):
         with open(WELCOME_IMAGE_PATH, "rb") as photo:
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
@@ -38,12 +41,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_keyboard()
         )
 
+    if is_first_welcome:
+        welcomed_users.add(user.id)
+        save_json(WELCOMED_USERS_FILE, sorted(welcomed_users))
+
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handles the /menu command. Shows the main action buttons without the logo.
     """
     await update.message.reply_text(
-        "¡Hola Bitcoiner! ¿Qué deseas hacer?.",
+        get_main_menu_text(),
         reply_markup=get_main_keyboard()
     )
 
@@ -86,53 +93,53 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE, subsc
     is_photo_msg = bool(query.message.photo)
 
     if data == "subscribe":
-        if user.id not in subscribers:
+        already_subscribed = user.id in subscribers
+        if not already_subscribed:
             subscribers.add(user.id)
             save_json(SUBSCRIBERS_FILE, list(subscribers))
             logger.info(f"User {user.id} (@{user.username}) subscribed.")
-        
-        msg = "¡Gracias por suscribirte!"
+
+        msg = (
+            "ℹ️ Ya estás suscrito a las notificaciones de eventos de "
+            "Bitcoin & Lightning GDL."
+            if already_subscribed
+            else "✅ Te suscribiste a las notificaciones de eventos de "
+            "Bitcoin & Lightning GDL."
+        )
         if is_photo_msg:
             await query.edit_message_caption(caption=msg, reply_markup=get_main_keyboard())
         else:
             await query.edit_message_text(text=msg, reply_markup=get_main_keyboard())
 
     elif data == "unsubscribe":
-        if user.id in subscribers:
+        was_subscribed = user.id in subscribers
+        if was_subscribed:
             subscribers.discard(user.id)
             save_json(SUBSCRIBERS_FILE, list(subscribers))
             logger.info(f"User {user.id} (@{user.username}) unsubscribed.")
-        
-        msg = "Te has dado de baja del servicio, puedes volver a suscribirte en cualquier momento."
+
+        msg = (
+            "✅ Te diste de baja de las notificaciones de eventos de "
+            "Bitcoin & Lightning GDL."
+            if was_subscribed
+            else "ℹ️ No estabas suscrito a las notificaciones de eventos de "
+            "Bitcoin & Lightning GDL."
+        )
         if is_photo_msg:
             await query.edit_message_caption(caption=msg, reply_markup=get_main_keyboard())
         else:
             await query.edit_message_text(text=msg, reply_markup=get_main_keyboard())
 
-    elif data == "meetup":
-        msg = "https://www.meetup.com/guadalajara-bitcoin-and-lightning/"
+    elif data in {"meetup", "events", "bitdevs", "website"}:
+        links = {
+            "meetup": "https://www.meetup.com/guadalajara-bitcoin-and-lightning/",
+            "events": "https://btcgdl.com/eventos.html",
+            "bitdevs": "https://bitdevs.btcgdl.com/",
+            "website": "https://btcgdl.com/",
+        }
+        msg = links[data]
         if is_photo_msg:
-            await query.edit_message_caption(caption=msg)
-        else:
-            await query.edit_message_text(text=msg)
-
-    elif data == "events":
-        msg = "https://btcgdl.com/eventos.html"
-        if is_photo_msg:
-            await query.edit_message_caption(caption=msg)
-        else:
-            await query.edit_message_text(text=msg)
-
-    elif data == "bitdevs":
-        msg = "https://bitdevs.btcgdl.com/"
-        if is_photo_msg:
-            await query.edit_message_caption(caption=msg)
-        else:
-            await query.edit_message_text(text=msg)
-
-    elif data == "website":
-        msg = "https://btcgdl.com/"
-        if is_photo_msg:
-            await query.edit_message_caption(caption=msg)
+            await query.message.delete()
+            await context.bot.send_message(chat_id=query.message.chat_id, text=msg)
         else:
             await query.edit_message_text(text=msg)

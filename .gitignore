@@ -10,6 +10,7 @@ google_calendar.json
 
 # Local Data
 data/subscribers.json
+data/welcomed_users.json
 data/sent_reminders.json
 data/notified_promos.json
 data/groups.json
