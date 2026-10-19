@@ -15,7 +15,9 @@ from core.coffee_hosts import (
     build_coffee_host,
     next_coffee_host_id,
     save_coffee_hosts,
+    send_immediate_coffee_host_reminder,
     upcoming_saturdays,
+    send_manual_coffee_host_reminder,
 )
 from core.manual_promos import (
     MANUAL_PROMO_TIMEZONE,
@@ -29,6 +31,7 @@ from core.notification_preferences import (
     filter_users_by_category,
     is_notification_enabled,
 )
+from core.promoter import send_manual_event_reminder
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -135,6 +138,73 @@ def format_prompt_history_entry(entry, prompt_limit=900):
         f"<code>{escape(entry.get('image_quality', 'unknown'))}</code>\n"
         f"Fecha: <code>{escape(entry.get('created_at', 'unknown'))}</code>\n\n"
         f"{escape(prompt)}"
+    )
+
+
+def parse_manual_reminder_request(raw_args):
+    """Parse and validate an admin manual reminder request."""
+    parts = [part.strip() for part in raw_args.split("|", 1)]
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+
+    reminder_type, target = parts[0].lower(), parts[1]
+    if reminder_type == "coffee":
+        try:
+            reminder_date = date.fromisoformat(target)
+        except ValueError:
+            return None
+        if reminder_date.weekday() != 5:
+            return None
+        return {"type": "coffee", "date": target}
+
+    if reminder_type == "event":
+        return {"type": "event", "event_id": target}
+
+    return None
+
+
+async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
+    """Validate and send an administrator manual reminder request."""
+    if update.effective_user.id != admin_id:
+        return
+
+    raw_args = update.message.text.partition(" ")[2].strip()
+    request = parse_manual_reminder_request(raw_args)
+    if not request:
+        await update.message.reply_text(
+            "Uso: /remind coffee | AAAA-MM-DD\n"
+            "o: /remind event | event-id"
+        )
+        return
+
+    if request["type"] == "coffee":
+        result = await send_manual_coffee_host_reminder(
+            context,
+            config,
+            state,
+            request["date"],
+        )
+        if not result["found"]:
+            await update.message.reply_text("❌ No hay asignación de café para esa fecha.")
+            return
+        await update.message.reply_text(
+            f"☕ Recordatorio manual: {result['sent']} enviados, "
+            f"{result['failed']} fallos, {result['skipped']} omitidos."
+        )
+        return
+
+    result = await send_manual_event_reminder(
+        context,
+        config,
+        state,
+        request["event_id"],
+    )
+    if not result["found"]:
+        await update.message.reply_text("❌ Evento no encontrado en el calendario.")
+        return
+    await update.message.reply_text(
+        f"📅 Recordatorio manual: {result['subscribers_sent']} DMs, "
+        f"{result['groups_sent']} grupos, {result['failures']} fallos."
     )
 
 async def check_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config):
@@ -626,6 +696,12 @@ async def coffee_host(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_
     notes = command_parts[3] if len(command_parts) > 3 else ""
     schedule[date_key] = build_coffee_assignment(host_ids, venue, start_time, notes)
     save_json(config["COFFEE_HOST_SCHEDULE_FILE"], schedule)
+    immediate_result = await send_immediate_coffee_host_reminder(
+        context,
+        config,
+        state,
+        date_key,
+    )
     disabled_hosts = []
     notification_preferences = state.get("notification_preferences")
     if notification_preferences is not None:
@@ -644,9 +720,16 @@ async def coffee_host(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_
             "\n⚠️ Notificaciones de café desactivadas para: "
             f"{', '.join(disabled_hosts)}. Deben activarlas en /suscripciones."
         )
+    delivery_note = ""
+    if immediate_result["sent"]:
+        delivery_note = "\n📨 Recordatorio inmediato enviado."
+    elif immediate_result["failed"]:
+        delivery_note = "\n⚠️ No se pudo enviar el recordatorio inmediato."
+    elif immediate_result["skipped"]:
+        delivery_note = "\nℹ️ El recordatorio inmediato no se envió a los anfitriones omitidos."
     await update.message.reply_text(
         f"✅ Anfitriones asignados para {date_key}: {', '.join(host_ids)}\n"
-        f"📍 {escape(venue)} · ⏰ {escape(start_time)}{warning}",
+        f"📍 {escape(venue)} · ⏰ {escape(start_time)}{warning}{delivery_note}",
         parse_mode=ParseMode.HTML,
     )
 

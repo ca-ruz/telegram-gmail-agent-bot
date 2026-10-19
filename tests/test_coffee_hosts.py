@@ -153,3 +153,45 @@ def test_check_coffee_host_reminders_respects_disabled_preferences(tmp_path):
 
     assert context.bot.sent == []
     assert schedule[saturday.isoformat()]["reminders_sent"] == {}
+
+
+def test_send_immediate_coffee_host_reminder_deduplicates_assignment_stage(tmp_path):
+    """Immediate assignment reminders are sent once and persisted separately."""
+    saturday = date(2026, 10, 17).isoformat()
+    state = {
+        "coffee_hosts": {"host-001": {"telegram_id": 123}},
+        "coffee_host_schedule": {
+            saturday: {
+                "hosts": ["host-001"],
+                "venue": "Café Central",
+                "start_time": "11:00",
+                "notes": "",
+                "reminders_sent": {},
+            }
+        },
+        "notification_preferences": {
+            "123": {"events": True, "coffee": True, "payments": False},
+        },
+    }
+    bot = FakeBot()
+    context = SimpleNamespace(bot=bot)
+    config = {
+        "COFFEE_HOST_SCHEDULE_FILE": str(tmp_path / "schedule.json"),
+    }
+
+    asyncio.run(
+        coffee_hosts.send_immediate_coffee_host_reminder(
+            context, config, state, saturday
+        )
+    )
+    asyncio.run(
+        coffee_hosts.send_immediate_coffee_host_reminder(
+            context, config, state, saturday
+        )
+    )
+
+    assert len(bot.sent) == 1
+    assert "ha sido asignado" in bot.sent[0]["text"]
+    assert state["coffee_host_schedule"][saturday]["reminders_sent"] == {
+        "assigned": ["host-001"]
+    }

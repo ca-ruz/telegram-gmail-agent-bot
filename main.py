@@ -10,7 +10,7 @@ from bot.handlers.admin import (
     list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
-    coffee_host, manual_promo, handle_manual_promo_photo,
+    coffee_host, remind, manual_promo, handle_manual_promo_photo,
     handle_manual_promo_send_now, handle_manual_promo_schedule,
     handle_manual_promo_cancel,
 )
@@ -209,6 +209,13 @@ def main():
     app.add_handler(CommandHandler("coffeehost",
         partial(
             coffee_host,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        )))
+    app.add_handler(CommandHandler("remind",
+        partial(
+            remind,
             admin_id=CONFIG['ADMIN_ID'],
             state=STATE,
             config=CONFIG,

@@ -73,6 +73,110 @@ def cleanup_pending_promos(pending_promos, pending_promos_file):
 
     return pending_promos
 
+
+def _event_storage_key(event):
+    """Build the persisted reminder key for a calendar event instance."""
+    start_raw = event["start"].get("dateTime", event["start"].get("date"))
+    event_time = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+    return f"{event['id']}_{event_time.strftime('%Y%m%dT%H%M%SZ')}"
+
+
+def _event_reminder_message(event, now):
+    """Build the HTML reminder message for one calendar event."""
+    start_raw = event["start"].get("dateTime", event["start"].get("date"))
+    event_time = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+    if event_time.tzinfo is None:
+        event_time = event_time.replace(tzinfo=GDL_TZ)
+    description = event.get("description", "")
+    link = extract_link(description) or event.get("htmlLink", "https://btcgdl.com")
+    event_time_gdl = event_time.astimezone(GDL_TZ)
+    formatted_date = event_time_gdl.strftime("%d/%m")
+    formatted_time = event_time_gdl.strftime("%I:%M %p")
+    return (
+        f"📅 <b>Próximo evento: {event.get('summary', 'Evento')}</b>\n\n"
+        f"🗓 <b>Fecha:</b> {formatted_date}\n"
+        f"⏰ <b>Hora:</b> {formatted_time}\n"
+        f"⏳ <b>Faltan:</b> {friendly_delta(event_time - now)}\n\n"
+        f"🔗 <a href='{link}'>Más información y registro</a>"
+    )
+
+
+async def send_manual_event_reminder(context, config, state, event_id):
+    """Send one manually requested event reminder to eligible DMs and groups."""
+    service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
+    try:
+        events, now = fetch_upcoming_events(service, config['CALENDAR_ID'])
+    except Exception:
+        logger.exception("Could not fetch calendar events for manual reminder %s.", event_id)
+        return {"found": False, "subscribers_sent": 0, "groups_sent": 0, "failures": 1}
+
+    event = next((item for item in events if item.get("id") == event_id), None)
+    if not event:
+        return {"found": False, "subscribers_sent": 0, "groups_sent": 0, "failures": 0}
+
+    storage_key = _event_storage_key(event)
+    sent_reminders = state.setdefault("sent_reminders", {})
+    stored_sent = sent_reminders.get(storage_key, {})
+    if isinstance(stored_sent, list):
+        stored_sent = {stage: [] for stage in stored_sent}
+        sent_reminders[storage_key] = stored_sent
+    sent_for_event = stored_sent if isinstance(stored_sent, dict) else {}
+    sent_subscribers = set(sent_for_event.get("manual", []))
+    sent_groups = set(sent_for_event.get("manual_groups", []))
+    subscribers = filter_users_by_category(
+        state.get("subscribers", set()),
+        state.get("notification_preferences"),
+        "events",
+    )
+    groups = state.get("groups", set())
+    message = _event_reminder_message(event, now)
+    subscribers_sent = 0
+    groups_sent = 0
+    failures = 0
+
+    for user_id in subscribers:
+        if user_id in sent_subscribers:
+            continue
+        try:
+            await context.bot.send_message(
+                user_id,
+                message,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=False,
+            )
+            sent_subscribers.add(user_id)
+            subscribers_sent += 1
+        except Exception:
+            failures += 1
+            logger.exception("Could not send manual event reminder to %s.", user_id)
+
+    for group_id in groups:
+        if group_id in sent_groups:
+            continue
+        try:
+            await context.bot.send_message(
+                group_id,
+                message,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=False,
+            )
+            sent_groups.add(group_id)
+            groups_sent += 1
+        except Exception:
+            failures += 1
+            logger.exception("Could not send manual event reminder to group %s.", group_id)
+
+    sent_for_event["manual"] = sorted(sent_subscribers)
+    sent_for_event["manual_groups"] = sorted(sent_groups)
+    sent_reminders[storage_key] = sent_for_event
+    save_json(config['REMINDERS_FILE'], sent_reminders)
+    return {
+        "found": True,
+        "subscribers_sent": subscribers_sent,
+        "groups_sent": groups_sent,
+        "failures": failures,
+    }
+
 async def notify_admin_summary(context, admin_id, events_to_notify):
     """
     Sends a consolidated summary message to the admin for multiple events.
