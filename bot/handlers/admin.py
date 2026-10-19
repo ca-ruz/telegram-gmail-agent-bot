@@ -138,6 +138,49 @@ def format_prompt_history_entry(entry, prompt_limit=900):
         f"{escape(prompt)}"
     )
 
+
+def parse_manual_reminder_request(raw_args):
+    """Parse and validate an admin manual reminder request."""
+    parts = [part.strip() for part in raw_args.split("|", 1)]
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+
+    reminder_type, target = parts[0].lower(), parts[1]
+    if reminder_type == "coffee":
+        try:
+            reminder_date = date.fromisoformat(target)
+        except ValueError:
+            return None
+        if reminder_date.weekday() != 5:
+            return None
+        return {"type": "coffee", "date": target}
+
+    if reminder_type == "event":
+        return {"type": "event", "event_id": target}
+
+    return None
+
+
+async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):
+    """Validate and queue an administrator manual reminder request."""
+    if update.effective_user.id != admin_id:
+        return
+
+    raw_args = update.message.text.partition(" ")[2].strip()
+    request = parse_manual_reminder_request(raw_args)
+    if not request:
+        await update.message.reply_text(
+            "Uso: /remind coffee | AAAA-MM-DD\n"
+            "o: /remind event | event-id"
+        )
+        return
+
+    context.user_data["manual_reminder_request"] = request
+    target = request.get("date", request.get("event_id"))
+    await update.message.reply_text(
+        f"✅ Recordatorio preparado: {request['type']} | {target}."
+    )
+
 async def check_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config):
     """
     Admin-only command that shows the most recent generated image prompt.
