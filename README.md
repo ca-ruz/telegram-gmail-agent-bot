@@ -89,6 +89,7 @@ The subscription categories are currently events, coffee-host reminders, and mem
 *   `/draft`: Manually trigger a promo generation for an upcoming event.
 *   `/manualpromo AAAA-MM-DD HH:MM | Title | Location | Publication text`: Stage an existing flyer for scheduled subscriber reminders, then upload the flyer as a photo. Example: `/manualpromo 2026-10-20 18:00 | Forks Meetup | LSS | Publication text`.
     The final preview and delivery caption preserve the publication text and append the formatted Spanish date, time, and location when those details are not already included.
+    Links found in the publication text are moved to the end of the caption, after the event details.
     The preview includes **🧪 Enviar prueba**, which sends the flyer only to the administrator's DM without changing reminder state.
 *   `/remind test | event | event-id`: Send a calendar event reminder test only to the administrator's DM. Test delivery does not notify subscribers or groups and does not consume the real reminder state.
 *   `/pendingpromo`: View and publish the currently staged draft.
