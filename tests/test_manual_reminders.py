@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from bot.handlers.admin import parse_manual_reminder_request, remind
-from core.promoter import send_manual_event_reminder
+from core.promoter import send_manual_event_reminder, send_manual_event_reminder_test
 
 
 class FakeBot:
@@ -52,6 +52,10 @@ def test_parse_manual_reminder_request_validates_supported_targets():
         "type": "event",
         "event_id": "event-001",
     }
+    assert parse_manual_reminder_request("test | event | event-001") == {
+        "type": "event_test",
+        "event_id": "event-001",
+    }
     assert parse_manual_reminder_request("coffee | 2026-10-16") is None
     assert parse_manual_reminder_request("unknown | target") is None
 
@@ -95,6 +99,50 @@ def test_manual_event_reminder_delivers_to_enabled_dms_and_groups(tmp_path):
         "failures": 0,
     }
     assert [message["chat_id"] for message in bot.messages] == [101, -100]
+
+
+def test_manual_event_reminder_test_only_reaches_administrator(tmp_path):
+    """Event reminder tests send only to the administrator without saving state."""
+    now = datetime(2026, 10, 15, 11, 0, tzinfo=timezone.utc)
+    config = make_config(tmp_path)
+    bot = FakeBot()
+    context = SimpleNamespace(bot=bot)
+
+    with patch("core.promoter.get_calendar_service_with_creds", return_value=object()), patch(
+        "core.promoter.fetch_upcoming_events", return_value=([make_event()], now)
+    ):
+        result = asyncio.run(
+            send_manual_event_reminder_test(context, config, 42, "event-001")
+        )
+
+    assert result == {"found": True, "failures": 0}
+    assert [message["chat_id"] for message in bot.messages] == [42]
+    assert "MODO PRUEBA" in bot.messages[0]["message"]
+    assert not (tmp_path / "sent_reminders.json").exists()
+
+
+def test_remind_command_executes_event_test_without_real_delivery():
+    """The test command uses isolated event delivery and reports its result."""
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        message=SimpleNamespace(
+            text="/remind test | event | event-001",
+            reply_text=AsyncMock(),
+        ),
+    )
+    context = SimpleNamespace(bot=SimpleNamespace(), user_data={})
+    state = {}
+    config = {}
+    result = {"found": True, "failures": 0}
+
+    with patch(
+        "bot.handlers.admin.send_manual_event_reminder_test",
+        new=AsyncMock(return_value=result),
+    ) as sender:
+        asyncio.run(remind(update, context, 42, state, config))
+
+    sender.assert_awaited_once_with(context, config, 42, "event-001")
+    assert "MODO PRUEBA" in update.message.reply_text.await_args.args[0]
 
 
 def test_remind_command_sends_manual_coffee_request():

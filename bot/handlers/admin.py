@@ -23,6 +23,7 @@ from core.manual_promos import (
     MANUAL_PROMO_TIMEZONE,
     build_manual_promo,
     deliver_manual_promo,
+    deliver_manual_promo_test,
     format_manual_promo_caption,
     get_manual_promo_stage,
     save_manual_promos,
@@ -32,7 +33,7 @@ from core.notification_preferences import (
     filter_users_by_category,
     is_notification_enabled,
 )
-from core.promoter import send_manual_event_reminder
+from core.promoter import send_manual_event_reminder, send_manual_event_reminder_test
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -99,7 +100,16 @@ def format_prompt_history_entry(entry, prompt_limit=900):
 
 def parse_manual_reminder_request(raw_args):
     """Parse and validate an admin manual reminder request."""
-    parts = [part.strip() for part in raw_args.split("|", 1)]
+    parts = [part.strip() for part in raw_args.split("|")]
+    if len(parts) == 3:
+        if (
+            parts[0].lower() == "test"
+            and parts[1].lower() == "event"
+            and parts[2]
+        ):
+            return {"type": "event_test", "event_id": parts[2]}
+        return None
+
     if len(parts) != 2 or not parts[0] or not parts[1]:
         return None
 
@@ -129,7 +139,8 @@ async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
     if not request:
         await update.message.reply_text(
             "Uso: /remind coffee | AAAA-MM-DD\n"
-            "o: /remind event | event-id"
+            "o: /remind event | event-id\n"
+            "o: /remind test | event | event-id"
         )
         return
 
@@ -146,6 +157,24 @@ async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
         await update.message.reply_text(
             f"☕ Recordatorio manual: {result['sent']} enviados, "
             f"{result['failed']} fallos, {result['skipped']} omitidos."
+        )
+        return
+
+    if request["type"] == "event_test":
+        result = await send_manual_event_reminder_test(
+            context,
+            config,
+            admin_id,
+            request["event_id"],
+        )
+        if not result["found"]:
+            await update.message.reply_text("❌ Evento no encontrado en el calendario.")
+            return
+        if result["failures"]:
+            await update.message.reply_text("❌ No se pudo enviar la prueba a tu DM.")
+            return
+        await update.message.reply_text(
+            "🧪 MODO PRUEBA: recordatorio enviado solo a tu DM."
         )
         return
 
@@ -287,6 +316,11 @@ async def handle_manual_promo_photo(
     caption = format_manual_promo_preview(promo)
     keyboard = [[
         InlineKeyboardButton(
+            "🧪 Enviar prueba",
+            callback_data=f"manual_test_{draft['event_id']}",
+        ),
+    ], [
+        InlineKeyboardButton(
             "✅ Enviar ahora",
             callback_data=f"manual_send_now_{draft['event_id']}",
         ),
@@ -359,6 +393,35 @@ async def handle_manual_promo_send_now(
         f"{format_manual_promo_delivery_result(result)}",
         parse_mode=ParseMode.HTML,
     )
+
+
+async def handle_manual_promo_test(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+):
+    """Send a staged manual promo test only to the administrator's DM."""
+    query = update.callback_query
+    if query.from_user.id != admin_id:
+        return
+
+    await query.answer()
+    promo_id = query.data.removeprefix("manual_test_")
+    promo = state.setdefault("manual_promos", {}).get(promo_id)
+    if not promo:
+        await query.edit_message_caption("❌ El promo manual ya no existe.")
+        return
+
+    result = await deliver_manual_promo_test(context, promo, admin_id)
+    if result["failures"]:
+        message = "❌ No se pudo enviar la prueba a tu DM."
+    else:
+        message = (
+            f"🧪 <b>MODO PRUEBA</b>\n\n"
+            f"✅ Prueba enviada solo a tu DM: {escape(promo['summary'])}"
+        )
+    await query.edit_message_caption(message, parse_mode=ParseMode.HTML)
 
 
 async def handle_manual_promo_schedule(
