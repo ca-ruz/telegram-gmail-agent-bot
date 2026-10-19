@@ -218,6 +218,26 @@ async def send_immediate_coffee_host_reminder(context, config, state, saturday_t
     return result
 
 
+async def send_manual_coffee_host_reminder(context, config, state, saturday_text):
+    """Send one manually requested coffee reminder without duplicating its stage."""
+    assignment = state.get("coffee_host_schedule", {}).get(saturday_text)
+    if not isinstance(assignment, dict):
+        logger.warning("Cannot send manual reminder for missing assignment %s.", saturday_text)
+        return {"found": False, "sent": 0, "failed": 0, "skipped": 0}
+
+    result = await _send_coffee_host_stage(
+        context,
+        state,
+        saturday_text,
+        assignment,
+        "manual",
+    )
+    result["found"] = True
+    if result["sent"]:
+        save_coffee_schedule(config["COFFEE_HOST_SCHEDULE_FILE"], state["coffee_host_schedule"])
+    return result
+
+
 async def check_coffee_host_reminders(context, config, state):
     """Send due private reminders to assigned coffee hosts and persist successful deliveries."""
     now = datetime.now(COFFEE_TIMEZONE)

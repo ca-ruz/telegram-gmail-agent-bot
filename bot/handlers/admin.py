@@ -17,6 +17,7 @@ from core.coffee_hosts import (
     save_coffee_hosts,
     send_immediate_coffee_host_reminder,
     upcoming_saturdays,
+    send_manual_coffee_host_reminder,
 )
 from core.manual_promos import (
     MANUAL_PROMO_TIMEZONE,
@@ -30,6 +31,7 @@ from core.notification_preferences import (
     filter_users_by_category,
     is_notification_enabled,
 )
+from core.promoter import send_manual_event_reminder
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -161,8 +163,8 @@ def parse_manual_reminder_request(raw_args):
     return None
 
 
-async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):
-    """Validate and queue an administrator manual reminder request."""
+async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
+    """Validate and send an administrator manual reminder request."""
     if update.effective_user.id != admin_id:
         return
 
@@ -175,10 +177,34 @@ async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):
         )
         return
 
-    context.user_data["manual_reminder_request"] = request
-    target = request.get("date", request.get("event_id"))
+    if request["type"] == "coffee":
+        result = await send_manual_coffee_host_reminder(
+            context,
+            config,
+            state,
+            request["date"],
+        )
+        if not result["found"]:
+            await update.message.reply_text("❌ No hay asignación de café para esa fecha.")
+            return
+        await update.message.reply_text(
+            f"☕ Recordatorio manual: {result['sent']} enviados, "
+            f"{result['failed']} fallos, {result['skipped']} omitidos."
+        )
+        return
+
+    result = await send_manual_event_reminder(
+        context,
+        config,
+        state,
+        request["event_id"],
+    )
+    if not result["found"]:
+        await update.message.reply_text("❌ Evento no encontrado en el calendario.")
+        return
     await update.message.reply_text(
-        f"✅ Recordatorio preparado: {request['type']} | {target}."
+        f"📅 Recordatorio manual: {result['subscribers_sent']} DMs, "
+        f"{result['groups_sent']} grupos, {result['failures']} fallos."
     )
 
 async def check_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, config):

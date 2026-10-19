@@ -214,7 +214,12 @@ def main():
             config=CONFIG,
         )))
     app.add_handler(CommandHandler("remind",
-        partial(remind, admin_id=CONFIG['ADMIN_ID'])))
+        partial(
+            remind,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        )))
     app.add_handler(CommandHandler("manualpromo",
         partial(manual_promo, admin_id=CONFIG['ADMIN_ID'])))
     
