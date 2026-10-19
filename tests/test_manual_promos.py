@@ -11,6 +11,7 @@ from bot.handlers.admin import (
     handle_manual_promo_schedule,
     handle_manual_promo_schedule_input,
     handle_manual_promo_send_now,
+    handle_manual_promo_test,
     format_manual_promo_preview,
     manual_promo,
 )
@@ -303,6 +304,59 @@ def test_manual_promo_immediate_delivery_reaches_subscribers_and_groups(tmp_path
     confirmation = query.edit_message_caption.await_args.args[0]
     assert "DM enviados: 1" in confirmation
     assert "Grupos enviados: 1" in confirmation
+
+
+def test_manual_promo_test_delivery_only_reaches_administrator():
+    """Manual promo tests send only to the administrator without changing state."""
+    promo = build_active_promo()
+    state = {"manual_promos": {"manual-001": promo}}
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=42),
+        data="manual_test_manual-001",
+        answer=AsyncMock(),
+        edit_message_caption=AsyncMock(),
+    )
+    bot = FakeBot()
+    context = SimpleNamespace(bot=bot)
+    original_promo = promo.copy()
+
+    asyncio.run(
+        handle_manual_promo_test(
+            SimpleNamespace(callback_query=query),
+            context,
+            admin_id=42,
+            state=state,
+        )
+    )
+
+    assert [message["chat_id"] for message in bot.sent] == [42]
+    assert "MODO PRUEBA" in bot.sent[0]["caption"]
+    assert promo == original_promo
+    assert "MODO PRUEBA" in query.edit_message_caption.await_args.args[0]
+
+
+def test_manual_promo_test_rejects_unauthorized_users():
+    """Non-admin users cannot trigger manual promo test delivery."""
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=99),
+        data="manual_test_manual-001",
+        answer=AsyncMock(),
+        edit_message_caption=AsyncMock(),
+    )
+    bot = FakeBot()
+    state = {"manual_promos": {"manual-001": build_active_promo()}}
+
+    asyncio.run(
+        handle_manual_promo_test(
+            SimpleNamespace(callback_query=query),
+            SimpleNamespace(bot=bot),
+            admin_id=42,
+            state=state,
+        )
+    )
+
+    assert bot.sent == []
+    query.answer.assert_not_awaited()
 
 
 def test_manual_promo_schedule_persists_first_notification(tmp_path):
