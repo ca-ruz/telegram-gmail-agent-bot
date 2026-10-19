@@ -7,6 +7,7 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from tools.local.data_manager import load_json, save_json
+from core.notification_preferences import is_notification_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,7 @@ async def check_coffee_host_reminders(context, config, state):
     now = datetime.now(COFFEE_TIMEZONE)
     schedule = state.setdefault("coffee_host_schedule", {})
     hosts = state.setdefault("coffee_hosts", {})
+    notification_preferences = state.get("notification_preferences")
     changed = False
 
     for saturday_text, assignment in schedule.items():
@@ -182,6 +184,16 @@ async def check_coffee_host_reminders(context, config, state):
             telegram_id = host.get("telegram_id") if isinstance(host, dict) else None
             if not host or not host.get("active", True) or not telegram_id:
                 logger.warning("Coffee host %s is missing or has no Telegram ID.", host_id)
+                continue
+            if not is_notification_enabled(
+                notification_preferences,
+                telegram_id,
+                "coffee",
+            ):
+                logger.info(
+                    "Skipping coffee host reminder for %s because coffee notifications are disabled.",
+                    host_id,
+                )
                 continue
 
             try:

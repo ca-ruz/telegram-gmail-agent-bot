@@ -6,6 +6,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from tools.local.calendar_api import get_calendar_service_with_creds, fetch_upcoming_events, extract_link, friendly_delta
 from tools.local.data_manager import save_json
+from core.notification_preferences import filter_users_by_category
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -119,7 +120,11 @@ async def check_calendar(context, config, state):
     logger.info("Polling Google Calendar for upcoming events...")
     
     sent_reminders = state['sent_reminders']
-    subscribers = state['subscribers']
+    subscribers = filter_users_by_category(
+        state['subscribers'],
+        state.get('notification_preferences'),
+        "events",
+    )
     notified_promos = state['notified_promos']
     state['pending_promos'] = cleanup_pending_promos(
         state.get('pending_promos', {}),

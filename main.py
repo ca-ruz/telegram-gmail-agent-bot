@@ -3,7 +3,7 @@ import logging
 from functools import partial
 from dotenv import load_dotenv
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-from bot.handlers.user import start, menu, meetup, events, bitdevs, website, button_click
+from bot.handlers.user import start, menu, subscriptions, meetup, events, bitdevs, website, button_click
 from bot.handlers.admin import (
     broadcast, draft, handle_draft_selection, handle_auto_draft, 
     handle_publish, handle_clear_pending_promo, add_group, remove_group,
@@ -22,6 +22,7 @@ from core.coffee_hosts import (
     parse_reminder_rules,
 )
 from core.manual_promos import check_manual_promo_reminders, load_manual_promos
+from core.notification_preferences import load_notification_preferences
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
 
@@ -83,6 +84,7 @@ CONFIG = {
     'REMINDERS_FILE': "data/sent_reminders.json",
     'REMINDER_CONFIG_FILE': "data/reminder_config.json",
     'SUBSCRIBERS_FILE': "data/subscribers.json",
+    'NOTIFICATION_PREFERENCES_FILE': "data/notification_preferences.json",
     'PROMOTED_FILE': "data/notified_promos.json",
     'GROUPS_FILE': "data/groups.json",
     'PROMPT_HISTORY_FILE': "data/prompt_history.json",
@@ -99,6 +101,7 @@ CONFIG = {
 
 # --- STATE INITIALIZATION & MIGRATION ---
 raw_notified = load_json(CONFIG['PROMOTED_FILE'], {})
+event_subscribers = set(load_json(CONFIG['SUBSCRIBERS_FILE'], []))
 # Migration: If the file was an old list format, convert it to the new dict format
 if isinstance(raw_notified, list):
     logger.info("Migrating notified_promos.json from list to dictionary format...")
@@ -106,7 +109,11 @@ if isinstance(raw_notified, list):
     raw_notified = notified_dict
 
 STATE = {
-    'subscribers': set(load_json(CONFIG['SUBSCRIBERS_FILE'], [])),
+    'subscribers': event_subscribers,
+    'notification_preferences': load_notification_preferences(
+        CONFIG['NOTIFICATION_PREFERENCES_FILE'],
+        event_subscribers,
+    ),
     'groups': set(load_json(CONFIG['GROUPS_FILE'], [])),
     'sent_reminders': load_json(CONFIG['REMINDERS_FILE'], {}),
     'notified_promos': raw_notified,
@@ -161,6 +168,12 @@ def main():
     # User Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
+    app.add_handler(CommandHandler("suscripciones", partial(
+        subscriptions,
+        notification_preferences=STATE['notification_preferences'],
+        subscribers=STATE['subscribers'],
+        notification_preferences_file=CONFIG['NOTIFICATION_PREFERENCES_FILE'],
+    )))
     app.add_handler(CommandHandler("meetup", meetup))
     app.add_handler(CommandHandler("events", events))
     app.add_handler(CommandHandler("bitdevs", bitdevs))
@@ -252,7 +265,12 @@ def main():
         partial(handle_edit_confirm, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
         pattern="^(confirm_edit|cancel_edit)$"))
     app.add_handler(CallbackQueryHandler(
-        partial(button_click, subscribers=STATE['subscribers'])))
+        partial(
+            button_click,
+            subscribers=STATE['subscribers'],
+            notification_preferences=STATE['notification_preferences'],
+            notification_preferences_file=CONFIG['NOTIFICATION_PREFERENCES_FILE'],
+        )))
 
     # Smart Admin Chat Handler (Natural Language)
     app.add_handler(MessageHandler(

@@ -131,6 +131,30 @@ def test_coffee_host_assigns_and_persists_active_hosts(tmp_path):
     ]
 
 
+def test_coffee_host_assignment_warns_when_notifications_are_disabled(tmp_path):
+    """Assignment warns instead of silently enabling coffee notifications."""
+    state = {
+        "coffee_hosts": {
+            "host-001": {
+                "name": "Host One",
+                "telegram_id": 111,
+                "active": True,
+            }
+        },
+        "coffee_host_schedule": {},
+        "notification_preferences": {
+            "111": {"events": True, "coffee": False, "payments": False},
+        },
+    }
+    update = make_update("/coffeehost 2026-10-17 host-001 | Café Central | 11:00")
+
+    asyncio.run(coffee_host(update, SimpleNamespace(), 42, state, make_config(tmp_path)))
+
+    message = update.message.reply_text.await_args.args[0]
+    assert "Notificaciones de café desactivadas" in message
+    assert "Host One" in message
+
+
 def test_coffee_host_rejects_non_saturday_dates(tmp_path):
     """Assignments for dates other than Saturday are rejected."""
     state = {"coffee_hosts": {"host-001": {"active": True}}, "coffee_host_schedule": {}}
