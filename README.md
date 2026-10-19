@@ -12,6 +12,7 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
 *   **Manual Event Promos:** Admins can upload an existing flyer and publication text with `/manualpromo`; the bot schedules delivery without calling OpenAI.
 *   **Interactive Refinement:** Don't like a draft? Just reply to it with instructions (e.g., "Make it more professional") and the AI will regenerate it.
 *   **Automated Reminders:** Notifies subscribers at configurable intervals (1 week, 3 days, 24 hours, 1 hour before).
+*   **Notification Preferences:** Users can choose event, coffee-host, and membership notification categories from `/suscripciones`.
 *   **Smart Formatting:** Professional HTML-formatted messages with 12h AM/PM time and clean date display.
 *   **Link Extraction:** Automatically finds registration links in the Google Calendar event description.
 *   **Timezone Aware:** Correctly handles and displays times for Guadalajara (`America/Mexico_City`).
@@ -74,6 +75,12 @@ You can verify that your Google credentials and Calendar ID are correct by runni
 ```bash
 python test_calendar.py
 ```
+
+### User Commands
+*   `/menu`: Open the public bot menu.
+*   `/suscripciones`: Choose which notification categories to receive or disable all notifications.
+
+The subscription categories are currently events, coffee-host reminders, and membership/payment notices. Event subscriptions are enabled for existing subscribers during migration; coffee and payment notifications must be enabled separately.
 
 ### Admin Commands
 *   `/addevent [desc]`: Create a new event using natural language.
