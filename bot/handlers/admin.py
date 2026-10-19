@@ -17,7 +17,14 @@ from core.coffee_hosts import (
     save_coffee_hosts,
     upcoming_saturdays,
 )
-from core.manual_promos import build_manual_promo, save_manual_promos
+from core.manual_promos import (
+    MANUAL_PROMO_TIMEZONE,
+    build_manual_promo,
+    deliver_manual_promo,
+    get_manual_promo_stage,
+    save_manual_promos,
+    set_first_notification_schedule,
+)
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -196,15 +203,20 @@ async def handle_manual_promo_photo(
         f"<b>{escape(promo['summary'])}</b>\n"
         f"<b>Fecha:</b> {escape(promo['event_start'])}\n\n"
         f"{escape(promo['text'])[:900]}\n\n"
-        "¿Activar este promo para los recordatorios?"
+        "¿Cómo deseas enviar este promo?"
     )
     keyboard = [[
         InlineKeyboardButton(
-            "✅ Activar",
-            callback_data=f"manual_confirm_{draft['event_id']}",
+            "✅ Enviar ahora",
+            callback_data=f"manual_send_now_{draft['event_id']}",
         ),
         InlineKeyboardButton(
-            "🗑 Eliminar",
+            "🕒 Programar primer aviso",
+            callback_data=f"manual_schedule_{draft['event_id']}",
+        ),
+    ], [
+        InlineKeyboardButton(
+            "🗑 Cancelar",
             callback_data=f"manual_cancel_{draft['event_id']}",
         ),
     ]]
@@ -216,6 +228,141 @@ async def handle_manual_promo_photo(
     )
 
 
+def format_manual_promo_delivery_result(result):
+    """Format DM and group delivery counts for an admin confirmation."""
+    return (
+        "DM enviados: {subscribers_sent}\n"
+        "Grupos enviados: {groups_sent}\n"
+        "Fallos en DMs: {subscriber_failures}\n"
+        "Fallos en grupos: {group_failures}"
+    ).format(**result)
+
+
+async def handle_manual_promo_send_now(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+    config,
+):
+    """Send a staged manual promo immediately to DMs and groups."""
+    query = update.callback_query
+    if query.from_user.id != admin_id:
+        return
+
+    await query.answer()
+    promo_id = query.data.removeprefix("manual_send_now_")
+    promo = state.setdefault("manual_promos", {}).get(promo_id)
+    if not promo:
+        await query.edit_message_caption("❌ El promo manual ya no existe.")
+        return
+
+    now = datetime.now(MANUAL_PROMO_TIMEZONE)
+    promo["status"] = "active"
+    set_first_notification_schedule(promo, now)
+    stage = get_manual_promo_stage(
+        promo,
+        now,
+        config.get("REMINDER_RULES", {}),
+    ) or "initial"
+    result = await deliver_manual_promo(
+        context,
+        promo,
+        state.setdefault("subscribers", set()),
+        state.setdefault("groups", set()),
+        stage,
+        is_first_notification=True,
+    )
+    save_manual_promos(config["MANUAL_PROMOS_FILE"], state["manual_promos"])
+    await query.edit_message_caption(
+        f"✅ Primera notificación enviada: {escape(promo['summary'])}\n\n"
+        f"{format_manual_promo_delivery_result(result)}",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def handle_manual_promo_schedule(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+):
+    """Ask the admin for the first-notification date and time."""
+    query = update.callback_query
+    if query.from_user.id != admin_id:
+        return
+
+    await query.answer()
+    promo_id = query.data.removeprefix("manual_schedule_")
+    if promo_id not in state.setdefault("manual_promos", {}):
+        await query.edit_message_caption("❌ El promo manual ya no existe.")
+        return
+
+    context.user_data["manual_promo_schedule_id"] = promo_id
+    await query.edit_message_caption(
+        "🕒 Escribe la fecha y hora del primer aviso en formato "
+        "AAAA-MM-DD HH:MM (hora de Guadalajara).",
+    )
+
+
+async def handle_manual_promo_schedule_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+    config,
+):
+    """Validate and persist a scheduled first notification from admin text."""
+    if update.effective_user.id != admin_id:
+        return
+
+    promo_id = context.user_data.get("manual_promo_schedule_id")
+    if not promo_id:
+        return
+
+    promo = state.setdefault("manual_promos", {}).get(promo_id)
+    if not promo:
+        context.user_data.pop("manual_promo_schedule_id", None)
+        await update.message.reply_text("❌ El promo manual ya no existe.")
+        return
+
+    try:
+        scheduled_for = datetime.fromisoformat(update.message.text.strip())
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Usa el formato AAAA-MM-DD HH:MM para programar el primer aviso."
+        )
+        return
+
+    if scheduled_for.tzinfo is None:
+        scheduled_for = scheduled_for.replace(tzinfo=MANUAL_PROMO_TIMEZONE)
+    now = datetime.now(MANUAL_PROMO_TIMEZONE)
+    event_start = datetime.fromisoformat(
+        str(promo["event_start"]).replace("Z", "+00:00")
+    )
+    if event_start.tzinfo is None:
+        event_start = event_start.replace(tzinfo=MANUAL_PROMO_TIMEZONE)
+
+    if scheduled_for <= now:
+        await update.message.reply_text("❌ El primer aviso debe estar en el futuro.")
+        return
+    if scheduled_for >= event_start:
+        await update.message.reply_text(
+            "❌ El primer aviso debe ser antes del inicio del evento."
+        )
+        return
+
+    promo["status"] = "active"
+    set_first_notification_schedule(promo, scheduled_for)
+    save_manual_promos(config["MANUAL_PROMOS_FILE"], state["manual_promos"])
+    context.user_data.pop("manual_promo_schedule_id", None)
+    await update.message.reply_text(
+        f"✅ Primer aviso programado para {scheduled_for.strftime('%d/%m/%Y %H:%M')} "
+        "(hora de Guadalajara).\n"
+        "Se enviará a los suscriptores y grupos configurados."
+    )
+
+
 async def handle_manual_promo_confirm(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -223,7 +370,7 @@ async def handle_manual_promo_confirm(
     state,
     config,
 ):
-    """Activate a manually staged promo after admin confirmation."""
+    """Activate a legacy staged promo without sending an immediate notification."""
     query = update.callback_query
     if query.from_user.id != admin_id:
         return
@@ -894,6 +1041,16 @@ async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     text = forced_text or (update.message.text if update.message else None)
     
     if update.effective_user.id != admin_id or not text:
+        return
+
+    if context.user_data.get("manual_promo_schedule_id"):
+        await handle_manual_promo_schedule_input(
+            update,
+            context,
+            admin_id,
+            state,
+            config,
+        )
         return
 
     # Replies go to refinement logic (only for text messages, not forced voice text)

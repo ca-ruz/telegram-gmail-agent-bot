@@ -46,6 +46,21 @@ def set_first_notification_schedule(promo, scheduled_for):
     promo["first_notification_sent"] = False
 
 
+def get_manual_promo_stage(promo, now, reminder_rules):
+    """Return the configured reminder stage for a manual promo."""
+    event_time = datetime.fromisoformat(
+        str(promo["event_start"]).replace("Z", "+00:00")
+    )
+    if event_time.tzinfo is None:
+        event_time = event_time.replace(tzinfo=MANUAL_PROMO_TIMEZONE)
+    return _get_manual_promo_stage(
+        event_time,
+        now,
+        reminder_rules,
+        {"first_notification_sent": True},
+    )
+
+
 def _get_manual_promo_stage(event_time, now, reminder_rules, promo=None):
     """Return the most urgent configured reminder stage currently due."""
     promo = promo or {}
@@ -77,7 +92,14 @@ def _get_manual_promo_stage(event_time, now, reminder_rules, promo=None):
     return min(eligible)[1] if eligible else None
 
 
-async def deliver_manual_promo(context, promo, subscribers, groups, stage):
+async def deliver_manual_promo(
+    context,
+    promo,
+    subscribers,
+    groups,
+    stage,
+    is_first_notification=False,
+):
     """Deliver one promo stage to subscribers and broadcast groups."""
     reminders_sent = promo.setdefault("reminders_sent", {})
     group_reminders_sent = promo.setdefault("group_reminders_sent", {})
@@ -135,7 +157,7 @@ async def deliver_manual_promo(context, promo, subscribers, groups, stage):
 
     reminders_sent[stage] = sorted(sent_subscribers)
     group_reminders_sent[stage] = sorted(sent_groups)
-    if stage == "initial" and not (
+    if is_first_notification and not (
         result["subscriber_failures"] or result["group_failures"]
     ):
         promo["first_notification_sent"] = True
@@ -170,12 +192,22 @@ async def check_manual_promo_reminders(context, config, state):
         if stage is None:
             continue
 
+        is_first_notification = stage == "initial"
+        if is_first_notification:
+            stage = _get_manual_promo_stage(
+                event_time,
+                now,
+                reminder_rules,
+                {"first_notification_sent": True},
+            ) or "initial"
+
         result = await deliver_manual_promo(
             context,
             promo,
             subscribers,
             groups,
             stage,
+            is_first_notification=is_first_notification,
         )
         if any(result.values()):
             changed = True
