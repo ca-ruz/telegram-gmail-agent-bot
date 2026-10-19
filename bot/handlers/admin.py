@@ -33,7 +33,7 @@ from core.notification_preferences import (
     filter_users_by_category,
     is_notification_enabled,
 )
-from core.promoter import send_manual_event_reminder
+from core.promoter import send_manual_event_reminder, send_manual_event_reminder_test
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -100,7 +100,16 @@ def format_prompt_history_entry(entry, prompt_limit=900):
 
 def parse_manual_reminder_request(raw_args):
     """Parse and validate an admin manual reminder request."""
-    parts = [part.strip() for part in raw_args.split("|", 1)]
+    parts = [part.strip() for part in raw_args.split("|")]
+    if len(parts) == 3:
+        if (
+            parts[0].lower() == "test"
+            and parts[1].lower() == "event"
+            and parts[2]
+        ):
+            return {"type": "event_test", "event_id": parts[2]}
+        return None
+
     if len(parts) != 2 or not parts[0] or not parts[1]:
         return None
 
@@ -130,7 +139,8 @@ async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
     if not request:
         await update.message.reply_text(
             "Uso: /remind coffee | AAAA-MM-DD\n"
-            "o: /remind event | event-id"
+            "o: /remind event | event-id\n"
+            "o: /remind test | event | event-id"
         )
         return
 
@@ -147,6 +157,24 @@ async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
         await update.message.reply_text(
             f"☕ Recordatorio manual: {result['sent']} enviados, "
             f"{result['failed']} fallos, {result['skipped']} omitidos."
+        )
+        return
+
+    if request["type"] == "event_test":
+        result = await send_manual_event_reminder_test(
+            context,
+            config,
+            admin_id,
+            request["event_id"],
+        )
+        if not result["found"]:
+            await update.message.reply_text("❌ Evento no encontrado en el calendario.")
+            return
+        if result["failures"]:
+            await update.message.reply_text("❌ No se pudo enviar la prueba a tu DM.")
+            return
+        await update.message.reply_text(
+            "🧪 MODO PRUEBA: recordatorio enviado solo a tu DM."
         )
         return
 

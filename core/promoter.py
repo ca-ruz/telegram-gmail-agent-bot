@@ -177,6 +177,34 @@ async def send_manual_event_reminder(context, config, state, event_id):
         "failures": failures,
     }
 
+
+async def send_manual_event_reminder_test(context, config, admin_id, event_id):
+    """Send an event reminder test only to the administrator without saving state."""
+    service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
+    try:
+        events, now = fetch_upcoming_events(service, config['CALENDAR_ID'])
+    except Exception:
+        logger.exception("Could not fetch calendar event test %s.", event_id)
+        return {"found": False, "failures": 1}
+
+    event = next((item for item in events if item.get("id") == event_id), None)
+    if not event:
+        return {"found": False, "failures": 0}
+
+    message = "🧪 <b>MODO PRUEBA</b>\n\n" + _event_reminder_message(event, now)
+    try:
+        await context.bot.send_message(
+            admin_id,
+            message,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=False,
+        )
+    except Exception:
+        logger.exception("Could not send calendar event test to %s.", admin_id)
+        return {"found": True, "failures": 1}
+
+    return {"found": True, "failures": 0}
+
 async def notify_admin_summary(context, admin_id, events_to_notify):
     """
     Sends a consolidated summary message to the admin for multiple events.
