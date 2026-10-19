@@ -132,6 +132,8 @@ def test_check_calendar_retries_failed_subscriber_delivery(tmp_path):
         message for message in bot.messages if message["chat_id"] in state["subscribers"]
     ]
     assert [message["chat_id"] for message in subscriber_messages] == [101, 202]
+    assert set(state["sent_reminders"][storage_key]["1h"]) == {101, 202}
+    assert set(state["sent_reminders"][storage_key]["24h"]) == {101, 202}
 
 
 def test_check_calendar_stops_after_calendar_fetch_failure(tmp_path):
