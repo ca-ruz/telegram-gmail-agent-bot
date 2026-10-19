@@ -13,11 +13,16 @@ logger = logging.getLogger(__name__)
 # Configuration constants
 GDL_TZ = ZoneInfo("America/Mexico_City")
 
-def cleanup_sent_reminders(sent_reminders, reminders_file):
+def cleanup_sent_reminders(sent_reminders, reminders_file, now=None):
     """
     Removes entries from the sent_reminders store for events that happened >24h ago.
+
+    Args:
+        sent_reminders: Reminder delivery state keyed by event.
+        reminders_file: JSON file used to persist reminder state.
+        now: Reference time for cleanup, defaulting to the current UTC time.
     """
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     to_delete = []
     
     for event_key in sent_reminders:
@@ -122,13 +127,18 @@ async def check_calendar(context, config, state):
     )
     
     service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
-    sent_reminders = cleanup_sent_reminders(sent_reminders, config['REMINDERS_FILE'])
 
     try:
         events, now = fetch_upcoming_events(service, config['CALENDAR_ID'])
     except Exception as e:
         logger.error(f"Terminating calendar check due to fetch error: {e}")
         return
+
+    sent_reminders = cleanup_sent_reminders(
+        sent_reminders,
+        config['REMINDERS_FILE'],
+        now=now,
+    )
 
     context.bot_data['current_events'] = events
     reminders_sent_this_run = 0
