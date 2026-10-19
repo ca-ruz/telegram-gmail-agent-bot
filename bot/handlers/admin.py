@@ -23,6 +23,7 @@ from core.manual_promos import (
     MANUAL_PROMO_TIMEZONE,
     build_manual_promo,
     deliver_manual_promo,
+    format_manual_promo_caption,
     get_manual_promo_stage,
     save_manual_promos,
     set_first_notification_schedule,
@@ -36,56 +37,11 @@ from core.promoter import send_manual_event_reminder
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
 
-SPANISH_WEEKDAYS = (
-    "lunes",
-    "martes",
-    "miércoles",
-    "jueves",
-    "viernes",
-    "sábado",
-    "domingo",
-)
-SPANISH_MONTHS = (
-    "enero",
-    "febrero",
-    "marzo",
-    "abril",
-    "mayo",
-    "junio",
-    "julio",
-    "agosto",
-    "septiembre",
-    "octubre",
-    "noviembre",
-    "diciembre",
-)
-
-
 def format_manual_promo_preview(promo):
     """Format manual promo metadata and publication text for Telegram preview."""
-    event_start = datetime.fromisoformat(
-        str(promo["event_start"]).replace("Z", "+00:00")
-    )
-    if event_start.tzinfo is None:
-        event_start = event_start.replace(tzinfo=MANUAL_PROMO_TIMEZONE)
-    event_start = event_start.astimezone(MANUAL_PROMO_TIMEZONE)
-
-    weekday = SPANISH_WEEKDAYS[event_start.weekday()].capitalize()
-    month = SPANISH_MONTHS[event_start.month - 1]
-    hour = event_start.hour % 12 or 12
-    period = "AM" if event_start.hour < 12 else "PM"
-    time = f"{hour} {period}"
-    if event_start.minute:
-        time = f"{hour}:{event_start.minute:02d} {period}"
-
-    location = str(promo.get("location", "")).strip()
-    location_line = f"📍 {escape(location)}\n" if location else ""
     return (
         f"<b>{escape(str(promo.get('summary', 'Sin título')))}</b>\n\n"
-        f"📅 {weekday} {event_start.day} de {month}\n"
-        f"🕕 {time}\n"
-        f"{location_line}\n"
-        f"{escape(str(promo.get('text', '')))[:900]}\n\n"
+        f"{format_manual_promo_caption(promo)}\n\n"
         "¿Cómo deseas enviar este promo?"
     )
 

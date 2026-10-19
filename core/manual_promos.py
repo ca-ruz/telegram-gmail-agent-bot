@@ -190,7 +190,7 @@ async def deliver_manual_promo(
         "subscriber_failures": 0,
         "group_failures": 0,
     }
-    caption = escape(str(promo.get("text", "")))[:1024]
+    caption = format_manual_promo_caption(promo)
 
     for subscriber_id in subscribers:
         if subscriber_id in sent_subscribers:
