@@ -1,6 +1,7 @@
 """Persistence helpers for manually staged event flyers and captions."""
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from html import escape
 from zoneinfo import ZoneInfo
@@ -10,6 +11,29 @@ from core.notification_preferences import filter_users_by_category
 
 logger = logging.getLogger(__name__)
 MANUAL_PROMO_TIMEZONE = ZoneInfo("America/Mexico_City")
+SPANISH_WEEKDAYS = (
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo",
+)
+SPANISH_MONTHS = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
 
 
 def load_manual_promos(file_path):
@@ -21,6 +45,53 @@ def load_manual_promos(file_path):
 def save_manual_promos(file_path, promos):
     """Persist manually staged event promos atomically."""
     save_json(file_path, promos)
+
+
+def _format_manual_promo_datetime(event_start):
+    """Return localized date and time strings for a manual promo."""
+    event_time = datetime.fromisoformat(str(event_start).replace("Z", "+00:00"))
+    if event_time.tzinfo is None:
+        event_time = event_time.replace(tzinfo=MANUAL_PROMO_TIMEZONE)
+    event_time = event_time.astimezone(MANUAL_PROMO_TIMEZONE)
+
+    weekday = SPANISH_WEEKDAYS[event_time.weekday()].capitalize()
+    month = SPANISH_MONTHS[event_time.month - 1]
+    hour = event_time.hour % 12 or 12
+    period = "AM" if event_time.hour < 12 else "PM"
+    time = (
+        f"{hour}:{event_time.minute:02d} {period}"
+        if event_time.minute
+        else f"{hour} {period}"
+    )
+    return f"{weekday} {event_time.day} de {month}", time
+
+
+def _contains_manual_promo_detail(text, value, marker):
+    """Return whether text already contains a formatted promo detail."""
+    normalized_text = re.sub(r"\s+", " ", text.casefold()).strip()
+    normalized_value = re.sub(r"\s+", " ", value.casefold()).strip()
+    return marker in text or normalized_value in normalized_text
+
+
+def format_manual_promo_caption(promo):
+    """Build the final HTML caption for a manually staged event promo."""
+    publication_text = str(promo.get("text", "")).strip()
+    date_text, time_text = _format_manual_promo_datetime(promo["event_start"])
+    details = []
+
+    if not _contains_manual_promo_detail(publication_text, date_text, "📅"):
+        details.append(f"📅 {date_text}")
+    if not _contains_manual_promo_detail(publication_text, time_text, "🕕"):
+        details.append(f"🕕 {time_text}")
+
+    location = str(promo.get("location", "")).strip()
+    if location and not _contains_manual_promo_detail(publication_text, location, "📍"):
+        details.append(f"📍 {location}")
+
+    sections = [publication_text] if publication_text else []
+    if details:
+        sections.append("\n".join(details))
+    return escape("\n\n".join(sections))[:1024]
 
 
 def build_manual_promo(event_id, summary, event_start, text, image_file_id, location=""):
