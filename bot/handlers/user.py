@@ -130,30 +130,16 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE, subsc
         else:
             await query.edit_message_text(text=msg, reply_markup=get_main_keyboard())
 
-    elif data == "meetup":
-        msg = "https://www.meetup.com/guadalajara-bitcoin-and-lightning/"
+    elif data in {"meetup", "events", "bitdevs", "website"}:
+        links = {
+            "meetup": "https://www.meetup.com/guadalajara-bitcoin-and-lightning/",
+            "events": "https://btcgdl.com/eventos.html",
+            "bitdevs": "https://bitdevs.btcgdl.com/",
+            "website": "https://btcgdl.com/",
+        }
+        msg = links[data]
         if is_photo_msg:
-            await query.edit_message_caption(caption=msg)
-        else:
-            await query.edit_message_text(text=msg)
-
-    elif data == "events":
-        msg = "https://btcgdl.com/eventos.html"
-        if is_photo_msg:
-            await query.edit_message_caption(caption=msg)
-        else:
-            await query.edit_message_text(text=msg)
-
-    elif data == "bitdevs":
-        msg = "https://bitdevs.btcgdl.com/"
-        if is_photo_msg:
-            await query.edit_message_caption(caption=msg)
-        else:
-            await query.edit_message_text(text=msg)
-
-    elif data == "website":
-        msg = "https://btcgdl.com/"
-        if is_photo_msg:
-            await query.edit_message_caption(caption=msg)
+            await query.message.delete()
+            await context.bot.send_message(chat_id=query.message.chat_id, text=msg)
         else:
             await query.edit_message_text(text=msg)
