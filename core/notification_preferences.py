@@ -63,3 +63,22 @@ def ensure_user_preferences(preferences, user_id, events_default=False):
         preferences[key] = build_default_preferences(events=events_default)
     return preferences[key]
 
+
+def is_notification_enabled(preferences, user_id, category):
+    """Return whether a user may receive one notification category."""
+    if preferences is None:
+        return True
+
+    user_preferences = preferences.get(str(user_id), {})
+    default = category == "events"
+    return bool(user_preferences.get(category, default))
+
+
+def filter_users_by_category(user_ids, preferences, category):
+    """Return users who have enabled the requested notification category."""
+    return {
+        user_id
+        for user_id in user_ids
+        if is_notification_enabled(preferences, user_id, category)
+    }
+

@@ -25,6 +25,10 @@ from core.manual_promos import (
     save_manual_promos,
     set_first_notification_schedule,
 )
+from core.notification_preferences import (
+    filter_users_by_category,
+    is_notification_enabled,
+)
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -622,9 +626,27 @@ async def coffee_host(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_
     notes = command_parts[3] if len(command_parts) > 3 else ""
     schedule[date_key] = build_coffee_assignment(host_ids, venue, start_time, notes)
     save_json(config["COFFEE_HOST_SCHEDULE_FILE"], schedule)
+    disabled_hosts = []
+    notification_preferences = state.get("notification_preferences")
+    if notification_preferences is not None:
+        for host_id in host_ids:
+            telegram_id = hosts[host_id].get("telegram_id")
+            if not is_notification_enabled(
+                notification_preferences,
+                telegram_id,
+                "coffee",
+            ):
+                disabled_hosts.append(hosts[host_id].get("name", host_id))
+
+    warning = ""
+    if disabled_hosts:
+        warning = (
+            "\n⚠️ Notificaciones de café desactivadas para: "
+            f"{', '.join(disabled_hosts)}. Deben activarlas en /suscripciones."
+        )
     await update.message.reply_text(
         f"✅ Anfitriones asignados para {date_key}: {', '.join(host_ids)}\n"
-        f"📍 {escape(venue)} · ⏰ {escape(start_time)}",
+        f"📍 {escape(venue)} · ⏰ {escape(start_time)}{warning}",
         parse_mode=ParseMode.HTML,
     )
 
@@ -733,7 +755,12 @@ async def handle_publish(update: Update, context: ContextTypes.DEFAULT_TYPE, adm
             logger.error(f"Failed to publish to group {group_id}: {e}")
     
     # Individual Subscribers
-    for user_id in state['subscribers']:
+    event_subscribers = filter_users_by_category(
+        state['subscribers'],
+        state.get('notification_preferences'),
+        "events",
+    )
+    for user_id in event_subscribers:
         try:
             if isinstance(image, BytesIO): image.seek(0)
             await context.bot.send_photo(user_id, photo=image, caption=text, parse_mode=ParseMode.HTML)

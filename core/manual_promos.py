@@ -6,6 +6,7 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from tools.local.data_manager import load_json, save_json
+from core.notification_preferences import filter_users_by_category
 
 logger = logging.getLogger(__name__)
 MANUAL_PROMO_TIMEZONE = ZoneInfo("America/Mexico_City")
@@ -100,10 +101,16 @@ async def deliver_manual_promo(
     groups,
     stage,
     is_first_notification=False,
+    notification_preferences=None,
 ):
     """Deliver one promo stage to subscribers and broadcast groups."""
     reminders_sent = promo.setdefault("reminders_sent", {})
     group_reminders_sent = promo.setdefault("group_reminders_sent", {})
+    subscribers = filter_users_by_category(
+        subscribers,
+        notification_preferences,
+        "events",
+    )
     sent_subscribers = set(reminders_sent.get(stage, []))
     sent_groups = set(group_reminders_sent.get(stage, []))
     result = {
@@ -172,6 +179,7 @@ async def check_manual_promo_reminders(context, config, state):
     promos = state.setdefault("manual_promos", {})
     subscribers = state.setdefault("subscribers", set())
     groups = state.setdefault("groups", set())
+    notification_preferences = state.get("notification_preferences")
     reminder_rules = config.get("REMINDER_RULES", {})
     changed = False
 
@@ -209,6 +217,7 @@ async def check_manual_promo_reminders(context, config, state):
             groups,
             stage,
             is_first_notification=is_first_notification,
+            notification_preferences=notification_preferences,
         )
         if any(result.values()):
             changed = True
