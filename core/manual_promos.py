@@ -34,6 +34,7 @@ SPANISH_MONTHS = (
     "noviembre",
     "diciembre",
 )
+URL_PATTERN = re.compile(r"https?://[^\s<>]+")
 
 
 def load_manual_promos(file_path):
@@ -73,9 +74,27 @@ def _contains_manual_promo_detail(text, value, marker):
     return marker in text or normalized_value in normalized_text
 
 
+def _split_manual_promo_links(text):
+    """Return publication text and unique URLs in their original order."""
+    links = []
+
+    def remove_link(match):
+        link = match.group(0)
+        if link not in links:
+            links.append(link)
+        return ""
+
+    text_without_links = URL_PATTERN.sub(remove_link, text)
+    text_without_links = re.sub(r"[ \t]+\n", "\n", text_without_links)
+    text_without_links = re.sub(r"\n{3,}", "\n\n", text_without_links).strip()
+    return text_without_links, links
+
+
 def format_manual_promo_caption(promo):
     """Build the final HTML caption for a manually staged event promo."""
-    publication_text = str(promo.get("text", "")).strip()
+    publication_text, links = _split_manual_promo_links(
+        str(promo.get("text", "")).strip()
+    )
     date_text, time_text = _format_manual_promo_datetime(promo["event_start"])
     details = []
 
@@ -91,6 +110,8 @@ def format_manual_promo_caption(promo):
     sections = [publication_text] if publication_text else []
     if details:
         sections.append("\n".join(details))
+    if links:
+        sections.append("\n".join(links))
     return escape("\n\n".join(sections))[:1024]
 
 
