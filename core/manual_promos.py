@@ -22,11 +22,12 @@ def save_manual_promos(file_path, promos):
     save_json(file_path, promos)
 
 
-def build_manual_promo(event_id, summary, event_start, text, image_file_id):
+def build_manual_promo(event_id, summary, event_start, text, image_file_id, location=""):
     """Build a JSON-serializable manually staged event promo record."""
     return {
         "event_id": event_id,
         "summary": summary,
+        "location": location,
         "event_start": event_start,
         "text": text,
         "image_file_id": image_file_id,

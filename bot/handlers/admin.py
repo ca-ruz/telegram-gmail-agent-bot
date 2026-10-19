@@ -29,6 +29,59 @@ from core.manual_promos import (
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
 
+SPANISH_WEEKDAYS = (
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo",
+)
+SPANISH_MONTHS = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
+
+
+def format_manual_promo_preview(promo):
+    """Format manual promo metadata and publication text for Telegram preview."""
+    event_start = datetime.fromisoformat(
+        str(promo["event_start"]).replace("Z", "+00:00")
+    )
+    if event_start.tzinfo is None:
+        event_start = event_start.replace(tzinfo=MANUAL_PROMO_TIMEZONE)
+    event_start = event_start.astimezone(MANUAL_PROMO_TIMEZONE)
+
+    weekday = SPANISH_WEEKDAYS[event_start.weekday()].capitalize()
+    month = SPANISH_MONTHS[event_start.month - 1]
+    hour = event_start.hour % 12 or 12
+    period = "AM" if event_start.hour < 12 else "PM"
+    time = f"{hour} {period}"
+    if event_start.minute:
+        time = f"{hour}:{event_start.minute:02d} {period}"
+
+    location = str(promo.get("location", "")).strip()
+    location_line = f"📍 {escape(location)}\n" if location else ""
+    return (
+        f"<b>{escape(str(promo.get('summary', 'Sin título')))}</b>\n\n"
+        f"📅 {weekday} {event_start.day} de {month}\n"
+        f"🕕 {time}\n"
+        f"{location_line}\n"
+        f"{escape(str(promo.get('text', '')))[:900]}\n\n"
+        "¿Cómo deseas enviar este promo?"
+    )
+
 def save_prompt_history(config, event, image_prompt):
     """
     Stores a generated image prompt for later admin review.
@@ -138,10 +191,10 @@ async def manual_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin
         return
 
     raw_args = update.message.text.partition(" ")[2].strip()
-    parts = [part.strip() for part in raw_args.split("|", 2)]
-    if len(parts) != 3:
+    parts = [part.strip() for part in raw_args.split("|", 3)]
+    if len(parts) != 4 or any(not part for part in parts):
         await update.message.reply_text(
-            "Uso: /manualpromo AAAA-MM-DD HH:MM | Título | Texto de publicación"
+            "Uso: /manualpromo AAAA-MM-DD HH:MM | Título | Lugar | Texto de publicación"
         )
         return
 
@@ -163,8 +216,9 @@ async def manual_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin
     context.user_data["manual_promo_draft"] = {
         "event_id": f"manual-{event_start.strftime('%Y%m%dT%H%M%S')}",
         "summary": parts[1],
+        "location": parts[2],
         "event_start": event_start.isoformat(),
-        "text": parts[2],
+        "text": parts[3],
     }
     await update.message.reply_text(
         "✅ Datos guardados. Ahora envía el flyer como una foto para continuar."
@@ -193,18 +247,14 @@ async def handle_manual_promo_photo(
         draft["event_start"],
         draft["text"],
         image_file_id,
+        location=draft["location"],
     )
     promo["status"] = "pending"
     state.setdefault("manual_promos", {})[draft["event_id"]] = promo
     save_manual_promos(config["MANUAL_PROMOS_FILE"], state["manual_promos"])
     context.user_data.pop("manual_promo_draft", None)
 
-    caption = (
-        f"<b>{escape(promo['summary'])}</b>\n"
-        f"<b>Fecha:</b> {escape(promo['event_start'])}\n\n"
-        f"{escape(promo['text'])[:900]}\n\n"
-        "¿Cómo deseas enviar este promo?"
-    )
+    caption = format_manual_promo_preview(promo)
     keyboard = [[
         InlineKeyboardButton(
             "✅ Enviar ahora",
