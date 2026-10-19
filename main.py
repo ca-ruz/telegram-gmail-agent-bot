@@ -3,7 +3,7 @@ import logging
 from functools import partial
 from dotenv import load_dotenv
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-from bot.handlers.user import start, menu, meetup, events, bitdevs, website, button_click
+from bot.handlers.user import start, menu, subscriptions, meetup, events, bitdevs, website, button_click
 from bot.handlers.admin import (
     broadcast, draft, handle_draft_selection, handle_auto_draft, 
     handle_publish, handle_clear_pending_promo, add_group, remove_group,
@@ -168,6 +168,12 @@ def main():
     # User Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
+    app.add_handler(CommandHandler("suscripciones", partial(
+        subscriptions,
+        notification_preferences=STATE['notification_preferences'],
+        subscribers=STATE['subscribers'],
+        notification_preferences_file=CONFIG['NOTIFICATION_PREFERENCES_FILE'],
+    )))
     app.add_handler(CommandHandler("meetup", meetup))
     app.add_handler(CommandHandler("events", events))
     app.add_handler(CommandHandler("bitdevs", bitdevs))
@@ -259,7 +265,12 @@ def main():
         partial(handle_edit_confirm, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
         pattern="^(confirm_edit|cancel_edit)$"))
     app.add_handler(CallbackQueryHandler(
-        partial(button_click, subscribers=STATE['subscribers'])))
+        partial(
+            button_click,
+            subscribers=STATE['subscribers'],
+            notification_preferences=STATE['notification_preferences'],
+            notification_preferences_file=CONFIG['NOTIFICATION_PREFERENCES_FILE'],
+        )))
 
     # Smart Admin Chat Handler (Natural Language)
     app.add_handler(MessageHandler(

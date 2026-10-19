@@ -50,3 +50,16 @@ def load_notification_preferences(file_path, event_subscribers):
 
     return preferences
 
+
+def save_notification_preferences(file_path, preferences):
+    """Persist per-user notification preferences atomically."""
+    save_json(file_path, preferences)
+
+
+def ensure_user_preferences(preferences, user_id, events_default=False):
+    """Return a user's preferences, creating defaults when needed."""
+    key = str(user_id)
+    if key not in preferences:
+        preferences[key] = build_default_preferences(events=events_default)
+    return preferences[key]
+

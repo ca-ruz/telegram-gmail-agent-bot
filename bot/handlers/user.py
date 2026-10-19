@@ -2,7 +2,16 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
-from bot.interface import get_main_keyboard, get_main_menu_text
+from bot.interface import (
+    get_main_keyboard,
+    get_main_menu_text,
+    get_subscription_keyboard,
+    get_subscription_menu_text,
+)
+from core.notification_preferences import (
+    ensure_user_preferences,
+    save_notification_preferences,
+)
 from tools.local.data_manager import load_json, save_json
 
 # Initialize logger for this module
@@ -11,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Configuration constants
 WELCOME_IMAGE_PATH = "btcgdl.png"
 SUBSCRIBERS_FILE = "data/subscribers.json"
+NOTIFICATION_PREFERENCES_FILE = "data/notification_preferences.json"
 WELCOMED_USERS_FILE = "data/welcomed_users.json"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -54,6 +64,21 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard()
     )
 
+
+async def subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE, notification_preferences, subscribers, notification_preferences_file=NOTIFICATION_PREFERENCES_FILE):
+    """Show the current notification preferences for the requesting user."""
+    user_id = update.effective_user.id
+    preferences = ensure_user_preferences(
+        notification_preferences,
+        user_id,
+        events_default=user_id in subscribers,
+    )
+    save_notification_preferences(notification_preferences_file, notification_preferences)
+    await update.message.reply_text(
+        get_subscription_menu_text(preferences),
+        reply_markup=get_subscription_keyboard(preferences),
+    )
+
 async def meetup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /meetup command."""
     await update.message.reply_text(
@@ -78,7 +103,13 @@ async def website(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "https://btcgdl.com/"
     )
 
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE, subscribers):
+async def button_click(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    subscribers,
+    notification_preferences=None,
+    notification_preferences_file=None,
+):
     """
     Handles callback queries from inline keyboard buttons.
     Edits existing message/caption to reduce clutter.
@@ -86,18 +117,81 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE, subsc
     query = update.callback_query
     user = query.from_user
     data = query.data
+    notification_preferences = notification_preferences if notification_preferences is not None else {}
+    preferences = ensure_user_preferences(
+        notification_preferences,
+        user.id,
+        events_default=user.id in subscribers,
+    )
     
     await query.answer()
 
     # Determine if we should edit text or caption
     is_photo_msg = bool(query.message.photo)
 
-    if data == "subscribe":
+    async def edit_subscription_message(text, reply_markup):
+        """Edit a callback message while preserving photo and text support."""
+        if is_photo_msg:
+            await query.edit_message_caption(caption=text, reply_markup=reply_markup)
+        else:
+            await query.edit_message_text(text=text, reply_markup=reply_markup)
+
+    def persist_preferences():
+        """Persist preferences when the application supplies a storage path."""
+        if notification_preferences_file:
+            save_notification_preferences(
+                notification_preferences_file,
+                notification_preferences,
+            )
+
+    if data == "subscriptions":
+        await edit_subscription_message(
+            get_subscription_menu_text(preferences),
+            get_subscription_keyboard(preferences),
+        )
+
+    elif data.startswith("subscription_toggle_"):
+        category = data.removeprefix("subscription_toggle_")
+        if category in preferences:
+            preferences[category] = not preferences[category]
+            if category == "events":
+                if preferences[category]:
+                    subscribers.add(user.id)
+                else:
+                    subscribers.discard(user.id)
+                save_json(SUBSCRIBERS_FILE, list(subscribers))
+            persist_preferences()
+        await edit_subscription_message(
+            get_subscription_menu_text(preferences),
+            get_subscription_keyboard(preferences),
+        )
+
+    elif data == "subscriptions_disable_all":
+        for category in preferences:
+            preferences[category] = False
+        subscribers.discard(user.id)
+        save_json(SUBSCRIBERS_FILE, list(subscribers))
+        persist_preferences()
+        await edit_subscription_message(
+            "✅ Desactivaste todas las notificaciones.\n\n"
+            + get_subscription_menu_text(preferences),
+            get_subscription_keyboard(preferences),
+        )
+
+    elif data == "subscriptions_back":
+        await edit_subscription_message(
+            get_main_menu_text(),
+            get_main_keyboard(),
+        )
+
+    elif data == "subscribe":
+        preferences["events"] = True
         already_subscribed = user.id in subscribers
         if not already_subscribed:
             subscribers.add(user.id)
             save_json(SUBSCRIBERS_FILE, list(subscribers))
             logger.info(f"User {user.id} (@{user.username}) subscribed.")
+        persist_preferences()
 
         msg = (
             "ℹ️ Ya estás suscrito a las notificaciones de eventos de "
@@ -112,11 +206,13 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE, subsc
             await query.edit_message_text(text=msg, reply_markup=get_main_keyboard())
 
     elif data == "unsubscribe":
+        preferences["events"] = False
         was_subscribed = user.id in subscribers
         if was_subscribed:
             subscribers.discard(user.id)
             save_json(SUBSCRIBERS_FILE, list(subscribers))
             logger.info(f"User {user.id} (@{user.username}) unsubscribed.")
+        persist_preferences()
 
         msg = (
             "✅ Te diste de baja de las notificaciones de eventos de "
