@@ -80,7 +80,7 @@ python test_calendar.py
 *   `/editevent`: Interactively edit an existing event.
 *   `/deleteevent`: Interactively delete an event from the calendar.
 *   `/draft`: Manually trigger a promo generation for an upcoming event.
-*   `/manualpromo AAAA-MM-DD HH:MM | Title | Text`: Stage an existing flyer for scheduled subscriber reminders, then upload the flyer as a photo.
+*   `/manualpromo AAAA-MM-DD HH:MM | Title | Location | Publication text`: Stage an existing flyer for scheduled subscriber reminders, then upload the flyer as a photo. Example: `/manualpromo 2026-10-20 18:00 | Forks Meetup | LSS | Publication text`.
 *   `/pendingpromo`: View and publish the currently staged draft.
 *   `/status`: Check bot health and configurations.
 *   `/checkprompt`: Show the most recent image prompt.
