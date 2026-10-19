@@ -3,10 +3,14 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from bot.handlers import admin as admin_handlers
 from bot.handlers.admin import (
     handle_manual_promo_cancel,
     handle_manual_promo_confirm,
     handle_manual_promo_photo,
+    handle_manual_promo_schedule,
+    handle_manual_promo_schedule_input,
+    handle_manual_promo_send_now,
     manual_promo,
 )
 from core import manual_promos
@@ -181,6 +185,129 @@ def test_manual_promo_reminders_ignore_pending_promos(tmp_path):
         )
 
     assert bot.sent == []
+
+
+def test_manual_promo_immediate_delivery_reaches_subscribers_and_groups(tmp_path):
+    """Immediate delivery reaches both DMs and configured broadcast groups."""
+    state = {
+        "subscribers": {101},
+        "groups": {-100},
+        "manual_promos": {"manual-001": build_active_promo()},
+    }
+    state["manual_promos"]["manual-001"]["status"] = "pending"
+    config = {
+        "MANUAL_PROMOS_FILE": str(tmp_path / "manual_promos.json"),
+        "REMINDER_RULES": {"24h": timedelta(days=1), "1h": timedelta(hours=1)},
+    }
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=42),
+        data="manual_send_now_manual-001",
+        answer=AsyncMock(),
+        edit_message_caption=AsyncMock(),
+    )
+    bot = FakeBot()
+    context = SimpleNamespace(bot=bot)
+
+    with patch.object(admin_handlers, "datetime", FrozenDateTime):
+        asyncio.run(
+            handle_manual_promo_send_now(
+                SimpleNamespace(callback_query=query),
+                context,
+                admin_id=42,
+                state=state,
+                config=config,
+            )
+        )
+
+    assert {message["chat_id"] for message in bot.sent} == {101, -100}
+    promo = state["manual_promos"]["manual-001"]
+    assert promo["status"] == "active"
+    assert promo["first_notification_sent"] is True
+    assert set(promo["reminders_sent"]["24h"]) == {101}
+    assert set(promo["group_reminders_sent"]["24h"]) == {-100}
+    confirmation = query.edit_message_caption.await_args.args[0]
+    assert "DM enviados: 1" in confirmation
+    assert "Grupos enviados: 1" in confirmation
+
+
+def test_manual_promo_schedule_persists_first_notification(tmp_path):
+    """Scheduling a first notification activates and persists the promo."""
+    promo = build_active_promo()
+    promo["status"] = "pending"
+    state = {"manual_promos": {"manual-001": promo}}
+    config = {"MANUAL_PROMOS_FILE": str(tmp_path / "manual_promos.json")}
+    context = SimpleNamespace(user_data={})
+    schedule_query = SimpleNamespace(
+        from_user=SimpleNamespace(id=42),
+        data="manual_schedule_manual-001",
+        answer=AsyncMock(),
+        edit_message_caption=AsyncMock(),
+    )
+
+    asyncio.run(
+        handle_manual_promo_schedule(
+            SimpleNamespace(callback_query=schedule_query),
+            context,
+            admin_id=42,
+            state=state,
+        )
+    )
+
+    schedule_input = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        message=SimpleNamespace(
+            text="2026-10-15 12:00",
+            reply_text=AsyncMock(),
+        ),
+    )
+    with patch.object(admin_handlers, "datetime", FrozenDateTime):
+        asyncio.run(
+            handle_manual_promo_schedule_input(
+                schedule_input,
+                context,
+                admin_id=42,
+                state=state,
+                config=config,
+            )
+        )
+
+    assert state["manual_promos"]["manual-001"]["status"] == "active"
+    assert state["manual_promos"]["manual-001"]["first_notification_at"] == (
+        "2026-10-15T12:00:00-06:00"
+    )
+    assert context.user_data == {}
+    assert load_json(config["MANUAL_PROMOS_FILE"], {})["manual-001"][
+        "first_notification_at"
+    ] == "2026-10-15T12:00:00-06:00"
+
+
+def test_manual_promo_group_retries_do_not_duplicate_successful_groups(tmp_path):
+    """Failed groups retry without repeating successful DM or group deliveries."""
+    state = {
+        "subscribers": {101},
+        "groups": {-100, -200},
+        "manual_promos": {"manual-001": build_active_promo()},
+    }
+    config = {
+        "MANUAL_PROMOS_FILE": str(tmp_path / "manual_promos.json"),
+        "REMINDER_RULES": {"24h": timedelta(days=1)},
+    }
+    bot = FakeBot(failures={-200})
+    context = SimpleNamespace(bot=bot)
+
+    with patch.object(manual_promos, "datetime", FrozenDateTime):
+        asyncio.run(manual_promos.check_manual_promo_reminders(context, config, state))
+
+    assert [message["chat_id"] for message in bot.sent] == [101, -100]
+    assert state["manual_promos"]["manual-001"]["group_reminders_sent"] == {
+        "24h": [-100]
+    }
+
+    bot.failures.clear()
+    with patch.object(manual_promos, "datetime", FrozenDateTime):
+        asyncio.run(manual_promos.check_manual_promo_reminders(context, config, state))
+
+    assert [message["chat_id"] for message in bot.sent] == [101, -100, -200]
 
 
 def test_manual_promo_rejects_unauthorized_users():
