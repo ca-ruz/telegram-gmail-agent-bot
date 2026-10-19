@@ -3,7 +3,7 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from bot.interface import get_main_keyboard
-from tools.local.data_manager import save_json
+from tools.local.data_manager import load_json, save_json
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 # Configuration constants
 WELCOME_IMAGE_PATH = "btcgdl.png"
 SUBSCRIBERS_FILE = "data/subscribers.json"
+WELCOMED_USERS_FILE = "data/welcomed_users.json"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -18,13 +19,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     user = update.effective_user
     logger.info(f"User {user.id} (@{user.username}) started the bot.")
+    welcomed_users = set(load_json(WELCOMED_USERS_FILE, []))
+    is_first_welcome = user.id not in welcomed_users
 
     welcome_text = (
         "¡Hola Bitcoiner! Bienvenido al bot de btc gdl, "
         "suscríbete para recibir notificaciones de nuestros eventos."
     )
 
-    if os.path.exists(WELCOME_IMAGE_PATH):
+    if is_first_welcome and os.path.exists(WELCOME_IMAGE_PATH):
         with open(WELCOME_IMAGE_PATH, "rb") as photo:
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
@@ -37,6 +40,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             welcome_text,
             reply_markup=get_main_keyboard()
         )
+
+    if is_first_welcome:
+        welcomed_users.add(user.id)
+        save_json(WELCOMED_USERS_FILE, sorted(welcomed_users))
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
