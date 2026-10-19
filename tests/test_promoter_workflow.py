@@ -112,6 +112,25 @@ def test_check_calendar_processes_a_recurring_series_once(tmp_path):
     assert subscriber_messages[0]["chat_id"] == 101
 
 
+def test_check_calendar_respects_event_notification_preferences(tmp_path):
+    """Calendar reminders skip users who disabled event notifications."""
+    now = datetime(2026, 10, 15, 11, 0, tzinfo=timezone.utc)
+    state = make_state({101, 202})
+    state["notification_preferences"] = {
+        "101": {"events": True, "coffee": False, "payments": False},
+        "202": {"events": False, "coffee": True, "payments": False},
+    }
+    config = make_config(tmp_path)
+    bot = FakeBot()
+
+    run_calendar_check([make_event()], now, state, config, bot)
+
+    subscriber_messages = [
+        message for message in bot.messages if message["chat_id"] in {101, 202}
+    ]
+    assert [message["chat_id"] for message in subscriber_messages] == [101]
+
+
 def test_check_calendar_retries_failed_subscriber_delivery(tmp_path):
     """Failed subscriber deliveries remain eligible for a later scheduler run."""
     now = datetime(2026, 10, 15, 11, 0, tzinfo=timezone.utc)

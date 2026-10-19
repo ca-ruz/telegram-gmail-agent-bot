@@ -35,7 +35,7 @@ def test_main_menu_explains_public_actions():
     """The public menu explains what each button does."""
     menu_text = get_main_menu_text()
 
-    assert "Suscribirse" in menu_text
+    assert "Suscripciones" in menu_text
     assert "Bitcoin & Lightning GDL" in menu_text
     assert "Meetup" in menu_text
     assert "Eventos" in menu_text
@@ -57,7 +57,7 @@ def test_start_sends_welcome_once_and_persists_user(tmp_path):
     assert load_json(str(welcomed_file), []) == [42]
     first_text = update.message.reply_text.await_args_list[0].args[0]
     assert "Bitcoin & Lightning GDL" in first_text
-    assert "Suscribirse" in first_text
+    assert "Suscripciones" in first_text
 
 
 def test_subscribe_reports_explicit_notification_scope(tmp_path):
@@ -103,3 +103,44 @@ def test_photo_link_button_deletes_image_and_sends_only_link():
         text="https://www.meetup.com/guadalajara-bitcoin-and-lightning/",
     )
     update.callback_query.edit_message_caption.assert_not_awaited()
+
+
+def test_subscription_controls_toggle_categories_and_disable_all(tmp_path):
+    """Users can toggle categories and disable every notification."""
+    subscribers_file = tmp_path / "subscribers.json"
+    preferences_file = tmp_path / "notification_preferences.json"
+    subscribers = {42}
+    preferences = {
+        "42": {"events": True, "coffee": False, "payments": False},
+    }
+    context = SimpleNamespace()
+
+    with patch.object(user, "SUBSCRIBERS_FILE", str(subscribers_file)):
+        update = make_update(callback_data="subscription_toggle_coffee")
+        asyncio.run(
+            user.button_click(
+                update,
+                context,
+                subscribers,
+                preferences,
+                str(preferences_file),
+            )
+        )
+
+        assert preferences["42"]["coffee"] is True
+        assert "Recordatorios de café" in update.callback_query.edit_message_text.await_args.kwargs["text"]
+
+        update = make_update(callback_data="subscriptions_disable_all")
+        asyncio.run(
+            user.button_click(
+                update,
+                context,
+                subscribers,
+                preferences,
+                str(preferences_file),
+            )
+        )
+
+    assert preferences["42"] == {"events": False, "coffee": False, "payments": False}
+    assert subscribers == set()
+    assert "Desactivaste todas" in update.callback_query.edit_message_text.await_args.kwargs["text"]

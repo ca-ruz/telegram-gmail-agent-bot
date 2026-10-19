@@ -121,3 +121,35 @@ def test_check_coffee_host_reminders_retries_failed_delivery(tmp_path):
 
     assert schedule[saturday.isoformat()]["reminders_sent"] == {}
     assert context.bot.sent == []
+
+
+def test_check_coffee_host_reminders_respects_disabled_preferences(tmp_path):
+    """Coffee reminders skip hosts who disabled coffee notifications."""
+    saturday = date(2026, 10, 17)
+    schedule = {
+        saturday.isoformat(): {
+            "hosts": ["host-001"],
+            "venue": "Café Central",
+            "start_time": "11:00",
+            "notes": "",
+            "reminders_sent": {},
+        }
+    }
+    state = {
+        "coffee_hosts": {"host-001": {"telegram_id": 123}},
+        "coffee_host_schedule": schedule,
+        "notification_preferences": {
+            "123": {"events": True, "coffee": False, "payments": False},
+        },
+    }
+    context = SimpleNamespace(bot=FakeBot())
+    config = {
+        "COFFEE_HOST_REMINDER_RULES": ("7d", "1d"),
+        "COFFEE_HOST_SCHEDULE_FILE": str(tmp_path / "schedule.json"),
+    }
+
+    with patch.object(coffee_hosts, "datetime", FrozenDateTime):
+        asyncio.run(coffee_hosts.check_coffee_host_reminders(context, config, state))
+
+    assert context.bot.sent == []
+    assert schedule[saturday.isoformat()]["reminders_sent"] == {}
