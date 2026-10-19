@@ -1,0 +1,105 @@
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+from bot.handlers import user
+from bot.interface import get_main_menu_text
+from tools.local.data_manager import load_json
+
+
+def make_update(user_id=42, callback_data=None, photo=None):
+    """Build the minimal Telegram update shape used by the user handlers."""
+    message = SimpleNamespace(
+        photo=photo or [],
+        chat_id=123,
+        reply_text=AsyncMock(),
+        delete=AsyncMock(),
+    )
+    query = SimpleNamespace(
+        data=callback_data,
+        from_user=SimpleNamespace(id=user_id, username="test-user"),
+        message=message,
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+        edit_message_caption=AsyncMock(),
+    )
+    return SimpleNamespace(
+        effective_user=SimpleNamespace(id=user_id, username="test-user"),
+        effective_chat=SimpleNamespace(id=123),
+        message=message,
+        callback_query=query,
+    )
+
+
+def test_main_menu_explains_public_actions():
+    """The public menu explains what each button does."""
+    menu_text = get_main_menu_text()
+
+    assert "Suscribirse" in menu_text
+    assert "Bitcoin & Lightning GDL" in menu_text
+    assert "Meetup" in menu_text
+    assert "Eventos" in menu_text
+    assert "Bitdevs" in menu_text
+    assert "Sitio oficial" in menu_text
+
+
+def test_start_sends_welcome_once_and_persists_user(tmp_path):
+    """Only the first /start response is recorded as a welcome."""
+    welcomed_file = tmp_path / "welcomed_users.json"
+    update = make_update()
+
+    with patch.object(user, "WELCOMED_USERS_FILE", str(welcomed_file)):
+        with patch.object(user.os.path, "exists", return_value=False):
+            asyncio.run(user.start(update, SimpleNamespace()))
+            asyncio.run(user.start(update, SimpleNamespace()))
+
+    assert update.message.reply_text.await_count == 2
+    assert load_json(str(welcomed_file), []) == [42]
+    first_text = update.message.reply_text.await_args_list[0].args[0]
+    assert "Bitcoin & Lightning GDL" in first_text
+    assert "Suscribirse" in first_text
+
+
+def test_subscribe_reports_explicit_notification_scope(tmp_path):
+    """Subscription feedback names the event notification service."""
+    subscribers_file = tmp_path / "subscribers.json"
+    subscribers = set()
+    update = make_update(callback_data="subscribe")
+
+    with patch.object(user, "SUBSCRIBERS_FILE", str(subscribers_file)):
+        asyncio.run(user.button_click(update, SimpleNamespace(), subscribers))
+
+    message = update.callback_query.edit_message_text.await_args.kwargs["text"]
+    assert "Te suscribiste" in message
+    assert "Bitcoin & Lightning GDL" in message
+    assert subscribers == {42}
+
+
+def test_unsubscribe_reports_explicit_notification_scope(tmp_path):
+    """Unsubscribe feedback names the event notification service."""
+    subscribers_file = tmp_path / "subscribers.json"
+    subscribers = {42}
+    update = make_update(callback_data="unsubscribe")
+
+    with patch.object(user, "SUBSCRIBERS_FILE", str(subscribers_file)):
+        asyncio.run(user.button_click(update, SimpleNamespace(), subscribers))
+
+    message = update.callback_query.edit_message_text.await_args.kwargs["text"]
+    assert "Te diste de baja" in message
+    assert "Bitcoin & Lightning GDL" in message
+    assert subscribers == set()
+
+
+def test_photo_link_button_deletes_image_and_sends_only_link():
+    """Link buttons replace the welcome image with a clean link message."""
+    update = make_update(callback_data="meetup", photo=[object()])
+    context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+
+    asyncio.run(user.button_click(update, context, set()))
+
+    update.callback_query.message.delete.assert_awaited_once()
+    context.bot.send_message.assert_awaited_once_with(
+        chat_id=123,
+        text="https://www.meetup.com/guadalajara-bitcoin-and-lightning/",
+    )
+    update.callback_query.edit_message_caption.assert_not_awaited()
