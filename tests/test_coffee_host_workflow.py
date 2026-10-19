@@ -119,7 +119,10 @@ def test_coffee_host_assigns_and_persists_active_hosts(tmp_path):
         "/coffeehost 2026-10-17 host-001,host-002 | Café Central | 11:00 | Bring coffee"
     )
 
-    asyncio.run(coffee_host(update, SimpleNamespace(), 42, state, make_config(tmp_path)))
+    context = SimpleNamespace(
+        bot=SimpleNamespace(send_message=AsyncMock())
+    )
+    asyncio.run(coffee_host(update, context, 42, state, make_config(tmp_path)))
 
     assignment = state["coffee_host_schedule"]["2026-10-17"]
     assert assignment["hosts"] == ["host-001", "host-002"]
