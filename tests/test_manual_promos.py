@@ -190,6 +190,54 @@ def test_manual_promo_caption_does_not_duplicate_existing_details():
     assert caption.count("📍 LSS") == 1
 
 
+def test_manual_promo_caption_places_links_after_event_details():
+    """A publication link appears after the formatted event details."""
+    caption = manual_promos.format_manual_promo_caption({
+        "event_start": "2026-10-20T18:00:00-06:00",
+        "location": "LSS",
+        "text": "Join us!\nhttps://example.com/event",
+    })
+
+    assert caption.index("📅 Martes 20 de octubre") < caption.index(
+        "https://example.com/event"
+    )
+    assert caption.index("🕕 6 PM") < caption.index("https://example.com/event")
+    assert caption.index("📍 LSS") < caption.index("https://example.com/event")
+
+
+def test_manual_promo_caption_preserves_multiple_links_at_the_end():
+    """Multiple unique publication links remain at the bottom in order."""
+    caption = manual_promos.format_manual_promo_caption({
+        "event_start": "2026-10-20T18:00:00-06:00",
+        "location": "LSS",
+        "text": (
+            "Join us! https://example.com/event "
+            "More information: https://example.com/info "
+            "https://example.com/event"
+        ),
+    })
+
+    assert caption.count("https://example.com/event") == 1
+    assert caption.index("https://example.com/event") < caption.index(
+        "https://example.com/info"
+    )
+    assert caption.index("📍 LSS") < caption.index("https://example.com/event")
+
+
+def test_manual_promo_caption_without_location_or_links_remains_clean():
+    """Captions without optional location or links omit those sections."""
+    caption = manual_promos.format_manual_promo_caption({
+        "event_start": "2026-10-20T18:00:00-06:00",
+        "text": "Join us!",
+    })
+
+    assert "Join us!" in caption
+    assert "📅 Martes 20 de octubre" in caption
+    assert "🕕 6 PM" in caption
+    assert "📍" not in caption
+    assert "http" not in caption
+
+
 def test_legacy_manual_promo_preview_omits_missing_location():
     """Legacy promos without a location remain readable."""
     preview = format_manual_promo_preview({
