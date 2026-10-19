@@ -2,7 +2,7 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
-from bot.interface import get_main_keyboard
+from bot.interface import get_main_keyboard, get_main_menu_text
 from tools.local.data_manager import load_json, save_json
 
 # Initialize logger for this module
@@ -23,8 +23,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_first_welcome = user.id not in welcomed_users
 
     welcome_text = (
-        "¡Hola Bitcoiner! Bienvenido al bot de btc gdl, "
-        "suscríbete para recibir notificaciones de nuestros eventos."
+        "¡Hola Bitcoiner! Bienvenido a Bitcoin & Lightning GDL.\n\n"
+        f"{get_main_menu_text()}"
     )
 
     if is_first_welcome and os.path.exists(WELCOME_IMAGE_PATH):
@@ -50,7 +50,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Handles the /menu command. Shows the main action buttons without the logo.
     """
     await update.message.reply_text(
-        "¡Hola Bitcoiner! ¿Qué deseas hacer?.",
+        get_main_menu_text(),
         reply_markup=get_main_keyboard()
     )
 
@@ -93,24 +93,38 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE, subsc
     is_photo_msg = bool(query.message.photo)
 
     if data == "subscribe":
-        if user.id not in subscribers:
+        already_subscribed = user.id in subscribers
+        if not already_subscribed:
             subscribers.add(user.id)
             save_json(SUBSCRIBERS_FILE, list(subscribers))
             logger.info(f"User {user.id} (@{user.username}) subscribed.")
-        
-        msg = "¡Gracias por suscribirte!"
+
+        msg = (
+            "ℹ️ Ya estás suscrito a las notificaciones de eventos de "
+            "Bitcoin & Lightning GDL."
+            if already_subscribed
+            else "✅ Te suscribiste a las notificaciones de eventos de "
+            "Bitcoin & Lightning GDL."
+        )
         if is_photo_msg:
             await query.edit_message_caption(caption=msg, reply_markup=get_main_keyboard())
         else:
             await query.edit_message_text(text=msg, reply_markup=get_main_keyboard())
 
     elif data == "unsubscribe":
-        if user.id in subscribers:
+        was_subscribed = user.id in subscribers
+        if was_subscribed:
             subscribers.discard(user.id)
             save_json(SUBSCRIBERS_FILE, list(subscribers))
             logger.info(f"User {user.id} (@{user.username}) unsubscribed.")
-        
-        msg = "Te has dado de baja del servicio, puedes volver a suscribirte en cualquier momento."
+
+        msg = (
+            "✅ Te diste de baja de las notificaciones de eventos de "
+            "Bitcoin & Lightning GDL."
+            if was_subscribed
+            else "ℹ️ No estabas suscrito a las notificaciones de eventos de "
+            "Bitcoin & Lightning GDL."
+        )
         if is_photo_msg:
             await query.edit_message_caption(caption=msg, reply_markup=get_main_keyboard())
         else:
