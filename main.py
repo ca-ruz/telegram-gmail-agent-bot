@@ -11,7 +11,8 @@ from bot.handlers.admin import (
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
     coffee_host, remind, manual_promo, handle_manual_promo_photo,
-    handle_manual_promo_send_now, handle_manual_promo_schedule,
+    handle_manual_promo_send_now, handle_manual_promo_test,
+    handle_manual_promo_schedule,
     handle_manual_promo_cancel,
 )
 from core.promoter import check_calendar
@@ -244,6 +245,13 @@ def main():
             config=CONFIG,
         ),
         pattern="^manual_send_now_"))
+    app.add_handler(CallbackQueryHandler(
+        partial(
+            handle_manual_promo_test,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+        ),
+        pattern="^manual_test_"))
     app.add_handler(CallbackQueryHandler(
         partial(
             handle_manual_promo_schedule,

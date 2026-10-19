@@ -23,6 +23,7 @@ from core.manual_promos import (
     MANUAL_PROMO_TIMEZONE,
     build_manual_promo,
     deliver_manual_promo,
+    deliver_manual_promo_test,
     format_manual_promo_caption,
     get_manual_promo_stage,
     save_manual_promos,
@@ -287,6 +288,11 @@ async def handle_manual_promo_photo(
     caption = format_manual_promo_preview(promo)
     keyboard = [[
         InlineKeyboardButton(
+            "🧪 Enviar prueba",
+            callback_data=f"manual_test_{draft['event_id']}",
+        ),
+    ], [
+        InlineKeyboardButton(
             "✅ Enviar ahora",
             callback_data=f"manual_send_now_{draft['event_id']}",
         ),
@@ -359,6 +365,35 @@ async def handle_manual_promo_send_now(
         f"{format_manual_promo_delivery_result(result)}",
         parse_mode=ParseMode.HTML,
     )
+
+
+async def handle_manual_promo_test(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+):
+    """Send a staged manual promo test only to the administrator's DM."""
+    query = update.callback_query
+    if query.from_user.id != admin_id:
+        return
+
+    await query.answer()
+    promo_id = query.data.removeprefix("manual_test_")
+    promo = state.setdefault("manual_promos", {}).get(promo_id)
+    if not promo:
+        await query.edit_message_caption("❌ El promo manual ya no existe.")
+        return
+
+    result = await deliver_manual_promo_test(context, promo, admin_id)
+    if result["failures"]:
+        message = "❌ No se pudo enviar la prueba a tu DM."
+    else:
+        message = (
+            f"🧪 <b>MODO PRUEBA</b>\n\n"
+            f"✅ Prueba enviada solo a tu DM: {escape(promo['summary'])}"
+        )
+    await query.edit_message_caption(message, parse_mode=ParseMode.HTML)
 
 
 async def handle_manual_promo_schedule(
