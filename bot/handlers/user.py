@@ -85,8 +85,8 @@ async def meetup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "https://www.meetup.com/guadalajara-bitcoin-and-lightning/"
     )
 
-async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /events command."""
+async def eventos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the /eventos command."""
     await update.message.reply_text(
         "https://btcgdl.com/eventos.html"
     )
@@ -97,8 +97,8 @@ async def bitdevs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "https://bitdevs.btcgdl.com/"
     )
 
-async def website(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /website command."""
+async def web(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the /web command."""
     await update.message.reply_text(
         "https://btcgdl.com/"
     )
@@ -226,12 +226,12 @@ async def button_click(
         else:
             await query.edit_message_text(text=msg, reply_markup=get_main_keyboard())
 
-    elif data in {"meetup", "events", "bitdevs", "website"}:
+    elif data in {"meetup", "eventos", "bitdevs", "web"}:
         links = {
             "meetup": "https://www.meetup.com/guadalajara-bitcoin-and-lightning/",
-            "events": "https://btcgdl.com/eventos.html",
+            "eventos": "https://btcgdl.com/eventos.html",
             "bitdevs": "https://bitdevs.btcgdl.com/",
-            "website": "https://btcgdl.com/",
+            "web": "https://btcgdl.com/",
         }
         msg = links[data]
         if is_photo_msg:

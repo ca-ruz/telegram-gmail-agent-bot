@@ -18,11 +18,11 @@ def get_main_keyboard():
         ],
         [
             InlineKeyboardButton("Meetup", callback_data="meetup"),
-            InlineKeyboardButton("Eventos", callback_data="events")
+            InlineKeyboardButton("Eventos", callback_data="eventos")
         ],
         [
             InlineKeyboardButton("Bitdevs", callback_data="bitdevs"),
-            InlineKeyboardButton("Sitio oficial", callback_data="website")
+            InlineKeyboardButton("Web", callback_data="web")
         ],
     ])
 
