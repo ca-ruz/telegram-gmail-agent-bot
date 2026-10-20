@@ -6,11 +6,11 @@ NOTIFICATION_CATEGORIES = ("events", "coffee", "payments")
 
 
 def build_default_preferences(events=True):
-    """Build default notification preferences for one user."""
+    """Build default notification preferences with every category enabled."""
     return {
-        "events": events,
-        "coffee": False,
-        "payments": False,
+        "events": True,
+        "coffee": True,
+        "payments": True,
     }
 
 
@@ -70,7 +70,7 @@ def is_notification_enabled(preferences, user_id, category):
         return True
 
     user_preferences = preferences.get(str(user_id), {})
-    default = category == "events"
+    default = category in NOTIFICATION_CATEGORIES
     return bool(user_preferences.get(category, default))
 
 

@@ -3,12 +3,14 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from bot.interface import (
+    NOTIFICATION_LABELS,
     get_main_keyboard,
     get_main_menu_text,
     get_subscription_keyboard,
     get_subscription_menu_text,
 )
 from core.notification_preferences import (
+    NOTIFICATION_CATEGORIES,
     ensure_user_preferences,
     save_notification_preferences,
 )
@@ -122,6 +124,7 @@ async def button_click(
     user = query.from_user
     data = query.data
     notification_preferences = notification_preferences if notification_preferences is not None else {}
+    had_saved_preferences = str(user.id) in notification_preferences
     preferences = ensure_user_preferences(
         notification_preferences,
         user.id,
@@ -189,20 +192,26 @@ async def button_click(
         )
 
     elif data == "subscribe":
-        preferences["events"] = True
         already_subscribed = user.id in subscribers
+        if not had_saved_preferences:
+            for category in NOTIFICATION_CATEGORIES:
+                preferences[category] = True
+        else:
+            preferences["events"] = True
         if not already_subscribed:
             subscribers.add(user.id)
             save_json(SUBSCRIBERS_FILE, list(subscribers))
             logger.info(f"User {user.id} (@{user.username}) subscribed.")
         persist_preferences()
 
+        enabled_categories = ", ".join(
+            label for category, label in NOTIFICATION_LABELS.items()
+            if preferences.get(category, False)
+        ) or "Ninguna"
         msg = (
-            "ℹ️ Ya estás suscrito a las notificaciones de eventos de "
-            "Bitcoin & Lightning GDL."
+            "ℹ️ Ya estás suscrito a: " + enabled_categories + "."
             if already_subscribed
-            else "✅ Te suscribiste a las notificaciones de eventos de "
-            "Bitcoin & Lightning GDL."
+            else "✅ Te suscribiste a: " + enabled_categories + "."
         )
         if is_photo_msg:
             await query.edit_message_caption(caption=msg, reply_markup=get_main_keyboard())
