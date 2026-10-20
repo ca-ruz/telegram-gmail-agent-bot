@@ -104,3 +104,15 @@ def test_parse_env_bool_uses_default_for_invalid_values(monkeypatch):
     """Invalid environment boolean values fall back to the configured default."""
     monkeypatch.setenv("TEST_FLAG", "sometimes")
     assert main.parse_env_bool("TEST_FLAG", True) is True
+
+
+def test_parse_env_int_accepts_numeric_values(monkeypatch):
+    """Integer environment parsing accepts valid numeric values."""
+    monkeypatch.setenv("TEST_HOUR", "13")
+    assert main.parse_env_int("TEST_HOUR", 9) == 13
+
+
+def test_parse_env_int_uses_default_for_invalid_values(monkeypatch):
+    """Invalid integer environment values use the configured default."""
+    monkeypatch.setenv("TEST_HOUR", "afternoon")
+    assert main.parse_env_int("TEST_HOUR", 13) == 13

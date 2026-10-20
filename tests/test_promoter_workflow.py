@@ -68,7 +68,7 @@ def run_calendar_check(events, now, state, config, bot):
 
 
 def test_check_calendar_sends_subscriber_reminders_and_deduplicates(tmp_path):
-    """Calendar reminders reach subscribers once for each configured threshold."""
+    """Calendar reminders reach subscribers once for the same-day stage."""
     now = datetime(2026, 10, 15, 11, 0, tzinfo=timezone.utc)
     state = make_state({101, 202})
     config = make_config(tmp_path)
@@ -83,8 +83,8 @@ def test_check_calendar_sends_subscriber_reminders_and_deduplicates(tmp_path):
     ]
     assert {message["chat_id"] for message in subscriber_messages} == {101, 202}
     storage_key = "event-001_20261015T120000Z"
-    assert set(state["sent_reminders"][storage_key].keys()) == {"1h", "24h"}
-    assert set(state["sent_reminders"][storage_key]["1h"]) == {101, 202}
+    assert set(state["sent_reminders"][storage_key].keys()) == {"same_day"}
+    assert set(state["sent_reminders"][storage_key]["same_day"]) == {101, 202}
     assert "https://example.com/meetup" in subscriber_messages[0]["message"]
 
 
@@ -142,7 +142,7 @@ def test_check_calendar_retries_failed_subscriber_delivery(tmp_path):
     run_calendar_check([event], now, state, config, bot)
 
     storage_key = "event-001_20261015T120000Z"
-    assert set(state["sent_reminders"][storage_key]["1h"]) == {101}
+    assert set(state["sent_reminders"][storage_key]["same_day"]) == {101}
 
     bot.failures.clear()
     run_calendar_check([event], now, state, config, bot)
@@ -151,8 +151,23 @@ def test_check_calendar_retries_failed_subscriber_delivery(tmp_path):
         message for message in bot.messages if message["chat_id"] in state["subscribers"]
     ]
     assert [message["chat_id"] for message in subscriber_messages] == [101, 202]
-    assert set(state["sent_reminders"][storage_key]["1h"]) == {101, 202}
-    assert set(state["sent_reminders"][storage_key]["24h"]) == {101, 202}
+    assert set(state["sent_reminders"][storage_key]["same_day"]) == {101, 202}
+
+
+def test_check_calendar_sends_same_day_reminders_to_groups(tmp_path):
+    """Scheduled same-day reminders reach configured groups as well as DMs."""
+    now = datetime(2026, 10, 15, 11, 0, tzinfo=timezone.utc)
+    state = make_state({101})
+    state["groups"] = {-100}
+    config = make_config(tmp_path)
+    bot = FakeBot()
+
+    run_calendar_check([make_event()], now, state, config, bot)
+
+    assert [message["chat_id"] for message in bot.messages[:2]] == [101, -100]
+    assert bot.messages[2]["chat_id"] == 42
+    storage_key = "event-001_20261015T120000Z"
+    assert state["sent_reminders"][storage_key]["same_day_groups"] == [-100]
 
 
 def test_check_calendar_stops_after_calendar_fetch_failure(tmp_path):
