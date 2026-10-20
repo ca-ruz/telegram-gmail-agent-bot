@@ -6,6 +6,20 @@ from zoneinfo import ZoneInfo
 from tools.local.data_manager import load_json, save_json
 
 CALENDAR_TIMEZONE = ZoneInfo("America/Mexico_City")
+SPANISH_MONTHS = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
 
 
 def current_calendar_month(now=None):
@@ -50,3 +64,14 @@ def load_monthly_calendar(file_path):
 def save_monthly_calendar(file_path, calendar):
     """Persist monthly calendar metadata atomically."""
     save_json(file_path, calendar)
+
+
+def format_calendar_title(calendar):
+    """Return a Spanish title for a persisted monthly calendar."""
+    month = calendar.get("month", "")
+    try:
+        year, month_number = month.split("-")
+        month_name = SPANISH_MONTHS[int(month_number) - 1]
+    except (ValueError, IndexError):
+        return "🗓 Calendario del mes"
+    return f"🗓 Calendario de {month_name} de {year}"

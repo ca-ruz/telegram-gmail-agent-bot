@@ -6,6 +6,7 @@ from bot.interface import (
     NOTIFICATION_LABELS,
     get_main_keyboard,
     get_main_menu_text,
+    get_calendar_keyboard,
     get_subscription_keyboard,
     get_subscription_menu_text,
 )
@@ -14,6 +15,7 @@ from core.notification_preferences import (
     ensure_user_preferences,
     save_notification_preferences,
 )
+from core.monthly_calendar import format_calendar_title
 from tools.local.data_manager import load_json, save_json
 
 # Initialize logger for this module
@@ -115,6 +117,7 @@ async def button_click(
     subscribers,
     notification_preferences=None,
     notification_preferences_file=None,
+    monthly_calendar=None,
 ):
     """
     Handles callback queries from inline keyboard buttons.
@@ -190,6 +193,37 @@ async def button_click(
             get_main_menu_text(),
             get_main_keyboard(),
         )
+
+    elif data == "monthly_calendar":
+        calendar = monthly_calendar or {}
+        if not calendar:
+            await edit_subscription_message(
+                "🗓 Todavía no hay un calendario del mes disponible.",
+                get_main_keyboard(),
+            )
+        else:
+            caption = calendar.get("caption") or format_calendar_title(calendar)
+            await query.message.delete()
+            await context.bot.send_photo(
+                chat_id=query.message.chat_id,
+                photo=calendar["file_id"],
+                caption=caption,
+                reply_markup=get_calendar_keyboard(),
+            )
+
+    elif data == "main_menu":
+        if is_photo_msg:
+            await query.message.delete()
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=get_main_menu_text(),
+                reply_markup=get_main_keyboard(),
+            )
+        else:
+            await query.edit_message_text(
+                text=get_main_menu_text(),
+                reply_markup=get_main_keyboard(),
+            )
 
     elif data == "subscribe":
         already_subscribed = user.id in subscribers

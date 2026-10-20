@@ -296,7 +296,9 @@ async def handle_monthly_calendar_photo(
         image_file_id,
         caption=upload["caption"],
     )
-    state["monthly_calendar"] = calendar
+    stored_calendar = state.setdefault("monthly_calendar", {})
+    stored_calendar.clear()
+    stored_calendar.update(calendar)
     save_monthly_calendar(config["MONTHLY_CALENDAR_FILE"], calendar)
     context.user_data.pop("monthly_calendar_upload", None)
     await update.message.reply_text(

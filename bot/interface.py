@@ -5,6 +5,7 @@ def get_main_menu_text():
     return (
         "Elige una opción:\n\n"
         "🔔 Suscripciones: elegir qué notificaciones recibir.\n"
+        "🗓 Calendario del mes: consultar el calendario mensual.\n"
         "📅 Meetup: abrir la página de Meetup.\n"
         "🗓 Eventos: consultar los eventos de Bitcoin & Lightning GDL.\n"
         "🛠 Bitdevs: abrir la página de Bitcoin & Lightning GDL BitDevs.\n"
@@ -15,6 +16,9 @@ def get_main_keyboard():
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("Suscripciones", callback_data="subscriptions"),
+        ],
+        [
+            InlineKeyboardButton("Calendario del mes", callback_data="monthly_calendar"),
         ],
         [
             InlineKeyboardButton("Meetup", callback_data="meetup"),
@@ -66,4 +70,11 @@ def get_subscription_keyboard(preferences):
             callback_data="subscriptions_disable_all",
         )],
         [InlineKeyboardButton("⬅️ Volver al menú", callback_data="subscriptions_back")],
+    ])
+
+
+def get_calendar_keyboard():
+    """Build the navigation keyboard shown with the monthly calendar image."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Volver al menú", callback_data="main_menu")],
     ])
