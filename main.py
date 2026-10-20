@@ -67,6 +67,18 @@ def parse_env_bool(name, default):
     return default
 
 
+def parse_env_int(name, default):
+    """Parse an integer environment variable with a safe fallback."""
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value.strip())
+    except ValueError:
+        logger.warning("Invalid integer value for %s; using default %s.", name, default)
+        return default
+
+
 # Configuration
 CONFIG = {
     'BOT_TOKEN': os.getenv("TELEGRAM_BOT_TOKEN"),
@@ -82,6 +94,8 @@ CONFIG = {
     'ENABLE_CALENDAR_POLLING': parse_env_bool('ENABLE_CALENDAR_POLLING', True),
     'ENABLE_COFFEE_HOST_REMINDERS': parse_env_bool('ENABLE_COFFEE_HOST_REMINDERS', True),
     'ENABLE_MANUAL_PROMO_REMINDERS': parse_env_bool('ENABLE_MANUAL_PROMO_REMINDERS', True),
+    'EVENT_SAME_DAY_REMINDER_HOUR': parse_env_int('EVENT_SAME_DAY_REMINDER_HOUR', 13),
+    'EVENT_MORNING_REMINDER_LEAD_HOURS': parse_env_int('EVENT_MORNING_REMINDER_LEAD_HOURS', 2),
     'REMINDERS_FILE': "data/sent_reminders.json",
     'REMINDER_CONFIG_FILE': "data/reminder_config.json",
     'SUBSCRIBERS_FILE': "data/subscribers.json",
