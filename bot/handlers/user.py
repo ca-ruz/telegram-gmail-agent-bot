@@ -23,6 +23,30 @@ SUBSCRIBERS_FILE = "data/subscribers.json"
 NOTIFICATION_PREFERENCES_FILE = "data/notification_preferences.json"
 WELCOMED_USERS_FILE = "data/welcomed_users.json"
 
+async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, include_welcome=False):
+    """Send the shared public menu with an optional first-time welcome."""
+    menu_text = get_main_menu_text()
+    response_text = menu_text
+    if include_welcome:
+        response_text = (
+            "¡Hola Bitcoiner! Bienvenido a Bitcoin & Lightning GDL.\n\n"
+            + menu_text
+        )
+
+    if include_welcome and os.path.exists(WELCOME_IMAGE_PATH):
+        with open(WELCOME_IMAGE_PATH, "rb") as photo:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=photo,
+                caption=response_text,
+                reply_markup=get_main_keyboard(),
+            )
+    else:
+        await update.message.reply_text(
+            response_text,
+            reply_markup=get_main_keyboard(),
+        )
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handles the /start command. Sends a welcome image with a caption.
@@ -32,24 +56,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcomed_users = set(load_json(WELCOMED_USERS_FILE, []))
     is_first_welcome = user.id not in welcomed_users
 
-    welcome_text = (
-        "¡Hola Bitcoiner! Bienvenido a Bitcoin & Lightning GDL.\n\n"
-        f"{get_main_menu_text()}"
-    )
-
-    if is_first_welcome and os.path.exists(WELCOME_IMAGE_PATH):
-        with open(WELCOME_IMAGE_PATH, "rb") as photo:
-            await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=photo,
-                caption=welcome_text,
-                reply_markup=get_main_keyboard()
-            )
-    else:
-        await update.message.reply_text(
-            welcome_text,
-            reply_markup=get_main_keyboard()
-        )
+    await send_main_menu(update, context, include_welcome=is_first_welcome)
 
     if is_first_welcome:
         welcomed_users.add(user.id)
@@ -59,10 +66,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handles the /menu command. Shows the main action buttons without the logo.
     """
-    await update.message.reply_text(
-        get_main_menu_text(),
-        reply_markup=get_main_keyboard()
-    )
+    await send_main_menu(update, context)
 
 
 async def subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE, notification_preferences, subscribers, notification_preferences_file=NOTIFICATION_PREFERENCES_FILE):
