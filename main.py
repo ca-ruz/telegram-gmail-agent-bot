@@ -348,6 +348,7 @@ def main():
             notification_preferences=STATE['notification_preferences'],
             notification_preferences_file=CONFIG['NOTIFICATION_PREFERENCES_FILE'],
             monthly_calendar=STATE['monthly_calendar'],
+            manual_promos=STATE['manual_promos'],
         )))
 
     # Smart Admin Chat Handler (Natural Language)

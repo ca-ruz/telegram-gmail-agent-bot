@@ -19,6 +19,7 @@ def get_main_keyboard():
         ],
         [
             InlineKeyboardButton("Calendario del mes", callback_data="monthly_calendar"),
+            InlineKeyboardButton("Próximos eventos", callback_data="upcoming_flyers"),
         ],
         [
             InlineKeyboardButton("Meetup", callback_data="meetup"),

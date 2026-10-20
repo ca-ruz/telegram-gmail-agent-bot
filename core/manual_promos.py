@@ -49,6 +49,40 @@ def save_manual_promos(file_path, promos):
     save_json(file_path, promos)
 
 
+def get_upcoming_published_promos(promos, now=None):
+    """Return future flyers that have already been published, ordered by date."""
+    current_time = now or datetime.now(MANUAL_PROMO_TIMEZONE)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=MANUAL_PROMO_TIMEZONE)
+
+    upcoming = []
+    for promo in promos.values() if isinstance(promos, dict) else []:
+        if not isinstance(promo, dict):
+            continue
+        if promo.get("status") not in {"active", "published"}:
+            continue
+        if promo.get("status") != "published" and not promo.get(
+            "first_notification_sent",
+            False,
+        ):
+            continue
+        try:
+            event_time = datetime.fromisoformat(
+                str(promo["event_start"]).replace("Z", "+00:00")
+            )
+            if event_time.tzinfo is None:
+                event_time = event_time.replace(tzinfo=MANUAL_PROMO_TIMEZONE)
+            event_time = event_time.astimezone(MANUAL_PROMO_TIMEZONE)
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Skipping published promo with invalid event time.")
+            continue
+        if event_time <= current_time or not promo.get("image_file_id"):
+            continue
+        upcoming.append((event_time, promo))
+
+    return [promo for _, promo in sorted(upcoming, key=lambda item: item[0])]
+
+
 def _format_manual_promo_datetime(event_start):
     """Return localized date and time strings for a manual promo."""
     event_time = datetime.fromisoformat(str(event_start).replace("Z", "+00:00"))
