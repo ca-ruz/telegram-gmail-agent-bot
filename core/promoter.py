@@ -7,6 +7,7 @@ from telegram.constants import ParseMode
 from tools.local.calendar_api import get_calendar_service_with_creds, fetch_upcoming_events, extract_link, friendly_delta
 from tools.local.data_manager import save_json
 from core.notification_preferences import filter_users_by_category
+from core.reminder_timing import get_event_reminder_stage
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -310,19 +311,19 @@ async def check_calendar(context, config, state):
             and not promo_state["flyer_created"]
             and series_id not in processed_admin_series
         ):
-            rules_ascending = sorted(config['REMINDER_RULES'].items(), key=lambda x: x[1])
-            
-            for key, threshold in rules_ascending:
-                if delta <= threshold and delta > timedelta(0):
-                    if key not in promo_state["notified_thresholds"]:
-                        events_to_notify_admin.append({'event': event, 'threshold': key, 'index': i})
-                        for k, t in rules_ascending:
-                            if delta <= t and k not in promo_state["notified_thresholds"]:
-                                promo_state["notified_thresholds"].append(k)
-                        notified_promos[storage_key] = promo_state
-                        save_json(config['PROMOTED_FILE'], notified_promos)
-                        processed_admin_series.add(series_id)
-                    break 
+            key = get_event_reminder_stage(
+                event_time,
+                now,
+                config['REMINDER_RULES'],
+                config.get('EVENT_SAME_DAY_REMINDER_HOUR', 13),
+                config.get('EVENT_MORNING_REMINDER_LEAD_HOURS', 2),
+            )
+            if key and key not in promo_state["notified_thresholds"]:
+                events_to_notify_admin.append({'event': event, 'threshold': key, 'index': i})
+                promo_state["notified_thresholds"].append(key)
+                notified_promos[storage_key] = promo_state
+                save_json(config['PROMOTED_FILE'], notified_promos)
+                processed_admin_series.add(series_id)
 
         # --- PHASE B: SUBSCRIBER REMINDER LOGIC ---
         if series_id not in processed_reminder_series:
@@ -348,52 +349,74 @@ async def check_calendar(context, config, state):
             else:
                 sent_for_event = {}
 
-            rules_ascending = sorted(config['REMINDER_RULES'].items(), key=lambda x: x[1])
+            key = get_event_reminder_stage(
+                event_time,
+                now,
+                config['REMINDER_RULES'],
+                config.get('EVENT_SAME_DAY_REMINDER_HOUR', 13),
+                config.get('EVENT_MORNING_REMINDER_LEAD_HOURS', 2),
+            )
+            if key:
+                sent_for_stage = set(sent_for_event.get(key, []))
+                sent_group_stage = f"{key}_groups"
+                sent_groups = set(sent_for_event.get(sent_group_stage, []))
+                pending_users = [
+                    user_id for user_id in subscribers
+                    if user_id not in sent_for_stage
+                ]
+                pending_groups = [
+                    group_id for group_id in state.get('groups', set())
+                    if group_id not in sent_groups
+                ]
+                if not pending_users and not pending_groups:
+                    processed_reminder_series.add(series_id)
+                    continue
 
-            for key, threshold in rules_ascending:
-                if delta <= threshold and delta > timedelta(0):
-                    sent_for_stage = set(sent_for_event.get(key, []))
-                    pending_users = [
-                        user_id for user_id in subscribers
-                        if user_id not in sent_for_stage
-                    ]
-                    if not pending_users:
-                        break
+                actual_delta_desc = friendly_delta(delta)
+                message = (
+                    f"📅 <b>Próximo evento: {title}</b>\n\n"
+                    f"🗓 <b>Fecha:</b> {formatted_date}\n"
+                    f"⏰ <b>Hora:</b> {formatted_time}\n"
+                    f"⏳ <b>Faltan:</b> {actual_delta_desc}\n\n"
+                    f"🔗 <a href='{link}'>Más información y registro</a>"
+                )
 
-                    actual_delta_desc = friendly_delta(delta)
-                    message = (
-                        f"📅 <b>Próximo evento: {title}</b>\n\n"
-                        f"🗓 <b>Fecha:</b> {formatted_date}\n"
-                        f"⏰ <b>Hora:</b> {formatted_time}\n"
-                        f"⏳ <b>Faltan:</b> {actual_delta_desc}\n\n"
-                        f"🔗 <a href='{link}'>Más información y registro</a>"
-                    )
+                delivered_users = []
+                for user_id in pending_users:
+                    try:
+                        await context.bot.send_message(
+                            user_id,
+                            message,
+                            parse_mode=ParseMode.HTML,
+                            disable_web_page_preview=False,
+                        )
+                        delivered_users.append(user_id)
+                    except Exception as e:
+                        logger.error(f"Could not send reminder to {user_id}: {e}")
 
-                    delivered_users = []
-                    for user_id in pending_users:
-                        try:
-                            await context.bot.send_message(
-                                user_id,
-                                message,
-                                parse_mode=ParseMode.HTML,
-                                disable_web_page_preview=False,
-                            )
-                            delivered_users.append(user_id)
-                        except Exception as e:
-                            logger.error(f"Could not send reminder to {user_id}: {e}")
+                delivered_groups = []
+                for group_id in pending_groups:
+                    try:
+                        await context.bot.send_message(
+                            group_id,
+                            message,
+                            parse_mode=ParseMode.HTML,
+                            disable_web_page_preview=False,
+                        )
+                        delivered_groups.append(group_id)
+                    except Exception as e:
+                        logger.error(f"Could not send reminder to group {group_id}: {e}")
 
-                    if delivered_users:
-                        for k, t in rules_ascending:
-                            if delta <= t:
-                                delivered_for_stage = set(sent_for_event.get(k, []))
-                                delivered_for_stage.update(delivered_users)
-                                sent_for_event[k] = list(delivered_for_stage)
-
-                        sent_reminders[storage_key] = sent_for_event
-                        save_json(config['REMINDERS_FILE'], sent_reminders)
-                        logger.info(f"Reminder [{key}] sent for: {title}")
-                        reminders_sent_this_run += 1
-                    break
+                if delivered_users or delivered_groups:
+                    sent_for_stage.update(delivered_users)
+                    sent_for_event[key] = list(sent_for_stage)
+                    if delivered_groups:
+                        sent_groups.update(delivered_groups)
+                        sent_for_event[sent_group_stage] = list(sent_groups)
+                    sent_reminders[storage_key] = sent_for_event
+                    save_json(config['REMINDERS_FILE'], sent_reminders)
+                    logger.info(f"Reminder [{key}] sent for: {title}")
+                    reminders_sent_this_run += 1
             
             # Mark the series as processed even if no reminder was sent
             processed_reminder_series.add(series_id)
