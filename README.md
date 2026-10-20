@@ -11,7 +11,7 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
 *   **Proactive AI Marketing:** Automatically detects new calendar events and offers to generate AI-powered flyers and Telegram posts using GPT-4o and configurable GPT Image models.
 *   **Manual Event Promos:** Admins can upload an existing flyer and publication text with `/manualpromo`; the bot schedules delivery without calling OpenAI.
 *   **Interactive Refinement:** Don't like a draft? Just reply to it with instructions (e.g., "Make it more professional") and the AI will regenerate it.
-*   **Automated Reminders:** Notifies subscribers at configurable intervals (1 week, 3 days, 24 hours, 1 hour before).
+*   **Automated Reminders:** Notifies eligible DMs and configured groups at 1 week, 3 days, and 24 hours before an event, followed by a configurable same-day reminder (default 1:00 PM). Events before that time use the configured morning fallback.
 *   **Notification Preferences:** Users can choose event, coffee-host, and membership notification categories from `/suscripciones`.
 *   **Smart Formatting:** Professional HTML-formatted messages with 12h AM/PM time and clean date display.
 *   **Link Extraction:** Automatically finds registration links in the Google Calendar event description.
@@ -58,6 +58,8 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
     *   `OPENAI_IMAGE_MODEL`: Flyer image model (`gpt-image-1-mini`).
     *   `OPENAI_IMAGE_QUALITY`: Flyer quality (`medium`).
     *   `OPENAI_IMAGE_SIZE`: Flyer dimensions (`1024x1536`).
+    *   `EVENT_SAME_DAY_REMINDER_HOUR`: Same-day reminder hour in Guadalajara time (default `13`).
+    *   `EVENT_MORNING_REMINDER_LEAD_HOURS`: Lead time for events before the same-day hour (default `2`).
 
 5.  **Google Calendar Credentials:**
     Place your Service Account JSON file in the root directory and name it `google_calendar.json`. Ensure the service account email has **"Make changes to events"** permissions on your calendar.
