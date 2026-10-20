@@ -3,12 +3,14 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from bot.interface import (
+    NOTIFICATION_LABELS,
     get_main_keyboard,
     get_main_menu_text,
     get_subscription_keyboard,
     get_subscription_menu_text,
 )
 from core.notification_preferences import (
+    NOTIFICATION_CATEGORIES,
     ensure_user_preferences,
     save_notification_preferences,
 )
@@ -23,6 +25,30 @@ SUBSCRIBERS_FILE = "data/subscribers.json"
 NOTIFICATION_PREFERENCES_FILE = "data/notification_preferences.json"
 WELCOMED_USERS_FILE = "data/welcomed_users.json"
 
+async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, include_welcome=False):
+    """Send the shared public menu with an optional first-time welcome."""
+    menu_text = get_main_menu_text()
+    response_text = menu_text
+    if include_welcome:
+        response_text = (
+            "¡Hola Bitcoiner! Bienvenido a Bitcoin & Lightning GDL.\n\n"
+            + menu_text
+        )
+
+    if include_welcome and os.path.exists(WELCOME_IMAGE_PATH):
+        with open(WELCOME_IMAGE_PATH, "rb") as photo:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=photo,
+                caption=response_text,
+                reply_markup=get_main_keyboard(),
+            )
+    else:
+        await update.message.reply_text(
+            response_text,
+            reply_markup=get_main_keyboard(),
+        )
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handles the /start command. Sends a welcome image with a caption.
@@ -32,24 +58,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcomed_users = set(load_json(WELCOMED_USERS_FILE, []))
     is_first_welcome = user.id not in welcomed_users
 
-    welcome_text = (
-        "¡Hola Bitcoiner! Bienvenido a Bitcoin & Lightning GDL.\n\n"
-        f"{get_main_menu_text()}"
-    )
-
-    if is_first_welcome and os.path.exists(WELCOME_IMAGE_PATH):
-        with open(WELCOME_IMAGE_PATH, "rb") as photo:
-            await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=photo,
-                caption=welcome_text,
-                reply_markup=get_main_keyboard()
-            )
-    else:
-        await update.message.reply_text(
-            welcome_text,
-            reply_markup=get_main_keyboard()
-        )
+    await send_main_menu(update, context, include_welcome=is_first_welcome)
 
     if is_first_welcome:
         welcomed_users.add(user.id)
@@ -59,10 +68,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handles the /menu command. Shows the main action buttons without the logo.
     """
-    await update.message.reply_text(
-        get_main_menu_text(),
-        reply_markup=get_main_keyboard()
-    )
+    await send_main_menu(update, context)
 
 
 async def subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE, notification_preferences, subscribers, notification_preferences_file=NOTIFICATION_PREFERENCES_FILE):
@@ -85,8 +91,8 @@ async def meetup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "https://www.meetup.com/guadalajara-bitcoin-and-lightning/"
     )
 
-async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /events command."""
+async def eventos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the /eventos command."""
     await update.message.reply_text(
         "https://btcgdl.com/eventos.html"
     )
@@ -97,8 +103,8 @@ async def bitdevs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "https://bitdevs.btcgdl.com/"
     )
 
-async def website(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /website command."""
+async def web(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the /web command."""
     await update.message.reply_text(
         "https://btcgdl.com/"
     )
@@ -118,6 +124,7 @@ async def button_click(
     user = query.from_user
     data = query.data
     notification_preferences = notification_preferences if notification_preferences is not None else {}
+    had_saved_preferences = str(user.id) in notification_preferences
     preferences = ensure_user_preferences(
         notification_preferences,
         user.id,
@@ -185,20 +192,26 @@ async def button_click(
         )
 
     elif data == "subscribe":
-        preferences["events"] = True
         already_subscribed = user.id in subscribers
+        if not had_saved_preferences:
+            for category in NOTIFICATION_CATEGORIES:
+                preferences[category] = True
+        else:
+            preferences["events"] = True
         if not already_subscribed:
             subscribers.add(user.id)
             save_json(SUBSCRIBERS_FILE, list(subscribers))
             logger.info(f"User {user.id} (@{user.username}) subscribed.")
         persist_preferences()
 
+        enabled_categories = ", ".join(
+            label for category, label in NOTIFICATION_LABELS.items()
+            if preferences.get(category, False)
+        ) or "Ninguna"
         msg = (
-            "ℹ️ Ya estás suscrito a las notificaciones de eventos de "
-            "Bitcoin & Lightning GDL."
+            "ℹ️ Ya estás suscrito a: " + enabled_categories + "."
             if already_subscribed
-            else "✅ Te suscribiste a las notificaciones de eventos de "
-            "Bitcoin & Lightning GDL."
+            else "✅ Te suscribiste a: " + enabled_categories + "."
         )
         if is_photo_msg:
             await query.edit_message_caption(caption=msg, reply_markup=get_main_keyboard())
@@ -226,12 +239,12 @@ async def button_click(
         else:
             await query.edit_message_text(text=msg, reply_markup=get_main_keyboard())
 
-    elif data in {"meetup", "events", "bitdevs", "website"}:
+    elif data in {"meetup", "eventos", "bitdevs", "web"}:
         links = {
             "meetup": "https://www.meetup.com/guadalajara-bitcoin-and-lightning/",
-            "events": "https://btcgdl.com/eventos.html",
+            "eventos": "https://btcgdl.com/eventos.html",
             "bitdevs": "https://bitdevs.btcgdl.com/",
-            "website": "https://btcgdl.com/",
+            "web": "https://btcgdl.com/",
         }
         msg = links[data]
         if is_photo_msg:

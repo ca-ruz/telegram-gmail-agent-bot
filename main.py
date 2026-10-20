@@ -2,8 +2,9 @@ import os
 import logging
 from functools import partial
 from dotenv import load_dotenv
+from telegram import BotCommand, BotCommandScopeChat
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-from bot.handlers.user import start, menu, subscriptions, meetup, events, bitdevs, website, button_click
+from bot.handlers.user import start, menu, subscriptions, meetup, eventos, bitdevs, web, button_click
 from bot.handlers.admin import (
     broadcast, draft, handle_draft_selection, handle_auto_draft, 
     handle_publish, handle_clear_pending_promo, add_group, remove_group,
@@ -159,7 +160,48 @@ def main():
         logger.error("TELEGRAM_BOT_TOKEN not found in .env. Initialization aborted.")
         return
 
-    app = ApplicationBuilder().token(CONFIG['BOT_TOKEN']).build()
+    async def configure_command_menus(application):
+        """Configure separate public and administrator Telegram command menus."""
+        public_commands = [
+            BotCommand("menu", "Abrir el menu"),
+            BotCommand("suscripciones", "Administrar suscripciones"),
+            BotCommand("meetup", "Ver eventos en Meetup"),
+            BotCommand("eventos", "Ver eventos de Bitcoin & Lightning GDL"),
+            BotCommand("bitdevs", "Ver BitDevs"),
+            BotCommand("web", "Visitar el sitio web"),
+        ]
+        await application.bot.set_my_commands(public_commands)
+
+        admin_commands = public_commands + [
+            BotCommand("broadcast", "Enviar un mensaje"),
+            BotCommand("status", "Ver el estado del bot"),
+            BotCommand("groups", "Administrar grupos"),
+            BotCommand("draft", "Crear un borrador"),
+            BotCommand("addevent", "Crear un evento"),
+            BotCommand("editevent", "Editar un evento"),
+            BotCommand("deleteevent", "Eliminar un evento"),
+            BotCommand("addgroup", "Agregar un grupo"),
+            BotCommand("removegroup", "Eliminar un grupo"),
+            BotCommand("checkprompt", "Revisar un borrador"),
+            BotCommand("checkprompts", "Revisar borradores"),
+            BotCommand("helpadmin", "Ver ayuda administrativa"),
+            BotCommand("pendingpromo", "Ver promociones pendientes"),
+            BotCommand("coffeehost", "Administrar anfitriones"),
+            BotCommand("remind", "Enviar recordatorios"),
+            BotCommand("manualpromo", "Publicar una promoción"),
+        ]
+        if CONFIG['ADMIN_ID']:
+            await application.bot.set_my_commands(
+                admin_commands,
+                scope=BotCommandScopeChat(chat_id=CONFIG['ADMIN_ID']),
+            )
+
+    app = (
+        ApplicationBuilder()
+        .token(CONFIG['BOT_TOKEN'])
+        .post_init(configure_command_menus)
+        .build()
+    )
 
     # Schedule the proactive calendar checker
     async def calendar_job(context):
@@ -190,9 +232,9 @@ def main():
         notification_preferences_file=CONFIG['NOTIFICATION_PREFERENCES_FILE'],
     )))
     app.add_handler(CommandHandler("meetup", meetup))
-    app.add_handler(CommandHandler("events", events))
+    app.add_handler(CommandHandler("eventos", eventos))
     app.add_handler(CommandHandler("bitdevs", bitdevs))
-    app.add_handler(CommandHandler("website", website))
+    app.add_handler(CommandHandler("web", web))
     
     # Admin Command Handlers
     app.add_handler(CommandHandler("broadcast", 

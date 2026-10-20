@@ -6,14 +6,14 @@ from tools.local.data_manager import load_json
 
 
 def test_load_preferences_migrates_existing_event_subscribers(tmp_path):
-    """Existing event subscribers retain event notifications during migration."""
+    """Existing subscribers receive all categories when no preferences exist."""
     file_path = tmp_path / "notification_preferences.json"
 
     preferences = load_notification_preferences(str(file_path), {101, 202})
 
     assert preferences == {
-        "101": {"events": True, "coffee": False, "payments": False},
-        "202": {"events": True, "coffee": False, "payments": False},
+        "101": {"events": True, "coffee": True, "payments": True},
+        "202": {"events": True, "coffee": True, "payments": True},
     }
     assert load_json(str(file_path), {}) == preferences
 
@@ -31,7 +31,7 @@ def test_load_preferences_preserves_existing_opt_outs_and_adds_missing_categorie
     assert preferences["101"] == {
         "events": False,
         "coffee": True,
-        "payments": False,
+        "payments": True,
     }
 
 

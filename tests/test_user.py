@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from bot.handlers import user
-from bot.interface import get_main_menu_text
+from bot.interface import get_main_keyboard, get_main_menu_text
 from tools.local.data_manager import load_json
 
 
@@ -40,7 +40,15 @@ def test_main_menu_explains_public_actions():
     assert "Meetup" in menu_text
     assert "Eventos" in menu_text
     assert "Bitdevs" in menu_text
-    assert "Sitio oficial" in menu_text
+    assert "Web" in get_main_keyboard().inline_keyboard[2][1].text
+
+
+def test_main_menu_uses_localized_callback_names():
+    """Public menu buttons use the Spanish command callback names."""
+    keyboard = get_main_keyboard().inline_keyboard
+
+    assert keyboard[1][1].callback_data == "eventos"
+    assert keyboard[2][1].callback_data == "web"
 
 
 def test_start_sends_welcome_once_and_persists_user(tmp_path):
@@ -61,7 +69,7 @@ def test_start_sends_welcome_once_and_persists_user(tmp_path):
 
 
 def test_subscribe_reports_explicit_notification_scope(tmp_path):
-    """Subscription feedback names the event notification service."""
+    """New subscriptions report every enabled notification category."""
     subscribers_file = tmp_path / "subscribers.json"
     subscribers = set()
     update = make_update(callback_data="subscribe")
@@ -71,8 +79,42 @@ def test_subscribe_reports_explicit_notification_scope(tmp_path):
 
     message = update.callback_query.edit_message_text.await_args.kwargs["text"]
     assert "Te suscribiste" in message
-    assert "Bitcoin & Lightning GDL" in message
+    assert "Eventos" in message
+    assert "Recordatorios de café" in message
+    assert "Avisos de membresía" in message
     assert subscribers == {42}
+
+
+def test_subscribe_preserves_existing_specialized_opt_outs(tmp_path):
+    """Subscribing again does not silently re-enable specialized categories."""
+    subscribers_file = tmp_path / "subscribers.json"
+    preferences_file = tmp_path / "notification_preferences.json"
+    subscribers = {42}
+    preferences = {
+        "42": {"events": True, "coffee": False, "payments": False},
+    }
+    update = make_update(callback_data="subscribe")
+
+    with patch.object(user, "SUBSCRIBERS_FILE", str(subscribers_file)):
+        asyncio.run(
+            user.button_click(
+                update,
+                SimpleNamespace(),
+                subscribers,
+                preferences,
+                str(preferences_file),
+            )
+        )
+
+    assert preferences["42"] == {
+        "events": True,
+        "coffee": False,
+        "payments": False,
+    }
+    message = update.callback_query.edit_message_text.await_args.kwargs["text"]
+    assert "Eventos" in message
+    assert "Recordatorios de café" not in message
+    assert "Avisos de membresía" not in message
 
 
 def test_unsubscribe_reports_explicit_notification_scope(tmp_path):
