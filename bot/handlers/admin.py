@@ -378,6 +378,8 @@ async def handle_manual_promo_send_now(
         promo,
         now,
         config.get("REMINDER_RULES", {}),
+        config.get("EVENT_SAME_DAY_REMINDER_HOUR", 13),
+        config.get("EVENT_MORNING_REMINDER_LEAD_HOURS", 2),
     ) or "initial"
     result = await deliver_manual_promo(
         context,

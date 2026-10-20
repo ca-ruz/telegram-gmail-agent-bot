@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from tools.local.data_manager import load_json, save_json
 from core.notification_preferences import filter_users_by_category
+from core.reminder_timing import get_event_reminder_stage
 
 logger = logging.getLogger(__name__)
 MANUAL_PROMO_TIMEZONE = ZoneInfo("America/Mexico_City")
@@ -140,7 +141,13 @@ def set_first_notification_schedule(promo, scheduled_for):
     promo["first_notification_sent"] = False
 
 
-def get_manual_promo_stage(promo, now, reminder_rules):
+def get_manual_promo_stage(
+    promo,
+    now,
+    reminder_rules,
+    same_day_hour=13,
+    morning_lead_hours=2,
+):
     """Return the configured reminder stage for a manual promo."""
     event_time = datetime.fromisoformat(
         str(promo["event_start"]).replace("Z", "+00:00")
@@ -152,10 +159,19 @@ def get_manual_promo_stage(promo, now, reminder_rules):
         now,
         reminder_rules,
         {"first_notification_sent": True},
+        same_day_hour,
+        morning_lead_hours,
     )
 
 
-def _get_manual_promo_stage(event_time, now, reminder_rules, promo=None):
+def _get_manual_promo_stage(
+    event_time,
+    now,
+    reminder_rules,
+    promo=None,
+    same_day_hour=13,
+    morning_lead_hours=2,
+):
     """Return the most urgent configured reminder stage currently due."""
     promo = promo or {}
     first_notification_at = promo.get("first_notification_at")
@@ -174,16 +190,13 @@ def _get_manual_promo_stage(event_time, now, reminder_rules, promo=None):
         except ValueError:
             logger.warning("Invalid first notification time: %s", first_notification_at)
 
-    remaining = event_time - now
-    if remaining <= timedelta(0):
-        return None
-
-    eligible = [
-        (threshold, name)
-        for name, threshold in reminder_rules.items()
-        if remaining <= threshold
-    ]
-    return min(eligible)[1] if eligible else None
+    return get_event_reminder_stage(
+        event_time,
+        now,
+        reminder_rules,
+        same_day_hour,
+        morning_lead_hours,
+    )
 
 
 async def deliver_manual_promo(
@@ -310,7 +323,14 @@ async def check_manual_promo_reminders(context, config, state):
             logger.warning("Skipping manual promo %s with invalid event time.", promo_id)
             continue
 
-        stage = _get_manual_promo_stage(event_time, now, reminder_rules, promo)
+        stage = _get_manual_promo_stage(
+            event_time,
+            now,
+            reminder_rules,
+            promo,
+            config.get("EVENT_SAME_DAY_REMINDER_HOUR", 13),
+            config.get("EVENT_MORNING_REMINDER_LEAD_HOURS", 2),
+        )
         if stage is None:
             continue
 
@@ -321,6 +341,8 @@ async def check_manual_promo_reminders(context, config, state):
                 now,
                 reminder_rules,
                 {"first_notification_sent": True},
+                config.get("EVENT_SAME_DAY_REMINDER_HOUR", 13),
+                config.get("EVENT_MORNING_REMINDER_LEAD_HOURS", 2),
             ) or "initial"
 
         result = await deliver_manual_promo(
