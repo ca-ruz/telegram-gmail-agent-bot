@@ -34,21 +34,32 @@ def make_update(user_id=42, callback_data=None, photo=None):
 def test_main_menu_explains_public_actions():
     """The public menu explains what each button does."""
     menu_text = get_main_menu_text()
+    button_texts = {
+        button.text
+        for row in get_main_keyboard().inline_keyboard
+        for button in row
+    }
 
     assert "Suscripciones" in menu_text
     assert "Bitcoin & Lightning GDL" in menu_text
     assert "Meetup" in menu_text
     assert "Eventos" in menu_text
     assert "Bitdevs" in menu_text
-    assert "Web" in get_main_keyboard().inline_keyboard[2][1].text
+    assert "Calendario del mes" in button_texts
+    assert "Próximos eventos" in button_texts
+    assert "Web" in button_texts
 
 
 def test_main_menu_uses_localized_callback_names():
     """Public menu buttons use the Spanish command callback names."""
-    keyboard = get_main_keyboard().inline_keyboard
+    buttons = {
+        button.text: button
+        for row in get_main_keyboard().inline_keyboard
+        for button in row
+    }
 
-    assert keyboard[1][1].callback_data == "eventos"
-    assert keyboard[2][1].callback_data == "web"
+    assert buttons["Eventos"].callback_data == "eventos"
+    assert buttons["Web"].callback_data == "web"
 
 
 def test_start_sends_welcome_once_and_persists_user(tmp_path):
