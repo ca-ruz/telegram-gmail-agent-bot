@@ -29,6 +29,11 @@ from core.manual_promos import (
     save_manual_promos,
     set_first_notification_schedule,
 )
+from core.monthly_calendar import (
+    build_monthly_calendar,
+    parse_calendar_month,
+    save_monthly_calendar,
+)
 from core.notification_preferences import (
     filter_users_by_category,
     is_notification_enabled,
@@ -232,6 +237,7 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "/deleteevent - Interactively delete an event\n"
         "/draft - Manually generate a promo for an upcoming event\n"
         "/manualpromo - Stage an existing flyer and publication text\n"
+        "/calendario [AAAA-MM] - Upload or replace the monthly calendar image\n"
         "/pendingpromo - Show currently staged promo with publish/delete buttons\n"
         "/checkprompt - Show the most recent image prompt\n"
         "/checkprompts - Show the last 5 image prompts\n"
@@ -242,6 +248,76 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "💡 <i>Tip: Puedes responder a un borrador o a un evento seleccionado para editarlo con AI.</i>",
         parse_mode=ParseMode.HTML
     )
+
+
+async def monthly_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):
+    """Start an administrator-only monthly calendar image upload."""
+    if update.effective_user.id != admin_id:
+        return
+
+    raw_args = update.message.text.partition(" ")[2].strip()
+    parts = [part.strip() for part in raw_args.split("|", 1)] if raw_args else []
+    try:
+        month = parse_calendar_month(parts[0] if parts else "")
+    except ValueError:
+        await update.message.reply_text(
+            "❌ El mes debe tener formato AAAA-MM."
+        )
+        return
+
+    caption = parts[1] if len(parts) == 2 else ""
+    context.user_data["monthly_calendar_upload"] = {
+        "month": month,
+        "caption": caption,
+    }
+    await update.message.reply_text(
+        f"✅ Calendario de {month} listo. Ahora envía la imagen para subirla o reemplazarla."
+    )
+
+
+async def handle_monthly_calendar_photo(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+    config,
+):
+    """Persist an administrator's uploaded monthly calendar image."""
+    if update.effective_user.id != admin_id:
+        return
+
+    upload = context.user_data.get("monthly_calendar_upload")
+    if not upload:
+        return
+
+    image_file_id = update.message.photo[-1].file_id
+    calendar = build_monthly_calendar(
+        upload["month"],
+        image_file_id,
+        caption=upload["caption"],
+    )
+    stored_calendar = state.setdefault("monthly_calendar", {})
+    stored_calendar.clear()
+    stored_calendar.update(calendar)
+    save_monthly_calendar(config["MONTHLY_CALENDAR_FILE"], calendar)
+    context.user_data.pop("monthly_calendar_upload", None)
+    await update.message.reply_text(
+        f"✅ Calendario de {upload['month']} guardado correctamente."
+    )
+
+
+async def handle_admin_photo(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+    config,
+):
+    """Route an administrator photo to its active upload workflow."""
+    if context.user_data.get("monthly_calendar_upload"):
+        await handle_monthly_calendar_photo(update, context, admin_id, state, config)
+        return
+    await handle_manual_promo_photo(update, context, admin_id, state, config)
 
 
 async def manual_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):

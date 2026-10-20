@@ -11,7 +11,7 @@ from bot.handlers.admin import (
     list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
-    coffee_host, remind, manual_promo, handle_manual_promo_photo,
+    coffee_host, remind, manual_promo, handle_admin_photo, monthly_calendar,
     handle_manual_promo_send_now, handle_manual_promo_test,
     handle_manual_promo_schedule,
     handle_manual_promo_cancel,
@@ -24,6 +24,7 @@ from core.coffee_hosts import (
     parse_reminder_rules,
 )
 from core.manual_promos import check_manual_promo_reminders, load_manual_promos
+from core.monthly_calendar import load_monthly_calendar
 from core.notification_preferences import load_notification_preferences
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
@@ -106,6 +107,7 @@ CONFIG = {
     'PROMPT_HISTORY_FILE': "data/prompt_history.json",
     'PENDING_PROMOS_FILE': "data/pending_promos.json",
     'MANUAL_PROMOS_FILE': os.getenv("MANUAL_PROMOS_FILE", "data/manual_promos.json"),
+    'MONTHLY_CALENDAR_FILE': os.getenv("MONTHLY_CALENDAR_FILE", "data/monthly_calendar.json"),
     'COFFEE_HOSTS_FILE': os.getenv("COFFEE_HOSTS_FILE", "data/coffee_hosts.json"),
     'COFFEE_HOST_SCHEDULE_FILE': os.getenv("COFFEE_HOST_SCHEDULE_FILE", "data/coffee_host_schedule.json"),
     'COFFEE_HOST_REMINDER_RULES': parse_reminder_rules(
@@ -135,6 +137,7 @@ STATE = {
     'notified_promos': raw_notified,
     'pending_promos': load_json(CONFIG['PENDING_PROMOS_FILE'], {}),
     'manual_promos': load_manual_promos(CONFIG['MANUAL_PROMOS_FILE']),
+    'monthly_calendar': load_monthly_calendar(CONFIG['MONTHLY_CALENDAR_FILE']),
     'coffee_hosts': load_coffee_hosts(CONFIG['COFFEE_HOSTS_FILE']),
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
 }
@@ -189,6 +192,7 @@ def main():
             BotCommand("coffeehost", "Administrar anfitriones"),
             BotCommand("remind", "Enviar recordatorios"),
             BotCommand("manualpromo", "Publicar una promoción"),
+            BotCommand("calendario", "Subir calendario mensual"),
         ]
         if CONFIG['ADMIN_ID']:
             await application.bot.set_my_commands(
@@ -279,6 +283,8 @@ def main():
         )))
     app.add_handler(CommandHandler("manualpromo",
         partial(manual_promo, admin_id=CONFIG['ADMIN_ID'])))
+    app.add_handler(CommandHandler("calendario",
+        partial(monthly_calendar, admin_id=CONFIG['ADMIN_ID'])))
     
     # Callback Handlers
     app.add_handler(CallbackQueryHandler(
@@ -341,6 +347,8 @@ def main():
             subscribers=STATE['subscribers'],
             notification_preferences=STATE['notification_preferences'],
             notification_preferences_file=CONFIG['NOTIFICATION_PREFERENCES_FILE'],
+            monthly_calendar=STATE['monthly_calendar'],
+            manual_promos=STATE['manual_promos'],
         )))
 
     # Smart Admin Chat Handler (Natural Language)
@@ -348,7 +356,7 @@ def main():
         filters.PHOTO
         & filters.User(user_id=CONFIG['ADMIN_ID']),
         partial(
-            handle_manual_promo_photo,
+            handle_admin_photo,
             admin_id=CONFIG['ADMIN_ID'],
             state=STATE,
             config=CONFIG,
