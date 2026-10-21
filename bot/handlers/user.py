@@ -35,9 +35,27 @@ SUBSCRIBERS_FILE = "data/subscribers.json"
 NOTIFICATION_PREFERENCES_FILE = "data/notification_preferences.json"
 WELCOMED_USERS_FILE = "data/welcomed_users.json"
 
-async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, include_welcome=False):
+def get_user_main_keyboard(user_id, admin_id, coffee_hosts):
+    """Build the main keyboard with the coffee action only for eligible users."""
+    return get_main_keyboard(
+        show_coffee=can_view_coffee_schedule(user_id, admin_id, coffee_hosts or {})
+    )
+
+
+async def send_main_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    include_welcome=False,
+    admin_id=None,
+    coffee_hosts=None,
+):
     """Send the shared public menu with an optional first-time welcome."""
     menu_text = get_main_menu_text()
+    reply_markup = get_user_main_keyboard(
+        update.effective_user.id,
+        admin_id,
+        coffee_hosts,
+    )
     response_text = menu_text
     if include_welcome:
         response_text = (
@@ -51,15 +69,20 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, inc
                 chat_id=update.effective_chat.id,
                 photo=photo,
                 caption=response_text,
-                reply_markup=get_main_keyboard(),
+                reply_markup=reply_markup,
             )
     else:
         await update.message.reply_text(
             response_text,
-            reply_markup=get_main_keyboard(),
+            reply_markup=reply_markup,
         )
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id=None,
+    coffee_hosts=None,
+):
     """
     Handles the /start command. Sends a welcome image with a caption.
     """
@@ -68,17 +91,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcomed_users = set(load_json(WELCOMED_USERS_FILE, []))
     is_first_welcome = user.id not in welcomed_users
 
-    await send_main_menu(update, context, include_welcome=is_first_welcome)
+    await send_main_menu(
+        update,
+        context,
+        include_welcome=is_first_welcome,
+        admin_id=admin_id,
+        coffee_hosts=coffee_hosts,
+    )
 
     if is_first_welcome:
         welcomed_users.add(user.id)
         save_json(WELCOMED_USERS_FILE, sorted(welcomed_users))
 
-async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id=None,
+    coffee_hosts=None,
+):
     """
     Handles the /menu command. Shows the main action buttons without the logo.
     """
-    await send_main_menu(update, context)
+    await send_main_menu(
+        update,
+        context,
+        admin_id=admin_id,
+        coffee_hosts=coffee_hosts,
+    )
 
 
 async def subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE, notification_preferences, subscribers, notification_preferences_file=NOTIFICATION_PREFERENCES_FILE):
@@ -178,6 +217,7 @@ async def button_click(
 
     # Determine if we should edit text or caption
     is_photo_msg = bool(query.message.photo)
+    main_keyboard = get_user_main_keyboard(user.id, admin_id, coffee_hosts)
 
     async def edit_subscription_message(text, reply_markup):
         """Edit a callback message while preserving photo and text support."""
@@ -231,7 +271,7 @@ async def button_click(
     elif data == "subscriptions_back":
         await edit_subscription_message(
             get_main_menu_text(),
-            get_main_keyboard(),
+            main_keyboard,
         )
 
     elif data == "monthly_calendar":
@@ -239,7 +279,7 @@ async def button_click(
         if not calendar:
             await edit_subscription_message(
                 "🗓 Todavía no hay un calendario del mes disponible.",
-                get_main_keyboard(),
+                main_keyboard,
             )
         else:
             caption = calendar.get("caption") or format_calendar_title(calendar)
@@ -257,7 +297,7 @@ async def button_click(
         if not can_view_coffee_schedule(user.id, admin_id, coffee_hosts):
             await edit_subscription_message(
                 "☕ Esta sección es solo para el administrador y anfitriones de café.",
-                get_main_keyboard(),
+                main_keyboard,
             )
         else:
             await edit_subscription_message(
@@ -276,7 +316,7 @@ async def button_click(
         if not upcoming_promos:
             await edit_subscription_message(
                 "📣 No hay flyers publicados para próximos eventos.",
-                get_main_keyboard(),
+                main_keyboard,
             )
         else:
             await query.message.delete()
@@ -300,12 +340,12 @@ async def button_click(
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
                 text=get_main_menu_text(),
-                reply_markup=get_main_keyboard(),
+                reply_markup=main_keyboard,
             )
         else:
             await query.edit_message_text(
                 text=get_main_menu_text(),
-                reply_markup=get_main_keyboard(),
+                reply_markup=main_keyboard,
             )
 
     elif data == "subscribe":
@@ -331,9 +371,9 @@ async def button_click(
             else "✅ Te suscribiste a: " + enabled_categories + "."
         )
         if is_photo_msg:
-            await query.edit_message_caption(caption=msg, reply_markup=get_main_keyboard())
+            await query.edit_message_caption(caption=msg, reply_markup=main_keyboard)
         else:
-            await query.edit_message_text(text=msg, reply_markup=get_main_keyboard())
+            await query.edit_message_text(text=msg, reply_markup=main_keyboard)
 
     elif data == "unsubscribe":
         preferences["events"] = False
@@ -352,9 +392,9 @@ async def button_click(
             "Bitcoin & Lightning GDL."
         )
         if is_photo_msg:
-            await query.edit_message_caption(caption=msg, reply_markup=get_main_keyboard())
+            await query.edit_message_caption(caption=msg, reply_markup=main_keyboard)
         else:
-            await query.edit_message_text(text=msg, reply_markup=get_main_keyboard())
+            await query.edit_message_text(text=msg, reply_markup=main_keyboard)
 
     elif data in {"meetup", "eventos", "bitdevs", "web"}:
         links = {

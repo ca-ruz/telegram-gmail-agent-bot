@@ -4,7 +4,7 @@ from functools import partial
 from dotenv import load_dotenv
 from telegram import BotCommand, BotCommandScopeChat
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-from bot.handlers.user import start, menu, subscriptions, meetup, eventos, bitdevs, web, button_click
+from bot.handlers.user import start, menu, subscriptions, meetup, eventos, bitdevs, web, coffee_schedule, button_click
 from bot.handlers.admin import (
     broadcast, draft, handle_draft_selection, handle_auto_draft, 
     handle_publish, handle_clear_pending_promo, add_group, remove_group,
@@ -176,6 +176,7 @@ def main():
         await application.bot.set_my_commands(public_commands)
 
         admin_commands = public_commands + [
+            BotCommand("cafe", "Ver turnos de café"),
             BotCommand("broadcast", "Enviar un mensaje"),
             BotCommand("status", "Ver el estado del bot"),
             BotCommand("groups", "Administrar grupos"),
@@ -227,13 +228,27 @@ def main():
         job_queue.run_repeating(manual_promo_job, interval=interval_seconds, first=30)
 
     # User Handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("menu", menu))
+    app.add_handler(CommandHandler("start", partial(
+        start,
+        admin_id=CONFIG['ADMIN_ID'],
+        coffee_hosts=STATE['coffee_hosts'],
+    )))
+    app.add_handler(CommandHandler("menu", partial(
+        menu,
+        admin_id=CONFIG['ADMIN_ID'],
+        coffee_hosts=STATE['coffee_hosts'],
+    )))
     app.add_handler(CommandHandler("suscripciones", partial(
         subscriptions,
         notification_preferences=STATE['notification_preferences'],
         subscribers=STATE['subscribers'],
         notification_preferences_file=CONFIG['NOTIFICATION_PREFERENCES_FILE'],
+    )))
+    app.add_handler(CommandHandler("cafe", partial(
+        coffee_schedule,
+        admin_id=CONFIG['ADMIN_ID'],
+        coffee_hosts=STATE['coffee_hosts'],
+        coffee_host_schedule=STATE['coffee_host_schedule'],
     )))
     app.add_handler(CommandHandler("meetup", meetup))
     app.add_handler(CommandHandler("eventos", eventos))
@@ -349,6 +364,9 @@ def main():
             notification_preferences_file=CONFIG['NOTIFICATION_PREFERENCES_FILE'],
             monthly_calendar=STATE['monthly_calendar'],
             manual_promos=STATE['manual_promos'],
+            admin_id=CONFIG['ADMIN_ID'],
+            coffee_hosts=STATE['coffee_hosts'],
+            coffee_host_schedule=STATE['coffee_host_schedule'],
         )))
 
     # Smart Admin Chat Handler (Natural Language)
