@@ -1,5 +1,7 @@
 """Persistence helpers for users registered for individual events."""
 
+from datetime import datetime, timezone
+
 from tools.local.data_manager import load_json, save_json
 
 
@@ -56,3 +58,32 @@ def unregister_user(registrations, event_id, user_id):
     else:
         registrations.pop(event_key, None)
     return True
+
+
+def cleanup_expired_event_registrations(registrations, promos, now=None):
+    """Remove registrations for manual events that have already started."""
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+
+    expired_event_ids = set()
+    for promo_id, promo in promos.items() if isinstance(promos, dict) else []:
+        if not isinstance(promo, dict) or not promo.get("event_start"):
+            continue
+        try:
+            event_time = datetime.fromisoformat(
+                str(promo["event_start"]).replace("Z", "+00:00")
+            )
+            if event_time.tzinfo is None:
+                event_time = event_time.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        if event_time <= current_time:
+            expired_event_ids.add(str(promo.get("event_id", promo_id)))
+
+    removed = 0
+    for event_id in expired_event_ids:
+        if event_id in registrations:
+            registrations.pop(event_id)
+            removed += 1
+    return removed

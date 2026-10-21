@@ -7,7 +7,11 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from tools.local.data_manager import load_json, save_json
-from core.event_registrations import get_registered_users
+from core.event_registrations import (
+    cleanup_expired_event_registrations,
+    get_registered_users,
+    save_event_registrations,
+)
 from core.notification_preferences import filter_users_by_category
 from core.reminder_timing import get_event_reminder_stage
 
@@ -379,6 +383,16 @@ async def check_manual_promo_reminders(context, config, state):
     subscribers = state.setdefault("subscribers", set())
     groups = state.setdefault("groups", set())
     event_registrations = state.get("event_registrations", {})
+    registrations_removed = cleanup_expired_event_registrations(
+        event_registrations,
+        promos,
+        now,
+    )
+    if registrations_removed and config.get("EVENT_REGISTRATIONS_FILE"):
+        save_event_registrations(
+            config["EVENT_REGISTRATIONS_FILE"],
+            event_registrations,
+        )
     notification_preferences = state.get("notification_preferences")
     reminder_rules = config.get("REMINDER_RULES", {})
     changed = False
