@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
+from core.notification_preferences import is_notification_enabled
 from tools.local.data_manager import load_json, save_json
 
 
@@ -49,6 +50,37 @@ def can_manage_payments(user_id, primary_admin_id, payment_admin_id):
         primary_admin_id,
         payment_admin_id,
     ) is not None
+
+
+def get_unpaid_member_recipients(payment_state, members, notification_preferences):
+    """Return unique Telegram IDs for active unpaid members with payment alerts enabled."""
+    records = payment_state.get("members", {}) if isinstance(payment_state, dict) else {}
+    if not isinstance(records, dict) or not isinstance(members, dict):
+        return []
+
+    recipients = []
+    seen_telegram_ids = set()
+    for member_id, member in sorted(members.items()):
+        record = records.get(member_id)
+        if not isinstance(member, dict) or not member.get("active", True):
+            continue
+        if not isinstance(record, dict) or record.get("status") == "paid":
+            continue
+
+        telegram_id = _normalize_user_id(member.get("telegram_id"))
+        if telegram_id is None or telegram_id in seen_telegram_ids:
+            continue
+        if not is_notification_enabled(
+            notification_preferences,
+            telegram_id,
+            "payments",
+        ):
+            continue
+
+        seen_telegram_ids.add(telegram_id)
+        recipients.append((member_id, telegram_id))
+
+    return recipients
 
 
 def load_members(file_path):
@@ -123,6 +155,9 @@ def synchronize_payment_state(payment_state, members, period=None):
         "public_reminders_sent": payment_state.get("public_reminders_sent", {})
         if isinstance(payment_state.get("public_reminders_sent", {}), dict)
         else {},
+        "personal_reminders_sent": payment_state.get("personal_reminders_sent", {})
+        if isinstance(payment_state.get("personal_reminders_sent", {}), dict)
+        else {},
     }
 
 
@@ -184,6 +219,22 @@ def format_payment_reminder(period, stage):
     )
 
 
+def format_personal_payment_reminder(member_name, period, stage):
+    """Build a private payment reminder for one unpaid member."""
+    month_label = format_payment_period(period)
+    greeting = f"Hola, {member_name}.\n\n"
+    if stage == "overdue_5d":
+        return (
+            f"{greeting}💳 Tu pago de membresía de {month_label} todavía aparece "
+            "como pendiente. Por favor ponte al corriente cuando puedas."
+        )
+    return (
+        f"{greeting}💳 El periodo de membresía de {month_label} comenzó hoy.\n"
+        "Por favor realiza tu pago cuando te sea posible. Si ya pagaste, puedes "
+        "ignorar este mensaje."
+    )
+
+
 def load_payment_state(file_path):
     """Load persisted monthly payment state, returning an empty state when absent."""
     payment_state = load_json(file_path, {})
@@ -201,12 +252,43 @@ def save_payment_state(file_path, payment_state):
     save_json(file_path, payment_state)
 
 
-async def check_payment_reminders(context, config, state, now=None):
-    """Send one anonymous public payment reminder when a stage is due."""
-    group_id = config.get("MEMBERS_GROUP_ID", 0)
-    if not group_id:
-        return
+async def send_personal_payment_reminders(
+    context,
+    payment_state,
+    members,
+    notification_preferences,
+    period,
+    stage,
+    recipients=None,
+):
+    """Send one private payment reminder to each eligible unpaid member."""
+    if recipients is None:
+        recipients = get_unpaid_member_recipients(
+            payment_state,
+            members,
+            notification_preferences,
+        )
+    result = {"sent": 0, "failures": 0}
+    for member_id, telegram_id in recipients:
+        member_name = str(members[member_id].get("name", ""))
+        try:
+            await context.bot.send_message(
+                chat_id=telegram_id,
+                text=format_personal_payment_reminder(member_name, period, stage),
+            )
+            result["sent"] += 1
+            result.setdefault("sent_member_ids", []).append(member_id)
+        except Exception:
+            result["failures"] += 1
+            logger.exception(
+                "Failed to send personal payment reminder to member %s.",
+                member_id,
+            )
+    return result
 
+
+async def check_payment_reminders(context, config, state, now=None):
+    """Send due public and private payment reminders with duplicate protection."""
     stage_info = get_payment_reminder_stage(
         now,
         config.get("PAYMENT_REMINDER_HOUR", 9),
@@ -216,17 +298,57 @@ async def check_payment_reminders(context, config, state, now=None):
 
     period, stage = stage_info
     payment_state = state.setdefault("payment_state", {})
-    sent_reminders = payment_state.setdefault("public_reminders_sent", {})
-    reminder_key = f"{period}:{stage}"
-    if reminder_key in sent_reminders:
-        return
+    state_changed = False
+    public_error = None
 
-    await context.bot.send_message(
-        chat_id=group_id,
-        text=format_payment_reminder(period, stage),
-    )
-    sent_reminders[reminder_key] = datetime.now(timezone.utc).isoformat()
-    save_payment_state(config["PAYMENT_STATE_FILE"], payment_state)
+    group_id = config.get("MEMBERS_GROUP_ID", 0)
+    public_reminders = payment_state.setdefault("public_reminders_sent", {})
+    public_key = f"{period}:{stage}"
+    if group_id and public_key not in public_reminders:
+        try:
+            await context.bot.send_message(
+                chat_id=group_id,
+                text=format_payment_reminder(period, stage),
+            )
+            public_reminders[public_key] = datetime.now(timezone.utc).isoformat()
+            state_changed = True
+        except Exception as error:
+            public_error = error
+            logger.exception("Failed to send public payment reminder for %s.", period)
+
+    if stage in {"first_day", "overdue_5d"}:
+        personal_reminders = payment_state.setdefault("personal_reminders_sent", {})
+        members = state.get("members", {})
+        notification_preferences = state.get("notification_preferences")
+        pending_recipients = [
+            (member_id, telegram_id)
+            for member_id, telegram_id in get_unpaid_member_recipients(
+                payment_state,
+                members,
+                notification_preferences,
+            )
+            if f"{period}:{stage}:{member_id}" not in personal_reminders
+        ]
+        if pending_recipients:
+            result = await send_personal_payment_reminders(
+                context,
+                payment_state,
+                members,
+                notification_preferences,
+                period,
+                stage,
+                recipients=pending_recipients,
+            )
+            for member_id in result.get("sent_member_ids", []):
+                personal_reminders[f"{period}:{stage}:{member_id}"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
+                state_changed = True
+
+    if state_changed:
+        save_payment_state(config["PAYMENT_STATE_FILE"], payment_state)
+    if public_error:
+        raise public_error
 
 
 def build_member(name, telegram_id):
