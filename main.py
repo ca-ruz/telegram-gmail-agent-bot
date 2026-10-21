@@ -11,7 +11,8 @@ from bot.handlers.admin import (
     list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
-    coffee_host, remind, manual_promo, handle_admin_photo, monthly_calendar,
+    coffee_host, remind, manual_promo, handle_admin_photo, monthly_calendar, payments,
+    handle_payment_status,
     manage_members,
     handle_manual_promo_send_now, handle_manual_promo_test,
     handle_manual_promo_schedule,
@@ -27,7 +28,13 @@ from core.coffee_hosts import (
 from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
 from core.notification_preferences import load_notification_preferences
-from core.membership_payments import load_members, load_payment_state
+from core.membership_payments import (
+    check_payment_reminders,
+    load_members,
+    load_payment_state,
+    save_payment_state,
+    synchronize_payment_state,
+)
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
 
@@ -99,6 +106,7 @@ CONFIG = {
     'ENABLE_CALENDAR_POLLING': parse_env_bool('ENABLE_CALENDAR_POLLING', True),
     'ENABLE_COFFEE_HOST_REMINDERS': parse_env_bool('ENABLE_COFFEE_HOST_REMINDERS', True),
     'ENABLE_MANUAL_PROMO_REMINDERS': parse_env_bool('ENABLE_MANUAL_PROMO_REMINDERS', True),
+    'ENABLE_PAYMENT_REMINDERS': parse_env_bool('ENABLE_PAYMENT_REMINDERS', True),
     'EVENT_SAME_DAY_REMINDER_HOUR': parse_env_int('EVENT_SAME_DAY_REMINDER_HOUR', 13),
     'EVENT_MORNING_REMINDER_LEAD_HOURS': parse_env_int('EVENT_MORNING_REMINDER_LEAD_HOURS', 2),
     'REMINDERS_FILE': "data/sent_reminders.json",
@@ -120,6 +128,8 @@ CONFIG = {
     'COFFEE_DEFAULT_VENUE': os.getenv("COFFEE_DEFAULT_VENUE", ""),
     'MEMBERS_FILE': os.getenv("MEMBERS_FILE", "data/members.json"),
     'PAYMENT_STATE_FILE': os.getenv("PAYMENT_STATE_FILE", "data/payment_state.json"),
+    'MEMBERS_GROUP_ID': parse_env_int('MEMBERS_GROUP_ID', 0),
+    'PAYMENT_REMINDER_HOUR': parse_env_int('PAYMENT_REMINDER_HOUR', 9),
 }
 
 # --- STATE INITIALIZATION & MIGRATION ---
@@ -130,6 +140,13 @@ if isinstance(raw_notified, list):
     logger.info("Migrating notified_promos.json from list to dictionary format...")
     notified_dict = {event_id: {"notified_thresholds": ["initial"], "flyer_created": False} for event_id in raw_notified}
     raw_notified = notified_dict
+
+members = load_members(CONFIG['MEMBERS_FILE'])
+payment_state = synchronize_payment_state(
+    load_payment_state(CONFIG['PAYMENT_STATE_FILE']),
+    members,
+)
+save_payment_state(CONFIG['PAYMENT_STATE_FILE'], payment_state)
 
 STATE = {
     'subscribers': event_subscribers,
@@ -145,8 +162,8 @@ STATE = {
     'monthly_calendar': load_monthly_calendar(CONFIG['MONTHLY_CALENDAR_FILE']),
     'coffee_hosts': load_coffee_hosts(CONFIG['COFFEE_HOSTS_FILE']),
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
-    'members': load_members(CONFIG['MEMBERS_FILE']),
-    'payment_state': load_payment_state(CONFIG['PAYMENT_STATE_FILE']),
+    'members': members,
+    'payment_state': payment_state,
 }
 
 # Add reminder rules to config
@@ -202,6 +219,7 @@ def main():
             BotCommand("manualpromo", "Publicar una promoción"),
             BotCommand("calendario", "Subir calendario mensual"),
             BotCommand("members", "Administrar miembros"),
+            BotCommand("payments", "Revisar pagos"),
         ]
         if CONFIG['ADMIN_ID']:
             await application.bot.set_my_commands(
@@ -212,6 +230,7 @@ def main():
             await application.bot.set_my_commands(
                 public_commands + [
                     BotCommand("members", "Administrar miembros"),
+                    BotCommand("payments", "Revisar pagos"),
                 ],
                 scope=BotCommandScopeChat(chat_id=CONFIG['PAYMENT_ADMIN_ID']),
             )
@@ -233,6 +252,9 @@ def main():
     async def manual_promo_job(context):
         await check_manual_promo_reminders(context, config=CONFIG, state=STATE)
 
+    async def payment_reminder_job(context):
+        await check_payment_reminders(context, config=CONFIG, state=STATE)
+
     job_queue = app.job_queue
     interval_seconds = CONFIG['CHECK_INTERVAL_MINUTES'] * 60
     if CONFIG.get('ENABLE_CALENDAR_POLLING', True):
@@ -241,6 +263,8 @@ def main():
         job_queue.run_repeating(coffee_host_job, interval=interval_seconds, first=20)
     if CONFIG.get('ENABLE_MANUAL_PROMO_REMINDERS', True):
         job_queue.run_repeating(manual_promo_job, interval=interval_seconds, first=30)
+    if CONFIG.get('ENABLE_PAYMENT_REMINDERS', True):
+        job_queue.run_repeating(payment_reminder_job, interval=interval_seconds, first=40)
 
     # User Handlers
     app.add_handler(CommandHandler("start", partial(
@@ -323,6 +347,13 @@ def main():
             state=STATE,
             config=CONFIG,
         )))
+    app.add_handler(CommandHandler("payments",
+        partial(
+            payments,
+            primary_admin_id=CONFIG['ADMIN_ID'],
+            payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
+            state=STATE,
+        )))
     
     # Callback Handlers
     app.add_handler(CallbackQueryHandler(
@@ -367,6 +398,15 @@ def main():
             config=CONFIG,
         ),
         pattern="^manual_cancel_"))
+    app.add_handler(CallbackQueryHandler(
+        partial(
+            handle_payment_status,
+            primary_admin_id=CONFIG['ADMIN_ID'],
+            payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        ),
+        pattern="^payment_toggle_"))
     app.add_handler(CallbackQueryHandler(
         partial(handle_add_confirm, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
         pattern="^(confirm_add|cancel_add)$"))

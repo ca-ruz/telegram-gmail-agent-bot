@@ -43,6 +43,7 @@ from core.membership_payments import (
     can_manage_payments,
     next_member_id,
     save_members,
+    save_payment_state,
 )
 from core.promoter import send_manual_event_reminder, send_manual_event_reminder_test
 
@@ -250,9 +251,137 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "/coffeehost - View or manage Saturday coffee hosts\n"
         "/coffeehost add | Name | Telegram ID\n"
         "/coffeehost remove | host-id\n"
+        "/payments - Revisar el estado de pagos de membresía\n"
         "/broadcast - Send a manual message to all subscribers\n\n"
         "💡 <i>Tip: Puedes responder a un borrador o a un evento seleccionado para editarlo con AI.</i>",
         parse_mode=ParseMode.HTML
+    )
+
+
+def format_payment_review(payment_state, members):
+    """Format the current payment period for an authorized administrator."""
+    period = escape(str(payment_state.get("period", "Sin periodo")))
+    records = payment_state.get("members", {})
+    if not isinstance(records, dict):
+        records = {}
+
+    lines = [f"<b>Pagos de membresía: {period}</b>"]
+    paid_lines = []
+    unpaid_lines = []
+    for member_id, record in sorted(records.items()):
+        member = members.get(member_id, {})
+        name = escape(str(member.get("name", member_id)))
+        line = f"{name} (<code>{escape(str(member_id))}</code>)"
+        if isinstance(record, dict) and record.get("status") == "paid":
+            paid_lines.append(line)
+        else:
+            unpaid_lines.append(line)
+
+    lines.append(f"\n<b>Pagados ({len(paid_lines)})</b>")
+    lines.extend(f"\n✅ {line}" for line in paid_lines or ["Ninguno"])
+    lines.append(f"\n\n<b>Pendientes ({len(unpaid_lines)})</b>")
+    lines.extend(f"\n⏳ {line}" for line in unpaid_lines or ["Ninguno"])
+    return "".join(lines)
+
+
+def payment_review_keyboard(payment_state, members):
+    """Build status-toggle buttons for the current payment records."""
+    records = payment_state.get("members", {})
+    if not isinstance(records, dict):
+        return None
+
+    buttons = []
+    for member_id, record in sorted(records.items()):
+        member = members.get(member_id, {})
+        name = str(member.get("name", member_id))
+        is_paid = isinstance(record, dict) and record.get("status") == "paid"
+        label = f"↩ {name}: pendiente" if is_paid else f"✅ {name}: pagado"
+        buttons.append([
+            InlineKeyboardButton(
+                label,
+                callback_data=f"payment_toggle_{member_id}",
+            )
+        ])
+    return InlineKeyboardMarkup(buttons) if buttons else None
+
+
+async def payments(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    primary_admin_id,
+    payment_admin_id,
+    state,
+):
+    """Show the current membership payment state to authorized administrators."""
+    if not can_manage_payments(
+        update.effective_user.id,
+        primary_admin_id,
+        payment_admin_id,
+    ):
+        await update.message.reply_text(
+            "❌ No tienes permisos para revisar pagos de membresía."
+        )
+        return
+
+    await update.message.reply_text(
+        format_payment_review(
+            state.get("payment_state", {}),
+            state.get("members", {}),
+        ),
+        parse_mode=ParseMode.HTML,
+        reply_markup=payment_review_keyboard(
+            state.get("payment_state", {}),
+            state.get("members", {}),
+        ),
+    )
+
+
+async def handle_payment_status(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    primary_admin_id,
+    payment_admin_id,
+    state,
+    config,
+):
+    """Toggle a member's paid status from the administrator review."""
+    query = update.callback_query
+    if not can_manage_payments(
+        query.from_user.id,
+        primary_admin_id,
+        payment_admin_id,
+    ):
+        await query.answer("No tienes permisos para modificar pagos.", show_alert=True)
+        return
+
+    member_id = query.data.removeprefix("payment_toggle_")
+    payment_state = state.setdefault("payment_state", {})
+    records = payment_state.setdefault("members", {})
+    record = records.get(member_id)
+    if not isinstance(record, dict):
+        await query.answer("Ese miembro no está en el periodo actual.", show_alert=True)
+        return
+
+    member = state.setdefault("members", {}).get(member_id, {})
+    name = str(member.get("name", member_id))
+    if record.get("status") == "paid":
+        record["status"] = "unpaid"
+        record["paid_at"] = None
+        message = f"⏳ {escape(name)} quedó pendiente."
+    else:
+        record["status"] = "paid"
+        record["paid_at"] = datetime.now(timezone.utc).isoformat()
+        message = f"✅ {escape(name)} quedó marcado como pagado."
+
+    save_payment_state(config["PAYMENT_STATE_FILE"], payment_state)
+    await query.answer(message)
+    await query.edit_message_text(
+        format_payment_review(payment_state, state.get("members", {})),
+        parse_mode=ParseMode.HTML,
+        reply_markup=payment_review_keyboard(
+            payment_state,
+            state.get("members", {}),
+        ),
     )
 
 

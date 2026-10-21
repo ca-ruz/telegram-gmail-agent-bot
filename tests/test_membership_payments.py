@@ -1,4 +1,9 @@
+import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 
 from core.membership_payments import (
     PAYMENT_ADMIN_ROLE,
@@ -6,11 +11,14 @@ from core.membership_payments import (
     build_member,
     build_monthly_payment_state,
     can_manage_payments,
+    check_payment_reminders,
     current_billing_period,
     get_payment_admin_role,
+    get_payment_reminder_stage,
     load_members,
     load_payment_state,
     next_member_id,
+    PAYMENT_TIMEZONE,
     save_members,
     save_payment_state,
 )
@@ -77,3 +85,65 @@ def test_payment_state_round_trip_and_invalid_data_fallback(tmp_path):
 
     file_path.write_text("[]", encoding="utf-8")
     assert load_payment_state(str(file_path)) == {}
+
+
+def test_payment_reminder_stages_follow_the_monthly_schedule():
+    """Public payment reminders trigger at each planned local date."""
+    assert get_payment_reminder_stage(
+        datetime(2026, 10, 25, 9, 0, tzinfo=PAYMENT_TIMEZONE),
+    ) == ("2026-11", "7d")
+    assert get_payment_reminder_stage(
+        datetime(2026, 10, 30, 9, 0, tzinfo=PAYMENT_TIMEZONE),
+    ) == ("2026-11", "2d")
+    assert get_payment_reminder_stage(
+        datetime(2026, 10, 31, 9, 0, tzinfo=PAYMENT_TIMEZONE),
+    ) == ("2026-11", "1d")
+    assert get_payment_reminder_stage(
+        datetime(2026, 11, 1, 9, 0, tzinfo=PAYMENT_TIMEZONE),
+    ) == ("2026-11", "first_day")
+    assert get_payment_reminder_stage(
+        datetime(2026, 11, 6, 9, 0, tzinfo=PAYMENT_TIMEZONE),
+    ) == ("2026-11", "overdue_5d")
+
+
+def test_payment_reminder_sends_once_and_persists_duplicate_key(tmp_path):
+    """A due public reminder is delivered once across repeated checks."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    state = {"payment_state": {"period": "2026-10", "members": {}}}
+    config = {
+        "MEMBERS_GROUP_ID": -100123,
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+    now = datetime(2026, 10, 25, 10, 0, tzinfo=PAYMENT_TIMEZONE)
+
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+
+    bot.send_message.assert_awaited_once()
+    assert bot.send_message.await_args.kwargs["chat_id"] == -100123
+    assert "noviembre de 2026" in bot.send_message.await_args.kwargs["text"]
+    assert "2026-11:7d" in state["payment_state"]["public_reminders_sent"]
+
+
+def test_failed_payment_reminder_is_retried(tmp_path):
+    """Failed delivery is not marked sent and can succeed on a later check."""
+    bot = SimpleNamespace(
+        send_message=AsyncMock(side_effect=[RuntimeError("network"), None])
+    )
+    context = SimpleNamespace(bot=bot)
+    state = {"payment_state": {"period": "2026-10", "members": {}}}
+    config = {
+        "MEMBERS_GROUP_ID": -100123,
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+    now = datetime(2026, 10, 25, 10, 0, tzinfo=PAYMENT_TIMEZONE)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(check_payment_reminders(context, config, state, now=now))
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+
+    assert bot.send_message.await_count == 2
+    assert "2026-11:7d" in state["payment_state"]["public_reminders_sent"]
