@@ -79,3 +79,10 @@ def get_calendar_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⬅️ Volver al menú", callback_data="main_menu")],
     ])
+
+
+def get_coffee_schedule_keyboard():
+    """Build the navigation keyboard shown with a private coffee schedule."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Volver al menú", callback_data="main_menu")],
+    ])

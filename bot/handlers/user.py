@@ -1,5 +1,6 @@
 import os
 import logging
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 from bot.interface import (
@@ -9,6 +10,7 @@ from bot.interface import (
     get_calendar_keyboard,
     get_subscription_keyboard,
     get_subscription_menu_text,
+    get_coffee_schedule_keyboard,
 )
 from core.notification_preferences import (
     NOTIFICATION_CATEGORIES,
@@ -16,6 +18,11 @@ from core.notification_preferences import (
     save_notification_preferences,
 )
 from core.monthly_calendar import format_calendar_title
+from core.coffee_hosts import (
+    COFFEE_TIMEZONE,
+    can_view_coffee_schedule,
+    format_private_coffee_schedule,
+)
 from core.manual_promos import get_upcoming_published_promos, format_manual_promo_caption
 from tools.local.data_manager import load_json, save_json
 
@@ -88,6 +95,34 @@ async def subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE, noti
         reply_markup=get_subscription_keyboard(preferences),
     )
 
+
+async def coffee_schedule(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    coffee_hosts,
+    coffee_host_schedule,
+):
+    """Show the private coffee schedule to the admin or an assigned host."""
+    user_id = update.effective_user.id
+    if not can_view_coffee_schedule(user_id, admin_id, coffee_hosts):
+        await update.message.reply_text(
+            "☕ Esta sección es solo para el administrador y anfitriones de café."
+        )
+        return
+
+    await update.message.reply_text(
+        format_private_coffee_schedule(
+            coffee_host_schedule,
+            coffee_hosts,
+            user_id,
+            admin_id,
+            datetime.now(COFFEE_TIMEZONE).date(),
+        ),
+        parse_mode="HTML",
+        reply_markup=get_coffee_schedule_keyboard(),
+    )
+
 async def meetup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /meetup command."""
     await update.message.reply_text(
@@ -120,6 +155,9 @@ async def button_click(
     notification_preferences_file=None,
     monthly_calendar=None,
     manual_promos=None,
+    admin_id=None,
+    coffee_hosts=None,
+    coffee_host_schedule=None,
 ):
     """
     Handles callback queries from inline keyboard buttons.
@@ -211,6 +249,26 @@ async def button_click(
                 photo=calendar["file_id"],
                 caption=caption,
                 reply_markup=get_calendar_keyboard(),
+            )
+
+    elif data == "coffee_schedule":
+        coffee_hosts = coffee_hosts or {}
+        coffee_host_schedule = coffee_host_schedule or {}
+        if not can_view_coffee_schedule(user.id, admin_id, coffee_hosts):
+            await edit_subscription_message(
+                "☕ Esta sección es solo para el administrador y anfitriones de café.",
+                get_main_keyboard(),
+            )
+        else:
+            await edit_subscription_message(
+                format_private_coffee_schedule(
+                    coffee_host_schedule,
+                    coffee_hosts,
+                    user.id,
+                    admin_id,
+                    datetime.now(COFFEE_TIMEZONE).date(),
+                ),
+                get_coffee_schedule_keyboard(),
             )
 
     elif data == "upcoming_flyers":
