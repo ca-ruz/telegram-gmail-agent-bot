@@ -12,6 +12,7 @@ from bot.handlers.admin import (
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
     coffee_host, remind, manual_promo, handle_admin_photo, monthly_calendar,
+    lss_member,
     handle_manual_promo_send_now, handle_manual_promo_test,
     handle_manual_promo_schedule,
     handle_manual_promo_cancel,
@@ -26,6 +27,7 @@ from core.coffee_hosts import (
 from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
 from core.notification_preferences import load_notification_preferences
+from core.lss_payments import load_lss_members
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
 
@@ -116,6 +118,7 @@ CONFIG = {
     ),
     'COFFEE_DEFAULT_START_TIME': os.getenv("COFFEE_DEFAULT_START_TIME", "11:00"),
     'COFFEE_DEFAULT_VENUE': os.getenv("COFFEE_DEFAULT_VENUE", ""),
+    'LSS_MEMBERS_FILE': os.getenv("LSS_MEMBERS_FILE", "data/lss_members.json"),
 }
 
 # --- STATE INITIALIZATION & MIGRATION ---
@@ -141,6 +144,7 @@ STATE = {
     'monthly_calendar': load_monthly_calendar(CONFIG['MONTHLY_CALENDAR_FILE']),
     'coffee_hosts': load_coffee_hosts(CONFIG['COFFEE_HOSTS_FILE']),
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
+    'lss_members': load_lss_members(CONFIG['LSS_MEMBERS_FILE']),
 }
 
 # Add reminder rules to config
@@ -195,11 +199,19 @@ def main():
             BotCommand("remind", "Enviar recordatorios"),
             BotCommand("manualpromo", "Publicar una promoción"),
             BotCommand("calendario", "Subir calendario mensual"),
+            BotCommand("lssmember", "Administrar miembros LSS"),
         ]
         if CONFIG['ADMIN_ID']:
             await application.bot.set_my_commands(
                 admin_commands,
                 scope=BotCommandScopeChat(chat_id=CONFIG['ADMIN_ID']),
+            )
+        if CONFIG['PAYMENT_ADMIN_ID'] and CONFIG['PAYMENT_ADMIN_ID'] != CONFIG['ADMIN_ID']:
+            await application.bot.set_my_commands(
+                public_commands + [
+                    BotCommand("lssmember", "Administrar miembros LSS"),
+                ],
+                scope=BotCommandScopeChat(chat_id=CONFIG['PAYMENT_ADMIN_ID']),
             )
 
     app = (
@@ -301,6 +313,14 @@ def main():
         partial(manual_promo, admin_id=CONFIG['ADMIN_ID'])))
     app.add_handler(CommandHandler("calendario",
         partial(monthly_calendar, admin_id=CONFIG['ADMIN_ID'])))
+    app.add_handler(CommandHandler("lssmember",
+        partial(
+            lss_member,
+            primary_admin_id=CONFIG['ADMIN_ID'],
+            payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        )))
     
     # Callback Handlers
     app.add_handler(CallbackQueryHandler(

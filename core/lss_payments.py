@@ -1,8 +1,14 @@
 """Authorization helpers for the LSS membership payment workflow."""
 
+import logging
+import re
+
+from tools.local.data_manager import load_json, save_json
+
 
 PRIMARY_ADMIN_ROLE = "primary_admin"
 PAYMENT_ADMIN_ROLE = "payment_admin"
+logger = logging.getLogger(__name__)
 
 
 def _normalize_user_id(user_id):
@@ -35,3 +41,40 @@ def can_manage_payments(user_id, primary_admin_id, payment_admin_id):
         primary_admin_id,
         payment_admin_id,
     ) is not None
+
+
+def load_lss_members(file_path):
+    """Load the persistent LSS member roster from a JSON mapping."""
+    members = load_json(file_path, {})
+    if isinstance(members, dict):
+        return members
+
+    logger.warning("LSS member roster %s is not a JSON object; using an empty roster.", file_path)
+    return {}
+
+
+def save_lss_members(file_path, members):
+    """Persist the LSS member roster atomically."""
+    save_json(file_path, members)
+
+
+def build_lss_member(name, telegram_id):
+    """Build a normalized active LSS member record."""
+    return {
+        "name": name,
+        "telegram_id": telegram_id,
+        "active": True,
+    }
+
+
+def next_lss_member_id(members):
+    """Return the next available sequential LSS member identifier."""
+    used_ids = {
+        int(match.group(1))
+        for member_id in members
+        if (match := re.fullmatch(r"member-(\d+)", str(member_id)))
+    }
+    next_number = max(used_ids, default=0) + 1
+    while f"member-{next_number:03d}" in members:
+        next_number += 1
+    return f"member-{next_number:03d}"

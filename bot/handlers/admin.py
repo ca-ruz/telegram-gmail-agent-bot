@@ -38,6 +38,12 @@ from core.notification_preferences import (
     filter_users_by_category,
     is_notification_enabled,
 )
+from core.lss_payments import (
+    build_lss_member,
+    can_manage_payments,
+    next_lss_member_id,
+    save_lss_members,
+)
 from core.promoter import send_manual_event_reminder, send_manual_event_reminder_test
 
 # Initialize logger for this module
@@ -247,6 +253,146 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "/broadcast - Send a manual message to all subscribers\n\n"
         "💡 <i>Tip: Puedes responder a un borrador o a un evento seleccionado para editarlo con AI.</i>",
         parse_mode=ParseMode.HTML
+    )
+
+
+def format_lss_members(members):
+    """Format active and inactive LSS members for an authorized administrator."""
+    lines = ["<b>Miembros de LSS</b>"]
+    for status, active in (("Activos", True), ("Inactivos", False)):
+        lines.append(f"\n<b>{status}</b>")
+        matching_members = [
+            (member_id, member)
+            for member_id, member in members.items()
+            if isinstance(member, dict) and member.get("active", True) is active
+        ]
+        if not matching_members:
+            lines.append("\nNinguno")
+            continue
+        for member_id, member in sorted(matching_members):
+            name = escape(str(member.get("name", "Sin nombre")))
+            telegram_id = escape(str(member.get("telegram_id", "sin ID")))
+            lines.append(f"\n<code>{escape(member_id)}</code> - {name} ({telegram_id})")
+    return "".join(lines)
+
+
+async def lss_member(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    primary_admin_id,
+    payment_admin_id,
+    state,
+    config,
+):
+    """Manage the persistent LSS member roster for authorized administrators."""
+    if not can_manage_payments(
+        update.effective_user.id,
+        primary_admin_id,
+        payment_admin_id,
+    ):
+        await update.message.reply_text(
+            "❌ No tienes permisos para administrar miembros de LSS."
+        )
+        return
+
+    members = state.setdefault("lss_members", {})
+    raw_args = update.message.text.partition(" ")[2].strip()
+    parts = [part.strip() for part in raw_args.split("|")] if raw_args else []
+    action = parts[0].lower() if parts else "list"
+
+    if action == "list":
+        await update.message.reply_text(format_lss_members(members), parse_mode=ParseMode.HTML)
+        return
+
+    if action == "add":
+        if len(parts) != 3 or not parts[1] or not parts[2]:
+            await update.message.reply_text(
+                "Uso: /lssmember add | Nombre | Telegram ID"
+            )
+            return
+        name = parts[1]
+        try:
+            telegram_id = int(parts[2])
+        except ValueError:
+            await update.message.reply_text("❌ El Telegram ID debe ser numérico.")
+            return
+        if telegram_id <= 0:
+            await update.message.reply_text("❌ El Telegram ID debe ser positivo.")
+            return
+        if any(
+            isinstance(member, dict) and member.get("telegram_id") == telegram_id
+            for member in members.values()
+        ):
+            await update.message.reply_text("❌ Ese Telegram ID ya está registrado.")
+            return
+
+        member_id = next_lss_member_id(members)
+        members[member_id] = build_lss_member(name, telegram_id)
+        save_lss_members(config["LSS_MEMBERS_FILE"], members)
+        await update.message.reply_text(
+            f"✅ Miembro agregado: <code>{escape(member_id)}</code> - {escape(name)}",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if action == "update":
+        if len(parts) != 4 or not parts[1] or not parts[2] or not parts[3]:
+            await update.message.reply_text(
+                "Uso: /lssmember update | member-id | Nombre | Telegram ID"
+            )
+            return
+        member_id, name = parts[1], parts[2]
+        if member_id not in members or not isinstance(members[member_id], dict):
+            await update.message.reply_text("❌ Ese miembro no existe.")
+            return
+        try:
+            telegram_id = int(parts[3])
+        except ValueError:
+            await update.message.reply_text("❌ El Telegram ID debe ser numérico.")
+            return
+        if telegram_id <= 0:
+            await update.message.reply_text("❌ El Telegram ID debe ser positivo.")
+            return
+        if any(
+            other_id != member_id
+            and isinstance(member, dict)
+            and member.get("telegram_id") == telegram_id
+            for other_id, member in members.items()
+        ):
+            await update.message.reply_text("❌ Ese Telegram ID ya está registrado.")
+            return
+
+        members[member_id].update({"name": name, "telegram_id": telegram_id})
+        save_lss_members(config["LSS_MEMBERS_FILE"], members)
+        await update.message.reply_text(
+            f"✅ Miembro actualizado: <code>{escape(member_id)}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if action == "deactivate":
+        if len(parts) != 2 or not parts[1]:
+            await update.message.reply_text("Uso: /lssmember deactivate | member-id")
+            return
+        member_id = parts[1]
+        member = members.get(member_id)
+        if not isinstance(member, dict):
+            await update.message.reply_text("❌ Ese miembro no existe.")
+            return
+        member["active"] = False
+        save_lss_members(config["LSS_MEMBERS_FILE"], members)
+        await update.message.reply_text(
+            f"✅ Miembro desactivado: <code>{escape(member_id)}</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    await update.message.reply_text(
+        "Uso:\n"
+        "/lssmember list\n"
+        "/lssmember add | Nombre | Telegram ID\n"
+        "/lssmember update | member-id | Nombre | Telegram ID\n"
+        "/lssmember deactivate | member-id"
     )
 
 
