@@ -12,6 +12,7 @@ from bot.handlers.admin import (
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
     coffee_host, remind, manual_promo, handle_admin_photo, monthly_calendar,
+    manage_members,
     handle_manual_promo_send_now, handle_manual_promo_test,
     handle_manual_promo_schedule,
     handle_manual_promo_cancel,
@@ -26,6 +27,7 @@ from core.coffee_hosts import (
 from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
 from core.notification_preferences import load_notification_preferences
+from core.membership_payments import load_members, load_payment_state
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
 
@@ -85,6 +87,7 @@ def parse_env_int(name, default):
 CONFIG = {
     'BOT_TOKEN': os.getenv("TELEGRAM_BOT_TOKEN"),
     'ADMIN_ID': int(os.getenv("TELEGRAM_ADMIN_ID", "0")),
+    'PAYMENT_ADMIN_ID': parse_env_int('PAYMENT_ADMIN_ID', 0),
     'OPENAI_API_KEY': os.getenv("OPENAI_API_KEY"),
     'OPENAI_IMAGE_MODEL': os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1-mini"),
     'OPENAI_IMAGE_QUALITY': os.getenv("OPENAI_IMAGE_QUALITY", "medium"),
@@ -115,6 +118,8 @@ CONFIG = {
     ),
     'COFFEE_DEFAULT_START_TIME': os.getenv("COFFEE_DEFAULT_START_TIME", "11:00"),
     'COFFEE_DEFAULT_VENUE': os.getenv("COFFEE_DEFAULT_VENUE", ""),
+    'MEMBERS_FILE': os.getenv("MEMBERS_FILE", "data/members.json"),
+    'PAYMENT_STATE_FILE': os.getenv("PAYMENT_STATE_FILE", "data/payment_state.json"),
 }
 
 # --- STATE INITIALIZATION & MIGRATION ---
@@ -140,6 +145,8 @@ STATE = {
     'monthly_calendar': load_monthly_calendar(CONFIG['MONTHLY_CALENDAR_FILE']),
     'coffee_hosts': load_coffee_hosts(CONFIG['COFFEE_HOSTS_FILE']),
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
+    'members': load_members(CONFIG['MEMBERS_FILE']),
+    'payment_state': load_payment_state(CONFIG['PAYMENT_STATE_FILE']),
 }
 
 # Add reminder rules to config
@@ -194,11 +201,19 @@ def main():
             BotCommand("remind", "Enviar recordatorios"),
             BotCommand("manualpromo", "Publicar una promoción"),
             BotCommand("calendario", "Subir calendario mensual"),
+            BotCommand("members", "Administrar miembros"),
         ]
         if CONFIG['ADMIN_ID']:
             await application.bot.set_my_commands(
                 admin_commands,
                 scope=BotCommandScopeChat(chat_id=CONFIG['ADMIN_ID']),
+            )
+        if CONFIG['PAYMENT_ADMIN_ID'] and CONFIG['PAYMENT_ADMIN_ID'] != CONFIG['ADMIN_ID']:
+            await application.bot.set_my_commands(
+                public_commands + [
+                    BotCommand("members", "Administrar miembros"),
+                ],
+                scope=BotCommandScopeChat(chat_id=CONFIG['PAYMENT_ADMIN_ID']),
             )
 
     app = (
@@ -300,6 +315,14 @@ def main():
         partial(manual_promo, admin_id=CONFIG['ADMIN_ID'])))
     app.add_handler(CommandHandler("calendario",
         partial(monthly_calendar, admin_id=CONFIG['ADMIN_ID'])))
+    app.add_handler(CommandHandler("members",
+        partial(
+            manage_members,
+            primary_admin_id=CONFIG['ADMIN_ID'],
+            payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        )))
     
     # Callback Handlers
     app.add_handler(CallbackQueryHandler(

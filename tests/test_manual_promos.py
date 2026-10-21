@@ -83,7 +83,7 @@ def test_manual_promo_staging_and_confirmation(tmp_path):
     state = {"manual_promos": {}}
     context = SimpleNamespace(user_data={})
     command_message = SimpleNamespace(
-        text="/manualpromo 2026-12-01 11:00 | Bitcoin Meetup | LSS | Join us & learn.",
+        text="/manualpromo 2026-12-01 11:00 | Bitcoin Meetup | Community Space | Join us & learn.",
         reply_text=AsyncMock(),
     )
     command_update = SimpleNamespace(
@@ -114,12 +114,12 @@ def test_manual_promo_staging_and_confirmation(tmp_path):
     promo_id = next(iter(state["manual_promos"]))
     assert state["manual_promos"][promo_id]["status"] == "pending"
     assert state["manual_promos"][promo_id]["image_file_id"] == "photo-id"
-    assert state["manual_promos"][promo_id]["location"] == "LSS"
+    assert state["manual_promos"][promo_id]["location"] == "Community Space"
     assert state["manual_promos"][promo_id]["text"] == "Join us & learn."
     preview_caption = photo_message.reply_photo.await_args.kwargs["caption"]
     assert "📅 Martes 1 de diciembre" in preview_caption
     assert "🕕 11 AM" in preview_caption
-    assert "📍 LSS" in preview_caption
+    assert "📍 Community Space" in preview_caption
     assert "Join us &amp; learn." in preview_caption
     assert load_json(config["MANUAL_PROMOS_FILE"], {})[promo_id]["status"] == "pending"
 
@@ -148,13 +148,13 @@ def test_manual_promo_preview_uses_spanish_date_and_time():
     preview = format_manual_promo_preview({
         "summary": "Forks Meetup",
         "event_start": "2026-10-20T18:00:00-06:00",
-        "location": "LSS",
+        "location": "Community Space",
         "text": "Publication text",
     })
 
     assert "📅 Martes 20 de octubre" in preview
     assert "🕕 6 PM" in preview
-    assert "📍 LSS" in preview
+    assert "📍 Community Space" in preview
     assert "Publication text" in preview
 
 
@@ -162,39 +162,39 @@ def test_manual_promo_caption_appends_missing_event_details():
     """Final captions append localized date, time, and location details."""
     caption = manual_promos.format_manual_promo_caption({
         "event_start": "2026-10-20T18:00:00-06:00",
-        "location": "LSS",
+        "location": "Community Space",
         "text": "¿Qué pasa cuando Bitcoin toma caminos diferentes?⚡",
     })
 
     assert "¿Qué pasa cuando Bitcoin toma caminos diferentes?⚡" in caption
     assert "📅 Martes 20 de octubre" in caption
     assert "🕕 6 PM" in caption
-    assert "📍 LSS" in caption
+    assert "📍 Community Space" in caption
 
 
 def test_manual_promo_caption_does_not_duplicate_existing_details():
     """Existing matching metadata is not appended a second time."""
     caption = manual_promos.format_manual_promo_caption({
         "event_start": "2026-10-20T18:00:00-06:00",
-        "location": "LSS",
+        "location": "Community Space",
         "text": (
             "Publication text\n\n"
             "📅 Martes 20 de octubre\n"
             "🕕 6 PM\n"
-            "📍 LSS"
+            "📍 Community Space"
         ),
     })
 
     assert caption.count("📅 Martes 20 de octubre") == 1
     assert caption.count("🕕 6 PM") == 1
-    assert caption.count("📍 LSS") == 1
+    assert caption.count("📍 Community Space") == 1
 
 
 def test_manual_promo_caption_places_links_after_event_details():
     """A publication link appears after the formatted event details."""
     caption = manual_promos.format_manual_promo_caption({
         "event_start": "2026-10-20T18:00:00-06:00",
-        "location": "LSS",
+        "location": "Community Space",
         "text": "Join us!\nhttps://example.com/event",
     })
 
@@ -202,14 +202,14 @@ def test_manual_promo_caption_places_links_after_event_details():
         "https://example.com/event"
     )
     assert caption.index("🕕 6 PM") < caption.index("https://example.com/event")
-    assert caption.index("📍 LSS") < caption.index("https://example.com/event")
+    assert caption.index("📍 Community Space") < caption.index("https://example.com/event")
 
 
 def test_manual_promo_caption_preserves_multiple_links_at_the_end():
     """Multiple unique publication links remain at the bottom in order."""
     caption = manual_promos.format_manual_promo_caption({
         "event_start": "2026-10-20T18:00:00-06:00",
-        "location": "LSS",
+        "location": "Community Space",
         "text": (
             "Join us! https://example.com/event "
             "More information: https://example.com/info "
@@ -221,7 +221,7 @@ def test_manual_promo_caption_preserves_multiple_links_at_the_end():
     assert caption.index("https://example.com/event") < caption.index(
         "https://example.com/info"
     )
-    assert caption.index("📍 LSS") < caption.index("https://example.com/event")
+    assert caption.index("📍 Community Space") < caption.index("https://example.com/event")
 
 
 def test_manual_promo_caption_without_location_or_links_remains_clean():
