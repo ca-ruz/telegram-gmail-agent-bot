@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
+from core.notification_preferences import is_notification_enabled
 from tools.local.data_manager import load_json, save_json
 
 
@@ -49,6 +50,37 @@ def can_manage_payments(user_id, primary_admin_id, payment_admin_id):
         primary_admin_id,
         payment_admin_id,
     ) is not None
+
+
+def get_unpaid_member_recipients(payment_state, members, notification_preferences):
+    """Return unique Telegram IDs for active unpaid members with payment alerts enabled."""
+    records = payment_state.get("members", {}) if isinstance(payment_state, dict) else {}
+    if not isinstance(records, dict) or not isinstance(members, dict):
+        return []
+
+    recipients = []
+    seen_telegram_ids = set()
+    for member_id, member in sorted(members.items()):
+        record = records.get(member_id)
+        if not isinstance(member, dict) or not member.get("active", True):
+            continue
+        if not isinstance(record, dict) or record.get("status") == "paid":
+            continue
+
+        telegram_id = _normalize_user_id(member.get("telegram_id"))
+        if telegram_id is None or telegram_id in seen_telegram_ids:
+            continue
+        if not is_notification_enabled(
+            notification_preferences,
+            telegram_id,
+            "payments",
+        ):
+            continue
+
+        seen_telegram_ids.add(telegram_id)
+        recipients.append((member_id, telegram_id))
+
+    return recipients
 
 
 def load_members(file_path):
