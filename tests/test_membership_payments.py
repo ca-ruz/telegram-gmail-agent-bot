@@ -15,12 +15,14 @@ from core.membership_payments import (
     current_billing_period,
     get_payment_admin_role,
     get_payment_reminder_stage,
+    get_unpaid_member_recipients,
     load_members,
     load_payment_state,
     next_member_id,
     PAYMENT_TIMEZONE,
     save_members,
     save_payment_state,
+    send_personal_payment_reminders,
 )
 
 
@@ -147,3 +149,114 @@ def test_failed_payment_reminder_is_retried(tmp_path):
 
     assert bot.send_message.await_count == 2
     assert "2026-11:7d" in state["payment_state"]["public_reminders_sent"]
+
+
+def test_unpaid_recipients_filter_status_activity_preferences_and_duplicates():
+    """Personal recipients exclude paid, inactive, opted-out, and duplicate users."""
+    members = {
+        "member-001": build_member("Ada", 101),
+        "member-002": build_member("Lin", 202),
+        "member-003": {**build_member("Sam", 303), "active": False},
+        "member-004": build_member("Max", 101),
+    }
+    payment_state = {
+        "members": {
+            "member-001": {"status": "unpaid"},
+            "member-002": {"status": "paid"},
+            "member-003": {"status": "unpaid"},
+            "member-004": {"status": "unpaid"},
+        }
+    }
+    preferences = {"101": {"payments": True}, "202": {"payments": False}}
+
+    assert get_unpaid_member_recipients(payment_state, members, preferences) == [
+        ("member-001", 101),
+    ]
+
+
+def test_personal_payment_reminders_send_private_messages():
+    """Personal reminders are delivered to eligible members as private messages."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    members = {"member-001": build_member("Ada", 101)}
+    payment_state = {
+        "members": {"member-001": {"status": "unpaid"}},
+    }
+
+    result = asyncio.run(
+        send_personal_payment_reminders(
+            context,
+            payment_state,
+            members,
+            {"101": {"payments": True}},
+            "2026-11",
+            "first_day",
+        )
+    )
+
+    assert result == {"sent": 1, "failures": 0, "sent_member_ids": ["member-001"]}
+    assert bot.send_message.await_args.kwargs["chat_id"] == 101
+    assert "Ada" in bot.send_message.await_args.kwargs["text"]
+    assert "noviembre de 2026" in bot.send_message.await_args.kwargs["text"]
+
+
+def test_personal_reminders_are_deduplicated_and_paid_members_are_skipped(tmp_path):
+    """Successful personal reminders are not repeated and paid members are skipped."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    state = {
+        "members": {
+            "member-001": build_member("Ada", 101),
+            "member-002": build_member("Lin", 202),
+        },
+        "notification_preferences": {
+            "101": {"payments": True},
+            "202": {"payments": True},
+        },
+        "payment_state": {
+            "period": "2026-11",
+            "members": {
+                "member-001": {"status": "unpaid"},
+                "member-002": {"status": "paid"},
+            },
+        },
+    }
+    config = {
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+    now = datetime(2026, 11, 1, 10, 0, tzinfo=PAYMENT_TIMEZONE)
+
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+
+    bot.send_message.assert_awaited_once()
+    assert bot.send_message.await_args.kwargs["chat_id"] == 101
+    assert "2026-11:first_day:member-001" in state["payment_state"]["personal_reminders_sent"]
+
+
+def test_failed_personal_reminder_is_retried(tmp_path):
+    """Failed personal delivery remains eligible for a later retry."""
+    bot = SimpleNamespace(
+        send_message=AsyncMock(side_effect=[RuntimeError("network"), None])
+    )
+    context = SimpleNamespace(bot=bot)
+    state = {
+        "members": {"member-001": build_member("Ada", 101)},
+        "notification_preferences": {"101": {"payments": True}},
+        "payment_state": {
+            "period": "2026-11",
+            "members": {"member-001": {"status": "unpaid"}},
+        },
+    }
+    config = {
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=PAYMENT_TIMEZONE)
+
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+
+    assert bot.send_message.await_count == 2
+    assert "2026-11:overdue_5d:member-001" in state["payment_state"]["personal_reminders_sent"]
