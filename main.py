@@ -27,7 +27,7 @@ from core.coffee_hosts import (
 )
 from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
-from core.coworking import load_coworking_state
+from core.coworking import check_coworking_notifications, load_coworking_state
 from core.notification_preferences import load_notification_preferences
 from core.membership_payments import (
     check_payment_reminders,
@@ -268,6 +268,9 @@ def main():
     async def payment_reminder_job(context):
         await check_payment_reminders(context, config=CONFIG, state=STATE)
 
+    async def coworking_job(context):
+        await check_coworking_notifications(context, config=CONFIG, state=STATE)
+
     job_queue = app.job_queue
     interval_seconds = CONFIG['CHECK_INTERVAL_MINUTES'] * 60
     if CONFIG.get('ENABLE_CALENDAR_POLLING', True):
@@ -278,6 +281,8 @@ def main():
         job_queue.run_repeating(manual_promo_job, interval=interval_seconds, first=30)
     if CONFIG.get('ENABLE_PAYMENT_REMINDERS', True):
         job_queue.run_repeating(payment_reminder_job, interval=interval_seconds, first=40)
+    if CONFIG.get('ENABLE_COWORKING_NOTIFICATIONS', True):
+        job_queue.run_repeating(coworking_job, interval=interval_seconds, first=50)
 
     # User Handlers
     app.add_handler(CommandHandler("start", partial(
