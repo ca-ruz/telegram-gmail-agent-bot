@@ -12,6 +12,7 @@ from bot.handlers.admin import (
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
     coffee_host, remind, manual_promo, handle_admin_photo, monthly_calendar, payments,
+    handle_payment_status,
     manage_members,
     handle_manual_promo_send_now, handle_manual_promo_test,
     handle_manual_promo_schedule,
@@ -388,6 +389,15 @@ def main():
             config=CONFIG,
         ),
         pattern="^manual_cancel_"))
+    app.add_handler(CallbackQueryHandler(
+        partial(
+            handle_payment_status,
+            primary_admin_id=CONFIG['ADMIN_ID'],
+            payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        ),
+        pattern="^payment_toggle_"))
     app.add_handler(CallbackQueryHandler(
         partial(handle_add_confirm, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
         pattern="^(confirm_add|cancel_add)$"))
