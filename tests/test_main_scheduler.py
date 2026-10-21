@@ -60,7 +60,7 @@ class FakeApplicationBuilder:
 
 
 def test_main_registers_all_notification_jobs():
-    """Application startup registers calendar, coffee-host, and manual-promo jobs."""
+    """Application startup registers every enabled notification job."""
     application = FakeApplication()
     builder = FakeApplicationBuilder(application)
 
@@ -75,6 +75,7 @@ def test_main_registers_all_notification_jobs():
         {"name": "calendar_job", "interval": 1800, "first": 10},
         {"name": "coffee_host_job", "interval": 1800, "first": 20},
         {"name": "manual_promo_job", "interval": 1800, "first": 30},
+        {"name": "payment_reminder_job", "interval": 1800, "first": 40},
     ]
 
 
@@ -91,6 +92,7 @@ def test_main_registers_only_enabled_notification_jobs():
             "ENABLE_CALENDAR_POLLING": False,
             "ENABLE_COFFEE_HOST_REMINDERS": True,
             "ENABLE_MANUAL_PROMO_REMINDERS": False,
+            "ENABLE_PAYMENT_REMINDERS": False,
         },
     ):
         main.main()
