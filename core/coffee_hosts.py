@@ -13,6 +13,29 @@ logger = logging.getLogger(__name__)
 
 COFFEE_TIMEZONE = ZoneInfo("America/Mexico_City")
 VALID_REMINDER_RULES = ("7d", "1d")
+SPANISH_WEEKDAYS = (
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo",
+)
+SPANISH_MONTHS = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
 
 
 def load_coffee_hosts(file_path):
@@ -98,6 +121,98 @@ def build_coffee_assignment(host_ids, venue, start_time, notes):
         "notes": notes,
         "reminders_sent": {},
     }
+
+
+def coffee_host_ids_for_user(hosts, user_id):
+    """Return active coffee-host IDs assigned to a Telegram user."""
+    try:
+        normalized_user_id = int(user_id)
+    except (TypeError, ValueError):
+        return set()
+
+    return {
+        host_id
+        for host_id, host in hosts.items()
+        if isinstance(host, dict)
+        and host.get("active", True)
+        and host.get("telegram_id") == normalized_user_id
+    }
+
+
+def can_view_coffee_schedule(user_id, admin_id, hosts):
+    """Return whether a Telegram user may access the private coffee schedule."""
+    try:
+        if int(user_id) == int(admin_id):
+            return True
+    except (TypeError, ValueError):
+        pass
+
+    return bool(coffee_host_ids_for_user(hosts, user_id))
+
+
+def format_private_coffee_schedule(
+    schedule,
+    hosts,
+    user_id,
+    admin_id,
+    reference_date,
+    count=4,
+):
+    """Format the coffee schedule visible to an admin or assigned host."""
+    try:
+        is_admin = int(user_id) == int(admin_id)
+    except (TypeError, ValueError):
+        is_admin = False
+
+    visible_host_ids = (
+        set(hosts)
+        if is_admin
+        else coffee_host_ids_for_user(hosts, user_id)
+    )
+    if not is_admin and not visible_host_ids:
+        return "☕ No tienes turnos de anfitrión asignados."
+
+    lines = ["☕ <b>Mis turnos de café</b>" if not is_admin else "☕ <b>Turnos de café</b>"]
+    visible_assignments = 0
+
+    for saturday in upcoming_saturdays(reference_date, count=count):
+        assignment = schedule.get(saturday.isoformat())
+        if not isinstance(assignment, dict):
+            continue
+
+        assignment_host_ids = set(assignment.get("hosts", []))
+        if not is_admin and not assignment_host_ids.intersection(visible_host_ids):
+            continue
+
+        visible_assignments += 1
+        date_text = (
+            f"{SPANISH_WEEKDAYS[saturday.weekday()]} "
+            f"{saturday.day} de {SPANISH_MONTHS[saturday.month - 1]}"
+        )
+        venue = escape(assignment.get("venue") or "Lugar pendiente")
+        start_time = escape(assignment.get("start_time") or "Hora pendiente")
+        lines.append(f"\n<b>{escape(date_text)}</b>")
+        lines.append(f"\n🕚 {start_time}\n📍 {venue}")
+
+        if is_admin:
+            host_names = [
+                hosts.get(host_id, {}).get("name", host_id)
+                for host_id in assignment.get("hosts", [])
+            ]
+            host_text = ", ".join(escape(name) for name in host_names) or "Sin anfitriones"
+            lines.append(f"\n👥 {host_text}")
+
+        if assignment.get("notes"):
+            lines.append(f"\n📝 {escape(assignment['notes'])}")
+
+    if not visible_assignments:
+        return (
+            "☕ No hay turnos de café asignados para las próximas semanas."
+            if not is_admin
+            else "☕ No hay asignaciones de café para las próximas semanas."
+        )
+
+    return "".join(lines)
 
 
 def _coffee_event_datetime(saturday_text, start_time_text):
