@@ -455,6 +455,8 @@ def main():
             admin_id=CONFIG['ADMIN_ID'],
             coffee_hosts=STATE['coffee_hosts'],
             coffee_host_schedule=STATE['coffee_host_schedule'],
+            event_registrations=STATE['event_registrations'],
+            event_registrations_file=CONFIG['EVENT_REGISTRATIONS_FILE'],
         )))
 
     # Smart Admin Chat Handler (Natural Language)
