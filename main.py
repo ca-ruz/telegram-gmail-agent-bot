@@ -29,6 +29,7 @@ from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
 from core.notification_preferences import load_notification_preferences
 from core.membership_payments import (
+    check_payment_reminders,
     load_members,
     load_payment_state,
     save_payment_state,
@@ -105,6 +106,7 @@ CONFIG = {
     'ENABLE_CALENDAR_POLLING': parse_env_bool('ENABLE_CALENDAR_POLLING', True),
     'ENABLE_COFFEE_HOST_REMINDERS': parse_env_bool('ENABLE_COFFEE_HOST_REMINDERS', True),
     'ENABLE_MANUAL_PROMO_REMINDERS': parse_env_bool('ENABLE_MANUAL_PROMO_REMINDERS', True),
+    'ENABLE_PAYMENT_REMINDERS': parse_env_bool('ENABLE_PAYMENT_REMINDERS', True),
     'EVENT_SAME_DAY_REMINDER_HOUR': parse_env_int('EVENT_SAME_DAY_REMINDER_HOUR', 13),
     'EVENT_MORNING_REMINDER_LEAD_HOURS': parse_env_int('EVENT_MORNING_REMINDER_LEAD_HOURS', 2),
     'REMINDERS_FILE': "data/sent_reminders.json",
@@ -126,6 +128,8 @@ CONFIG = {
     'COFFEE_DEFAULT_VENUE': os.getenv("COFFEE_DEFAULT_VENUE", ""),
     'MEMBERS_FILE': os.getenv("MEMBERS_FILE", "data/members.json"),
     'PAYMENT_STATE_FILE': os.getenv("PAYMENT_STATE_FILE", "data/payment_state.json"),
+    'MEMBERS_GROUP_ID': parse_env_int('MEMBERS_GROUP_ID', 0),
+    'PAYMENT_REMINDER_HOUR': parse_env_int('PAYMENT_REMINDER_HOUR', 9),
 }
 
 # --- STATE INITIALIZATION & MIGRATION ---
@@ -248,6 +252,9 @@ def main():
     async def manual_promo_job(context):
         await check_manual_promo_reminders(context, config=CONFIG, state=STATE)
 
+    async def payment_reminder_job(context):
+        await check_payment_reminders(context, config=CONFIG, state=STATE)
+
     job_queue = app.job_queue
     interval_seconds = CONFIG['CHECK_INTERVAL_MINUTES'] * 60
     if CONFIG.get('ENABLE_CALENDAR_POLLING', True):
@@ -256,6 +263,8 @@ def main():
         job_queue.run_repeating(coffee_host_job, interval=interval_seconds, first=20)
     if CONFIG.get('ENABLE_MANUAL_PROMO_REMINDERS', True):
         job_queue.run_repeating(manual_promo_job, interval=interval_seconds, first=30)
+    if CONFIG.get('ENABLE_PAYMENT_REMINDERS', True):
+        job_queue.run_repeating(payment_reminder_job, interval=interval_seconds, first=40)
 
     # User Handlers
     app.add_handler(CommandHandler("start", partial(
