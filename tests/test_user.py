@@ -62,6 +62,42 @@ def test_main_menu_uses_localized_callback_names():
     assert buttons["Web"].callback_data == "web"
 
 
+def test_main_menu_shows_private_coffee_action_only_to_eligible_users():
+    """The coffee action is omitted for regular users and shown to hosts."""
+    regular_buttons = {
+        button.text
+        for row in get_main_keyboard().inline_keyboard
+        for button in row
+    }
+    host_buttons = {
+        button.text
+        for row in get_main_keyboard(show_coffee=True).inline_keyboard
+        for button in row
+    }
+
+    assert "☕ Café" not in regular_buttons
+    assert "☕ Café" in host_buttons
+
+
+def test_coffee_schedule_handler_rejects_unassigned_user():
+    """Users who are not hosts cannot access the private coffee schedule."""
+    update = make_update(user_id=789)
+
+    asyncio.run(
+        user.coffee_schedule(
+            update,
+            SimpleNamespace(),
+            admin_id=42,
+            coffee_hosts={
+                "host-001": {"telegram_id": 123, "active": True},
+            },
+            coffee_host_schedule={},
+        )
+    )
+
+    assert "solo para" in update.message.reply_text.await_args.args[0]
+
+
 def test_start_sends_welcome_once_and_persists_user(tmp_path):
     """Only the first /start response is recorded as a welcome."""
     welcomed_file = tmp_path / "welcomed_users.json"
