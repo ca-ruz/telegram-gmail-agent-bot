@@ -18,6 +18,7 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
 *   **Timezone Aware:** Correctly handles and displays times for Guadalajara (`America/Mexico_City`).
 *   **Multi-Channel Broadcast:** One-click publishing to all community groups and individual subscribers.
 *   **Deduplication:** Ensures users don't receive redundant notifications for the same event and filters recurring series to show only the closest instance.
+*   **Membership Payments:** Authorized administrators can maintain a member roster, review monthly payment status, and send scheduled public and private reminders.
 
 ## Prerequisites
 
@@ -61,6 +62,19 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
     *   `EVENT_SAME_DAY_REMINDER_HOUR`: Same-day reminder hour in Guadalajara time (default `13`).
     *   `EVENT_MORNING_REMINDER_LEAD_HOURS`: Lead time for events before the same-day hour (default `2`).
 
+### Membership Payment Configuration
+
+The membership payment workflow uses these additional variables:
+
+*   `PAYMENT_ADMIN_ID`: Optional Telegram user ID for the administrator who manages membership payments. The primary administrator retains access.
+*   `MEMBERS_FILE`: Runtime JSON file containing the member roster (default `data/members.json`).
+*   `PAYMENT_STATE_FILE`: Runtime JSON file containing the current monthly payment state (default `data/payment_state.json`).
+*   `MEMBERS_GROUP_ID`: Telegram chat ID for the group that receives anonymous public payment reminders.
+*   `PAYMENT_REMINDER_HOUR`: Local reminder hour in `America/Mexico_City` (default `9`).
+*   `ENABLE_PAYMENT_REMINDERS`: Set to `false` to disable scheduled payment reminders while retaining the roster and payment state.
+
+The bot sends public reminders to `MEMBERS_GROUP_ID` and private reminders only to active unpaid members whose payment notifications are enabled. Payment state, member data, notification preferences, logs, `.env`, and service-account credentials are runtime data and must not be committed.
+
 5.  **Google Calendar Credentials:**
     Place your Service Account JSON file in the root directory and name it `google_calendar.json`. Ensure the service account email has **"Make changes to events"** permissions on your calendar.
 
@@ -82,7 +96,7 @@ python test_calendar.py
 *   `/menu`: Open the public bot menu.
 *   `/suscripciones`: Choose which notification categories to receive or disable all notifications.
 
-The subscription categories are currently events, coffee-host reminders, and membership/payment notices. Event subscriptions are enabled for existing subscribers during migration; coffee and payment notifications must be enabled separately.
+The subscription categories are currently events, coffee-host reminders, and membership/payment notices. New subscriptions enable all available categories by default; users can change them or disable all notifications from this menu.
 
 ### Admin Commands
 *   `/addevent [desc]`: Create a new event using natural language.
