@@ -1,4 +1,4 @@
-"""Authorization helpers for the LSS membership payment workflow."""
+"""Authorization and roster helpers for the membership payment workflow."""
 
 import logging
 import re
@@ -35,7 +35,7 @@ def get_payment_admin_role(user_id, primary_admin_id, payment_admin_id):
 
 
 def can_manage_payments(user_id, primary_admin_id, payment_admin_id):
-    """Return whether a user may manage LSS membership payments."""
+    """Return whether a user may manage membership payments."""
     return get_payment_admin_role(
         user_id,
         primary_admin_id,
@@ -43,23 +43,23 @@ def can_manage_payments(user_id, primary_admin_id, payment_admin_id):
     ) is not None
 
 
-def load_lss_members(file_path):
-    """Load the persistent LSS member roster from a JSON mapping."""
+def load_members(file_path):
+    """Load the persistent member roster from a JSON mapping."""
     members = load_json(file_path, {})
     if isinstance(members, dict):
         return members
 
-    logger.warning("LSS member roster %s is not a JSON object; using an empty roster.", file_path)
+    logger.warning("Member roster %s is not a JSON object; using an empty roster.", file_path)
     return {}
 
 
-def save_lss_members(file_path, members):
-    """Persist the LSS member roster atomically."""
+def save_members(file_path, members):
+    """Persist the member roster atomically."""
     save_json(file_path, members)
 
 
-def build_lss_member(name, telegram_id):
-    """Build a normalized active LSS member record."""
+def build_member(name, telegram_id):
+    """Build a normalized active member record."""
     return {
         "name": name,
         "telegram_id": telegram_id,
@@ -67,8 +67,8 @@ def build_lss_member(name, telegram_id):
     }
 
 
-def next_lss_member_id(members):
-    """Return the next available sequential LSS member identifier."""
+def next_member_id(members):
+    """Return the next available sequential member identifier."""
     used_ids = {
         int(match.group(1))
         for member_id in members

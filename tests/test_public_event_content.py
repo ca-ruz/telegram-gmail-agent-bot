@@ -38,7 +38,7 @@ def make_promo(event_start, status="active", first_notification_sent=True):
     return {
         "event_id": event_start,
         "summary": "Bitcoin Meetup",
-        "location": "LSS",
+        "location": "Community Space",
         "event_start": event_start,
         "text": "Una conversación sobre Bitcoin.",
         "image_file_id": f"photo-{event_start}",
