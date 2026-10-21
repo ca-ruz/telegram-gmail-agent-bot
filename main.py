@@ -27,6 +27,7 @@ from core.coffee_hosts import (
 )
 from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
+from core.coworking import load_coworking_state
 from core.notification_preferences import load_notification_preferences
 from core.membership_payments import (
     check_payment_reminders,
@@ -130,6 +131,17 @@ CONFIG = {
     'PAYMENT_STATE_FILE': os.getenv("PAYMENT_STATE_FILE", "data/payment_state.json"),
     'MEMBERS_GROUP_ID': parse_env_int('MEMBERS_GROUP_ID', 0),
     'PAYMENT_REMINDER_HOUR': parse_env_int('PAYMENT_REMINDER_HOUR', 9),
+    'ENABLE_COWORKING_NOTIFICATIONS': parse_env_bool(
+        'ENABLE_COWORKING_NOTIFICATIONS', True
+    ),
+    'COWORKING_STATE_FILE': os.getenv(
+        'COWORKING_STATE_FILE', 'data/coworking_state.json'
+    ),
+    'COWORKING_WEEKDAY': parse_env_int('COWORKING_WEEKDAY', 2),
+    'COWORKING_HOUR': parse_env_int('COWORKING_HOUR', 10),
+    'COWORKING_QUIET_WINDOW_HOURS': parse_env_int(
+        'COWORKING_QUIET_WINDOW_HOURS', 24
+    ),
 }
 
 # --- STATE INITIALIZATION & MIGRATION ---
@@ -164,6 +176,7 @@ STATE = {
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
     'members': members,
     'payment_state': payment_state,
+    'coworking': load_coworking_state(CONFIG['COWORKING_STATE_FILE']),
 }
 
 # Add reminder rules to config
