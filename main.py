@@ -27,7 +27,12 @@ from core.coffee_hosts import (
 from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
 from core.notification_preferences import load_notification_preferences
-from core.membership_payments import load_members, load_payment_state
+from core.membership_payments import (
+    load_members,
+    load_payment_state,
+    save_payment_state,
+    synchronize_payment_state,
+)
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
 
@@ -131,6 +136,13 @@ if isinstance(raw_notified, list):
     notified_dict = {event_id: {"notified_thresholds": ["initial"], "flyer_created": False} for event_id in raw_notified}
     raw_notified = notified_dict
 
+members = load_members(CONFIG['MEMBERS_FILE'])
+payment_state = synchronize_payment_state(
+    load_payment_state(CONFIG['PAYMENT_STATE_FILE']),
+    members,
+)
+save_payment_state(CONFIG['PAYMENT_STATE_FILE'], payment_state)
+
 STATE = {
     'subscribers': event_subscribers,
     'notification_preferences': load_notification_preferences(
@@ -145,8 +157,8 @@ STATE = {
     'monthly_calendar': load_monthly_calendar(CONFIG['MONTHLY_CALENDAR_FILE']),
     'coffee_hosts': load_coffee_hosts(CONFIG['COFFEE_HOSTS_FILE']),
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
-    'members': load_members(CONFIG['MEMBERS_FILE']),
-    'payment_state': load_payment_state(CONFIG['PAYMENT_STATE_FILE']),
+    'members': members,
+    'payment_state': payment_state,
 }
 
 # Add reminder rules to config

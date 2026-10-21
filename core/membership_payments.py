@@ -82,6 +82,40 @@ def build_monthly_payment_state(members, period=None):
     }
 
 
+def synchronize_payment_state(payment_state, members, period=None):
+    """Reconcile payment state with the active roster for the billing period."""
+    billing_period = period or current_billing_period()
+    if not isinstance(payment_state, dict) or payment_state.get("period") != billing_period:
+        return build_monthly_payment_state(members, billing_period)
+
+    existing_members = payment_state.get("members", {})
+    if not isinstance(existing_members, dict):
+        existing_members = {}
+
+    synchronized_members = {}
+    for member_id, member in members.items():
+        if not isinstance(member, dict) or not member.get("active", True):
+            continue
+
+        record = existing_members.get(member_id, {})
+        if not isinstance(record, dict):
+            record = {}
+        synchronized_members[member_id] = {
+            "status": record.get("status", "unpaid"),
+            "paid_at": record.get("paid_at"),
+            "reminders_sent": (
+                record.get("reminders_sent", [])
+                if isinstance(record.get("reminders_sent", []), list)
+                else []
+            ),
+        }
+
+    return {
+        "period": billing_period,
+        "members": synchronized_members,
+    }
+
+
 def load_payment_state(file_path):
     """Load persisted monthly payment state, returning an empty state when absent."""
     payment_state = load_json(file_path, {})
