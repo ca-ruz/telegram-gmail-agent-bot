@@ -216,6 +216,22 @@ def format_payment_reminder(period, stage):
     )
 
 
+def format_personal_payment_reminder(member_name, period, stage):
+    """Build a private payment reminder for one unpaid member."""
+    month_label = format_payment_period(period)
+    greeting = f"Hola, {member_name}.\n\n"
+    if stage == "overdue_5d":
+        return (
+            f"{greeting}💳 Tu pago de membresía de {month_label} todavía aparece "
+            "como pendiente. Por favor ponte al corriente cuando puedas."
+        )
+    return (
+        f"{greeting}💳 El periodo de membresía de {month_label} comenzó hoy.\n"
+        "Por favor realiza tu pago cuando te sea posible. Si ya pagaste, puedes "
+        "ignorar este mensaje."
+    )
+
+
 def load_payment_state(file_path):
     """Load persisted monthly payment state, returning an empty state when absent."""
     payment_state = load_json(file_path, {})
@@ -231,6 +247,38 @@ def load_payment_state(file_path):
 def save_payment_state(file_path, payment_state):
     """Persist monthly payment state atomically."""
     save_json(file_path, payment_state)
+
+
+async def send_personal_payment_reminders(
+    context,
+    payment_state,
+    members,
+    notification_preferences,
+    period,
+    stage,
+):
+    """Send one private payment reminder to each eligible unpaid member."""
+    recipients = get_unpaid_member_recipients(
+        payment_state,
+        members,
+        notification_preferences,
+    )
+    result = {"sent": 0, "failures": 0}
+    for member_id, telegram_id in recipients:
+        member_name = str(members[member_id].get("name", ""))
+        try:
+            await context.bot.send_message(
+                chat_id=telegram_id,
+                text=format_personal_payment_reminder(member_name, period, stage),
+            )
+            result["sent"] += 1
+        except Exception:
+            result["failures"] += 1
+            logger.exception(
+                "Failed to send personal payment reminder to member %s.",
+                member_id,
+            )
+    return result
 
 
 async def check_payment_reminders(context, config, state, now=None):
