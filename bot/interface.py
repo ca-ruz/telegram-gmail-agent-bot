@@ -40,6 +40,7 @@ NOTIFICATION_LABELS = {
     "events": "Eventos",
     "coffee": "Recordatorios de café",
     "payments": "Avisos de membresía",
+    "coworking": "Invitaciones de coworking",
 }
 
 
@@ -67,9 +68,7 @@ def get_subscription_keyboard(preferences):
         for category, label in NOTIFICATION_LABELS.items()
     ]
     return InlineKeyboardMarkup([
-        [buttons[0]],
-        [buttons[1]],
-        [buttons[2]],
+        *([button] for button in buttons),
         [InlineKeyboardButton(
             "🚫 Desactivar todas las notificaciones",
             callback_data="subscriptions_disable_all",

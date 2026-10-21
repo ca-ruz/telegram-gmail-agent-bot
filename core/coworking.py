@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from core.notification_preferences import filter_users_by_category
 from tools.local.data_manager import load_json, save_json
 
 
@@ -112,7 +113,12 @@ async def check_coworking_notifications(context, config, state, now=None):
         return
 
     failures = 0
-    for user_id in state.get("subscribers", set()):
+    subscribers = filter_users_by_category(
+        state.get("subscribers", set()),
+        state.get("notification_preferences"),
+        "coworking",
+    )
+    for user_id in subscribers:
         try:
             await context.bot.send_message(
                 chat_id=user_id,

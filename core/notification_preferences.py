@@ -2,7 +2,7 @@
 
 from tools.local.data_manager import load_json, save_json
 
-NOTIFICATION_CATEGORIES = ("events", "coffee", "payments")
+NOTIFICATION_CATEGORIES = ("events", "coffee", "payments", "coworking")
 
 
 def build_default_preferences(events=True):
@@ -11,6 +11,7 @@ def build_default_preferences(events=True):
         "events": True,
         "coffee": True,
         "payments": True,
+        "coworking": True,
     }
 
 
