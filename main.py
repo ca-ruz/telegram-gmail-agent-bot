@@ -11,7 +11,7 @@ from bot.handlers.admin import (
     list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
-    coffee_host, remind, manual_promo, handle_admin_photo, monthly_calendar,
+    coffee_host, remind, manual_promo, handle_admin_photo, monthly_calendar, payments,
     manage_members,
     handle_manual_promo_send_now, handle_manual_promo_test,
     handle_manual_promo_schedule,
@@ -214,6 +214,7 @@ def main():
             BotCommand("manualpromo", "Publicar una promoción"),
             BotCommand("calendario", "Subir calendario mensual"),
             BotCommand("members", "Administrar miembros"),
+            BotCommand("payments", "Revisar pagos"),
         ]
         if CONFIG['ADMIN_ID']:
             await application.bot.set_my_commands(
@@ -224,6 +225,7 @@ def main():
             await application.bot.set_my_commands(
                 public_commands + [
                     BotCommand("members", "Administrar miembros"),
+                    BotCommand("payments", "Revisar pagos"),
                 ],
                 scope=BotCommandScopeChat(chat_id=CONFIG['PAYMENT_ADMIN_ID']),
             )
@@ -334,6 +336,13 @@ def main():
             payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
             state=STATE,
             config=CONFIG,
+        )))
+    app.add_handler(CommandHandler("payments",
+        partial(
+            payments,
+            primary_admin_id=CONFIG['ADMIN_ID'],
+            payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
+            state=STATE,
         )))
     
     # Callback Handlers

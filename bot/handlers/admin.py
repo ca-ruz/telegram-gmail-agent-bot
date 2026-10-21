@@ -250,9 +250,63 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "/coffeehost - View or manage Saturday coffee hosts\n"
         "/coffeehost add | Name | Telegram ID\n"
         "/coffeehost remove | host-id\n"
+        "/payments - Revisar el estado de pagos de membresía\n"
         "/broadcast - Send a manual message to all subscribers\n\n"
         "💡 <i>Tip: Puedes responder a un borrador o a un evento seleccionado para editarlo con AI.</i>",
         parse_mode=ParseMode.HTML
+    )
+
+
+def format_payment_review(payment_state, members):
+    """Format the current payment period for an authorized administrator."""
+    period = escape(str(payment_state.get("period", "Sin periodo")))
+    records = payment_state.get("members", {})
+    if not isinstance(records, dict):
+        records = {}
+
+    lines = [f"<b>Pagos de membresía: {period}</b>"]
+    paid_lines = []
+    unpaid_lines = []
+    for member_id, record in sorted(records.items()):
+        member = members.get(member_id, {})
+        name = escape(str(member.get("name", member_id)))
+        line = f"{name} (<code>{escape(str(member_id))}</code>)"
+        if isinstance(record, dict) and record.get("status") == "paid":
+            paid_lines.append(line)
+        else:
+            unpaid_lines.append(line)
+
+    lines.append(f"\n<b>Pagados ({len(paid_lines)})</b>")
+    lines.extend(f"\n✅ {line}" for line in paid_lines or ["Ninguno"])
+    lines.append(f"\n\n<b>Pendientes ({len(unpaid_lines)})</b>")
+    lines.extend(f"\n⏳ {line}" for line in unpaid_lines or ["Ninguno"])
+    return "".join(lines)
+
+
+async def payments(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    primary_admin_id,
+    payment_admin_id,
+    state,
+):
+    """Show the current membership payment state to authorized administrators."""
+    if not can_manage_payments(
+        update.effective_user.id,
+        primary_admin_id,
+        payment_admin_id,
+    ):
+        await update.message.reply_text(
+            "❌ No tienes permisos para revisar pagos de membresía."
+        )
+        return
+
+    await update.message.reply_text(
+        format_payment_review(
+            state.get("payment_state", {}),
+            state.get("members", {}),
+        ),
+        parse_mode=ParseMode.HTML,
     )
 
 
