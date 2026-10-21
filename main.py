@@ -494,12 +494,18 @@ def main():
     logger.info("------------------------------------------")
     logger.info("Bot started successfully. Press Ctrl+C to stop.")
     logger.info(
-        "Scheduled services: calendar=%s, coffee=%s, manual_promos=%s; interval=%s minutes.",
+        "Scheduled services: calendar=%s, coffee=%s, manual_promos=%s, payments=%s; interval=%s minutes.",
         CONFIG.get('ENABLE_CALENDAR_POLLING', True),
         CONFIG.get('ENABLE_COFFEE_HOST_REMINDERS', True),
         CONFIG.get('ENABLE_MANUAL_PROMO_REMINDERS', True),
+        CONFIG.get('ENABLE_PAYMENT_REMINDERS', True),
         CONFIG['CHECK_INTERVAL_MINUTES'],
     )
+    if CONFIG.get('ENABLE_PAYMENT_REMINDERS', True) and not CONFIG.get('MEMBERS_GROUP_ID'):
+        logger.warning(
+            "Payment reminders are enabled but MEMBERS_GROUP_ID is not configured; "
+            "public payment reminders will be skipped."
+        )
     logger.info("------------------------------------------")
     
     app.run_polling()
