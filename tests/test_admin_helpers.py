@@ -32,6 +32,41 @@ def test_status_reports_disabled_services_and_placeholder_openai_key():
     assert "Check Interval:</b> 30 min" in message
 
 
+def test_status_reports_payment_deployment_configuration():
+    """Admin status exposes safe payment scheduler configuration details."""
+    reply_text = AsyncMock()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        message=SimpleNamespace(reply_text=reply_text),
+    )
+    state = {
+        "subscribers": set(),
+        "groups": set(),
+        "pending_promos": {},
+        "members": {"member-001": {"name": "Ada", "active": True}},
+        "payment_state": {"period": "2026-11", "members": {}},
+    }
+    config = {
+        "OPENAI_API_KEY": "",
+        "ENABLE_CALENDAR_POLLING": False,
+        "ENABLE_COFFEE_HOST_REMINDERS": False,
+        "ENABLE_MANUAL_PROMO_REMINDERS": False,
+        "ENABLE_PAYMENT_REMINDERS": True,
+        "MEMBERS_GROUP_ID": -100123,
+        "PAYMENT_REMINDER_HOUR": 9,
+        "CHECK_INTERVAL_MINUTES": 30,
+    }
+
+    asyncio.run(status(update, SimpleNamespace(), 42, state, config))
+
+    message = reply_text.await_args.args[0]
+    assert "Payment reminders:</b> ✅ Enabled" in message
+    assert "Payment group:</b> ✅ Configured" in message
+    assert "Payment members:</b> 1" in message
+    assert "Payment period:</b> 2026-11" in message
+    assert "Payment reminder hour:</b> 09:00" in message
+
+
 def test_format_prompt_history_entry_escapes_html():
     """Prompt history output is safe for Telegram HTML parse mode."""
     entry = {
