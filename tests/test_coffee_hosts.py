@@ -22,6 +22,82 @@ def test_coffee_reminder_stage_skips_events_outside_the_window():
     assert coffee_hosts._coffee_reminder_stage(event, now, ("7d", "1d")) is None
 
 
+def test_coffee_schedule_access_matches_admin_and_active_hosts():
+    """Only the admin and active registered hosts can view the schedule."""
+    hosts = {
+        "host-001": {"telegram_id": 123, "active": True},
+        "host-002": {"telegram_id": 456, "active": False},
+    }
+
+    assert coffee_hosts.can_view_coffee_schedule(42, 42, hosts)
+    assert coffee_hosts.can_view_coffee_schedule(123, 42, hosts)
+    assert not coffee_hosts.can_view_coffee_schedule(456, 42, hosts)
+    assert not coffee_hosts.can_view_coffee_schedule(789, 42, hosts)
+
+
+def test_private_coffee_schedule_filters_assignments_for_host():
+    """A host sees only their own assignments with Spanish date formatting."""
+    schedule = {
+        "2026-10-24": {
+            "hosts": ["host-001"],
+            "venue": "Café Central",
+            "start_time": "11:00",
+            "notes": "Llevar stickers",
+        },
+        "2026-10-31": {
+            "hosts": ["host-002"],
+            "venue": "Otro lugar",
+            "start_time": "12:00",
+            "notes": "",
+        },
+    }
+    hosts = {
+        "host-001": {"name": "Host One", "telegram_id": 123, "active": True},
+        "host-002": {"name": "Host Two", "telegram_id": 456, "active": True},
+    }
+
+    message = coffee_hosts.format_private_coffee_schedule(
+        schedule,
+        hosts,
+        123,
+        42,
+        date(2026, 10, 20),
+    )
+
+    assert "sábado 24 de octubre" in message
+    assert "Café Central" in message
+    assert "Llevar stickers" in message
+    assert "Otro lugar" not in message
+
+
+def test_private_coffee_schedule_admin_sees_all_assignments():
+    """The administrator sees all upcoming assignments and host names."""
+    schedule = {
+        "2026-10-24": {
+            "hosts": ["host-001", "host-002"],
+            "venue": "Café Central",
+            "start_time": "11:00",
+            "notes": "",
+        }
+    }
+    hosts = {
+        "host-001": {"name": "Host One", "telegram_id": 123, "active": True},
+        "host-002": {"name": "Host Two", "telegram_id": 456, "active": True},
+    }
+
+    message = coffee_hosts.format_private_coffee_schedule(
+        schedule,
+        hosts,
+        42,
+        42,
+        date(2026, 10, 20),
+    )
+
+    assert "Turnos de café" in message
+    assert "Host One" in message
+    assert "Host Two" in message
+
+
 def test_coffee_reminder_message_escapes_user_content():
     """Venue and notes are safe when sent with Telegram HTML parsing enabled."""
     assignment = {

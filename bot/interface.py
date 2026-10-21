@@ -12,8 +12,9 @@ def get_main_menu_text():
         "🌐 Sitio oficial: abrir el sitio web de Bitcoin & Lightning GDL."
     )
 
-def get_main_keyboard():
-    return InlineKeyboardMarkup([
+def get_main_keyboard(show_coffee=False):
+    """Build the public menu, optionally including the private coffee action."""
+    rows = [
         [
             InlineKeyboardButton("Suscripciones", callback_data="subscriptions"),
         ],
@@ -29,7 +30,10 @@ def get_main_keyboard():
             InlineKeyboardButton("Bitdevs", callback_data="bitdevs"),
             InlineKeyboardButton("Web", callback_data="web")
         ],
-    ])
+    ]
+    if show_coffee:
+        rows.insert(1, [InlineKeyboardButton("☕ Café", callback_data="coffee_schedule")])
+    return InlineKeyboardMarkup(rows)
 
 
 NOTIFICATION_LABELS = {
@@ -76,6 +80,13 @@ def get_subscription_keyboard(preferences):
 
 def get_calendar_keyboard():
     """Build the navigation keyboard shown with the monthly calendar image."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Volver al menú", callback_data="main_menu")],
+    ])
+
+
+def get_coffee_schedule_keyboard():
+    """Build the navigation keyboard shown with a private coffee schedule."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⬅️ Volver al menú", callback_data="main_menu")],
     ])
