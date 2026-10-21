@@ -19,6 +19,7 @@ data/prompt_history.json
 data/bot.log
 data/notification_preferences.json
 data/payment_state.json
+data/coworking_state.json
 subscribers.json
 sent_reminders.json
 *.tmp

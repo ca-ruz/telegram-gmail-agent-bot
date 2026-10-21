@@ -12,8 +12,8 @@ def test_load_preferences_migrates_existing_event_subscribers(tmp_path):
     preferences = load_notification_preferences(str(file_path), {101, 202})
 
     assert preferences == {
-        "101": {"events": True, "coffee": True, "payments": True},
-        "202": {"events": True, "coffee": True, "payments": True},
+        "101": {"events": True, "coffee": True, "payments": True, "coworking": True},
+        "202": {"events": True, "coffee": True, "payments": True, "coworking": True},
     }
     assert load_json(str(file_path), {}) == preferences
 
@@ -32,6 +32,7 @@ def test_load_preferences_preserves_existing_opt_outs_and_adds_missing_categorie
         "events": False,
         "coffee": True,
         "payments": True,
+        "coworking": True,
     }
 
 

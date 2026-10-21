@@ -67,6 +67,41 @@ def test_status_reports_payment_deployment_configuration():
     assert "Payment reminder hour:</b> 09:00" in message
 
 
+def test_status_reports_coworking_deployment_configuration():
+    """Admin status exposes safe coworking scheduler configuration details."""
+    reply_text = AsyncMock()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        message=SimpleNamespace(reply_text=reply_text),
+    )
+    state = {
+        "subscribers": set(),
+        "groups": set(),
+        "pending_promos": {},
+        "coworking": {"last_sent_week": "2026-W43"},
+    }
+    config = {
+        "OPENAI_API_KEY": "",
+        "ENABLE_CALENDAR_POLLING": False,
+        "ENABLE_COFFEE_HOST_REMINDERS": False,
+        "ENABLE_MANUAL_PROMO_REMINDERS": False,
+        "ENABLE_PAYMENT_REMINDERS": False,
+        "ENABLE_COWORKING_NOTIFICATIONS": True,
+        "COWORKING_WEEKDAY": 2,
+        "COWORKING_HOUR": 10,
+        "COWORKING_QUIET_WINDOW_HOURS": 24,
+        "CHECK_INTERVAL_MINUTES": 30,
+    }
+
+    asyncio.run(status(update, SimpleNamespace(), 42, state, config))
+
+    message = reply_text.await_args.args[0]
+    assert "Coworking invitations:</b> ✅ Enabled" in message
+    assert "Coworking slot:</b> weekday 2, 10:00" in message
+    assert "Coworking quiet window:</b> 24 hours" in message
+    assert "Last coworking send:</b> 2026-W43" in message
+
+
 def test_format_prompt_history_entry_escapes_html():
     """Prompt history output is safe for Telegram HTML parse mode."""
     entry = {

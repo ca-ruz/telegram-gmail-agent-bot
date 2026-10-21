@@ -1143,6 +1143,12 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
     payment_hour = config.get("PAYMENT_REMINDER_HOUR", 9)
     payment_state = state.get("payment_state", {})
     payment_period = payment_state.get("period", "Sin periodo")
+    coworking_enabled = config.get("ENABLE_COWORKING_NOTIFICATIONS", True)
+    coworking_weekday = config.get("COWORKING_WEEKDAY", 2)
+    coworking_hour = config.get("COWORKING_HOUR", 10)
+    coworking_quiet_hours = config.get("COWORKING_QUIET_WINDOW_HOURS", 24)
+    coworking_state = state.get("coworking", {})
+    coworking_last_sent = coworking_state.get("last_sent_week", "Nunca")
     msg = (
         f"📊 <b>BTC GDL Bot Status</b>\n\n"
         f"👥 <b>Subscribers:</b> {len(state['subscribers'])}\n"
@@ -1157,6 +1163,10 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
         f"👤 <b>Payment members:</b> {len(state.get('members', {}))}\n"
         f"📆 <b>Payment period:</b> {escape(str(payment_period))}\n"
         f"🕘 <b>Payment reminder hour:</b> {payment_hour:02d}:00\n"
+        f"🏠 <b>Coworking invitations:</b> {'✅ Enabled' if coworking_enabled else '⛔ Disabled'}\n"
+        f"📅 <b>Coworking slot:</b> weekday {coworking_weekday}, {coworking_hour:02d}:00\n"
+        f"🔕 <b>Coworking quiet window:</b> {coworking_quiet_hours} hours\n"
+        f"📤 <b>Last coworking send:</b> {escape(str(coworking_last_sent))}\n"
         f"🔔 <b>Same-day event reminder:</b> {same_day_hour:02d}:00\n"
         f"🌅 <b>Morning-event fallback:</b> {morning_lead_hours} hours before\n"
         f"⏱ <b>Check Interval:</b> {config.get('CHECK_INTERVAL_MINUTES')} min"

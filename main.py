@@ -27,6 +27,7 @@ from core.coffee_hosts import (
 )
 from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
+from core.coworking import check_coworking_notifications, load_coworking_state
 from core.notification_preferences import load_notification_preferences
 from core.membership_payments import (
     check_payment_reminders,
@@ -130,6 +131,17 @@ CONFIG = {
     'PAYMENT_STATE_FILE': os.getenv("PAYMENT_STATE_FILE", "data/payment_state.json"),
     'MEMBERS_GROUP_ID': parse_env_int('MEMBERS_GROUP_ID', 0),
     'PAYMENT_REMINDER_HOUR': parse_env_int('PAYMENT_REMINDER_HOUR', 9),
+    'ENABLE_COWORKING_NOTIFICATIONS': parse_env_bool(
+        'ENABLE_COWORKING_NOTIFICATIONS', True
+    ),
+    'COWORKING_STATE_FILE': os.getenv(
+        'COWORKING_STATE_FILE', 'data/coworking_state.json'
+    ),
+    'COWORKING_WEEKDAY': parse_env_int('COWORKING_WEEKDAY', 2),
+    'COWORKING_HOUR': parse_env_int('COWORKING_HOUR', 10),
+    'COWORKING_QUIET_WINDOW_HOURS': parse_env_int(
+        'COWORKING_QUIET_WINDOW_HOURS', 24
+    ),
 }
 
 # --- STATE INITIALIZATION & MIGRATION ---
@@ -164,6 +176,7 @@ STATE = {
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
     'members': members,
     'payment_state': payment_state,
+    'coworking': load_coworking_state(CONFIG['COWORKING_STATE_FILE']),
 }
 
 # Add reminder rules to config
@@ -255,6 +268,9 @@ def main():
     async def payment_reminder_job(context):
         await check_payment_reminders(context, config=CONFIG, state=STATE)
 
+    async def coworking_job(context):
+        await check_coworking_notifications(context, config=CONFIG, state=STATE)
+
     job_queue = app.job_queue
     interval_seconds = CONFIG['CHECK_INTERVAL_MINUTES'] * 60
     if CONFIG.get('ENABLE_CALENDAR_POLLING', True):
@@ -265,6 +281,8 @@ def main():
         job_queue.run_repeating(manual_promo_job, interval=interval_seconds, first=30)
     if CONFIG.get('ENABLE_PAYMENT_REMINDERS', True):
         job_queue.run_repeating(payment_reminder_job, interval=interval_seconds, first=40)
+    if CONFIG.get('ENABLE_COWORKING_NOTIFICATIONS', True):
+        job_queue.run_repeating(coworking_job, interval=interval_seconds, first=50)
 
     # User Handlers
     app.add_handler(CommandHandler("start", partial(
@@ -494,11 +512,12 @@ def main():
     logger.info("------------------------------------------")
     logger.info("Bot started successfully. Press Ctrl+C to stop.")
     logger.info(
-        "Scheduled services: calendar=%s, coffee=%s, manual_promos=%s, payments=%s; interval=%s minutes.",
+        "Scheduled services: calendar=%s, coffee=%s, manual_promos=%s, payments=%s, coworking=%s; interval=%s minutes.",
         CONFIG.get('ENABLE_CALENDAR_POLLING', True),
         CONFIG.get('ENABLE_COFFEE_HOST_REMINDERS', True),
         CONFIG.get('ENABLE_MANUAL_PROMO_REMINDERS', True),
         CONFIG.get('ENABLE_PAYMENT_REMINDERS', True),
+        CONFIG.get('ENABLE_COWORKING_NOTIFICATIONS', True),
         CONFIG['CHECK_INTERVAL_MINUTES'],
     )
     if CONFIG.get('ENABLE_PAYMENT_REMINDERS', True) and not CONFIG.get('MEMBERS_GROUP_ID'):

@@ -76,6 +76,7 @@ def test_main_registers_all_notification_jobs():
         {"name": "coffee_host_job", "interval": 1800, "first": 20},
         {"name": "manual_promo_job", "interval": 1800, "first": 30},
         {"name": "payment_reminder_job", "interval": 1800, "first": 40},
+        {"name": "coworking_job", "interval": 1800, "first": 50},
     ]
 
 
@@ -93,6 +94,7 @@ def test_main_registers_only_enabled_notification_jobs():
             "ENABLE_COFFEE_HOST_REMINDERS": True,
             "ENABLE_MANUAL_PROMO_REMINDERS": False,
             "ENABLE_PAYMENT_REMINDERS": False,
+            "ENABLE_COWORKING_NOTIFICATIONS": False,
         },
     ):
         main.main()
