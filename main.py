@@ -27,7 +27,7 @@ from core.coffee_hosts import (
 from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
 from core.notification_preferences import load_notification_preferences
-from core.membership_payments import load_members
+from core.membership_payments import load_members, load_payment_state
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
 
@@ -119,6 +119,7 @@ CONFIG = {
     'COFFEE_DEFAULT_START_TIME': os.getenv("COFFEE_DEFAULT_START_TIME", "11:00"),
     'COFFEE_DEFAULT_VENUE': os.getenv("COFFEE_DEFAULT_VENUE", ""),
     'MEMBERS_FILE': os.getenv("MEMBERS_FILE", "data/members.json"),
+    'PAYMENT_STATE_FILE': os.getenv("PAYMENT_STATE_FILE", "data/payment_state.json"),
 }
 
 # --- STATE INITIALIZATION & MIGRATION ---
@@ -145,6 +146,7 @@ STATE = {
     'coffee_hosts': load_coffee_hosts(CONFIG['COFFEE_HOSTS_FILE']),
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
     'members': load_members(CONFIG['MEMBERS_FILE']),
+    'payment_state': load_payment_state(CONFIG['PAYMENT_STATE_FILE']),
 }
 
 # Add reminder rules to config

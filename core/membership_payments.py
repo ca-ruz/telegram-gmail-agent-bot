@@ -2,6 +2,7 @@
 
 import logging
 import re
+from datetime import datetime, timezone
 
 from tools.local.data_manager import load_json, save_json
 
@@ -56,6 +57,46 @@ def load_members(file_path):
 def save_members(file_path, members):
     """Persist the member roster atomically."""
     save_json(file_path, members)
+
+
+def current_billing_period(now=None):
+    """Return the UTC billing period represented as ``YYYY-MM``."""
+    current_time = now or datetime.now(timezone.utc)
+    return current_time.strftime("%Y-%m")
+
+
+def build_monthly_payment_state(members, period=None):
+    """Build an unpaid payment state for active members in one billing period."""
+    billing_period = period or current_billing_period()
+    return {
+        "period": billing_period,
+        "members": {
+            member_id: {
+                "status": "unpaid",
+                "paid_at": None,
+                "reminders_sent": [],
+            }
+            for member_id, member in members.items()
+            if isinstance(member, dict) and member.get("active", True)
+        },
+    }
+
+
+def load_payment_state(file_path):
+    """Load persisted monthly payment state, returning an empty state when absent."""
+    payment_state = load_json(file_path, {})
+    if not isinstance(payment_state, dict):
+        logger.warning(
+            "Payment state %s is not a JSON object; using an empty state.",
+            file_path,
+        )
+        return {}
+    return payment_state
+
+
+def save_payment_state(file_path, payment_state):
+    """Persist monthly payment state atomically."""
+    save_json(file_path, payment_state)
 
 
 def build_member(name, telegram_id):
