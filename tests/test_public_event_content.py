@@ -168,7 +168,7 @@ def test_upcoming_published_promos_are_filtered_and_ordered():
 
 
 def test_public_upcoming_flyers_send_only_eligible_promos():
-    """The public flyer action sends eligible flyers and adds navigation last."""
+    """The public flyer action sends eligible flyers with registration actions."""
     update = make_callback_update("upcoming_flyers")
     context = SimpleNamespace(bot=SimpleNamespace(send_photo=AsyncMock()))
     promos = {
@@ -191,5 +191,13 @@ def test_public_upcoming_flyers_send_only_eligible_promos():
     first_call, second_call = context.bot.send_photo.await_args_list
     assert first_call.kwargs["photo"] == "photo-2027-01-20T18:00:00-06:00"
     assert second_call.kwargs["photo"] == "photo-2027-02-20T18:00:00-06:00"
-    assert first_call.kwargs["reply_markup"] is None
-    assert second_call.kwargs["reply_markup"] is not None
+    first_keyboard = first_call.kwargs["reply_markup"]
+    second_keyboard = second_call.kwargs["reply_markup"]
+    assert first_keyboard is not None
+    assert second_keyboard is not None
+    assert first_keyboard.inline_keyboard[0][0].callback_data.startswith(
+        "event_register_"
+    )
+    assert second_keyboard.inline_keyboard[0][0].callback_data.startswith(
+        "event_register_"
+    )

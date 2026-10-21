@@ -28,6 +28,7 @@ from core.coffee_hosts import (
 from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
 from core.coworking import check_coworking_notifications, load_coworking_state
+from core.event_registrations import load_event_registrations
 from core.notification_preferences import load_notification_preferences
 from core.membership_payments import (
     check_payment_reminders,
@@ -114,6 +115,9 @@ CONFIG = {
     'REMINDER_CONFIG_FILE': "data/reminder_config.json",
     'SUBSCRIBERS_FILE': "data/subscribers.json",
     'NOTIFICATION_PREFERENCES_FILE': "data/notification_preferences.json",
+    'EVENT_REGISTRATIONS_FILE': os.getenv(
+        'EVENT_REGISTRATIONS_FILE', 'data/event_registrations.json'
+    ),
     'PROMOTED_FILE': "data/notified_promos.json",
     'GROUPS_FILE': "data/groups.json",
     'PROMPT_HISTORY_FILE': "data/prompt_history.json",
@@ -165,6 +169,9 @@ STATE = {
     'notification_preferences': load_notification_preferences(
         CONFIG['NOTIFICATION_PREFERENCES_FILE'],
         event_subscribers,
+    ),
+    'event_registrations': load_event_registrations(
+        CONFIG['EVENT_REGISTRATIONS_FILE']
     ),
     'groups': set(load_json(CONFIG['GROUPS_FILE'], [])),
     'sent_reminders': load_json(CONFIG['REMINDERS_FILE'], {}),
@@ -448,6 +455,8 @@ def main():
             admin_id=CONFIG['ADMIN_ID'],
             coffee_hosts=STATE['coffee_hosts'],
             coffee_host_schedule=STATE['coffee_host_schedule'],
+            event_registrations=STATE['event_registrations'],
+            event_registrations_file=CONFIG['EVENT_REGISTRATIONS_FILE'],
         )))
 
     # Smart Admin Chat Handler (Natural Language)

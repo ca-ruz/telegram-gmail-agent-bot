@@ -11,6 +11,7 @@ from bot.interface import (
     get_subscription_keyboard,
     get_subscription_menu_text,
     get_coffee_schedule_keyboard,
+    get_event_registration_keyboard,
 )
 from core.notification_preferences import (
     NOTIFICATION_CATEGORIES,
@@ -24,6 +25,12 @@ from core.coffee_hosts import (
     format_private_coffee_schedule,
 )
 from core.manual_promos import get_upcoming_published_promos, format_manual_promo_caption
+from core.event_registrations import (
+    get_registered_users,
+    register_user,
+    save_event_registrations,
+    unregister_user,
+)
 from tools.local.data_manager import load_json, save_json
 
 # Initialize logger for this module
@@ -197,6 +204,8 @@ async def button_click(
     admin_id=None,
     coffee_hosts=None,
     coffee_host_schedule=None,
+    event_registrations=None,
+    event_registrations_file=None,
 ):
     """
     Handles callback queries from inline keyboard buttons.
@@ -213,7 +222,11 @@ async def button_click(
         events_default=user.id in subscribers,
     )
     
-    await query.answer()
+    is_registration_action = data.startswith(
+        ("event_register_", "event_unregister_")
+    )
+    if not is_registration_action:
+        await query.answer()
 
     # Determine if we should edit text or caption
     is_photo_msg = bool(query.message.photo)
@@ -232,6 +245,14 @@ async def button_click(
             save_notification_preferences(
                 notification_preferences_file,
                 notification_preferences,
+            )
+
+    def persist_event_registrations():
+        """Persist event registrations when the application supplies a path."""
+        if event_registrations_file:
+            save_event_registrations(
+                event_registrations_file,
+                event_registrations if event_registrations is not None else {},
             )
 
     if data == "subscriptions":
@@ -320,19 +341,48 @@ async def button_click(
             )
         else:
             await query.message.delete()
-            for index, promo in enumerate(upcoming_promos):
-                reply_markup = (
-                    get_calendar_keyboard()
-                    if index == len(upcoming_promos) - 1
-                    else None
-                )
+            for promo in upcoming_promos:
+                event_id = str(promo.get("event_id", ""))
                 await context.bot.send_photo(
                     chat_id=query.message.chat_id,
                     photo=promo["image_file_id"],
                     caption=format_manual_promo_caption(promo),
                     parse_mode="HTML",
-                    reply_markup=reply_markup,
+                    reply_markup=get_event_registration_keyboard(
+                        event_id,
+                        user.id in get_registered_users(
+                            event_registrations or {},
+                            event_id,
+                        ),
+                    ),
                 )
+
+    elif data.startswith("event_register_") or data.startswith("event_unregister_"):
+        action, event_id = data.split("_", 2)[1:]
+        if event_registrations is None:
+            event_registrations = {}
+        if action == "register":
+            changed = register_user(event_registrations, event_id, user.id)
+            message = (
+                "✅ Te registraste para recibir recordatorios adicionales de este evento."
+                if changed
+                else "ℹ️ Ya estabas registrado para este evento."
+            )
+        else:
+            changed = unregister_user(event_registrations, event_id, user.id)
+            message = (
+                "✅ Ya no recibirás los recordatorios adicionales de este evento."
+                if changed
+                else "ℹ️ No tenías un registro para este evento."
+            )
+        persist_event_registrations()
+        await query.answer(message, show_alert=True)
+        await query.edit_message_reply_markup(
+            reply_markup=get_event_registration_keyboard(
+                event_id,
+                user.id in get_registered_users(event_registrations, event_id),
+            )
+        )
 
     elif data == "main_menu":
         if is_photo_msg:

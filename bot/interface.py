@@ -84,6 +84,16 @@ def get_calendar_keyboard():
     ])
 
 
+def get_event_registration_keyboard(event_id, registered=False):
+    """Build the registration action for one published event flyer."""
+    action = "event_unregister" if registered else "event_register"
+    label = "✅ Ya me interesa" if registered else "🔔 Me interesa este evento"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(label, callback_data=f"{action}_{event_id}")],
+        [InlineKeyboardButton("⬅️ Volver al menú", callback_data="main_menu")],
+    ])
+
+
 def get_coffee_schedule_keyboard():
     """Build the navigation keyboard shown with a private coffee schedule."""
     return InlineKeyboardMarkup([

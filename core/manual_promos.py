@@ -7,6 +7,11 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from tools.local.data_manager import load_json, save_json
+from core.event_registrations import (
+    cleanup_expired_event_registrations,
+    get_registered_users,
+    save_event_registrations,
+)
 from core.notification_preferences import filter_users_by_category
 from core.reminder_timing import get_event_reminder_stage
 
@@ -162,6 +167,7 @@ def build_manual_promo(event_id, summary, event_start, text, image_file_id, loca
         "created_at": datetime.now(timezone.utc).isoformat(),
         "reminders_sent": {},
         "group_reminders_sent": {},
+        "registered_reminders_sent": {},
         "first_notification_at": None,
         "first_notification_sent": False,
     }
@@ -333,12 +339,60 @@ async def deliver_manual_promo_test(context, promo, admin_id):
     return {"sent": 1, "failures": 0}
 
 
+async def deliver_registered_manual_promo(
+    context,
+    promo,
+    registered_users,
+    stage,
+):
+    """Deliver an additional event reminder to registered users by DM only."""
+    reminders_sent = promo.setdefault("registered_reminders_sent", {})
+    sent_users = set(reminders_sent.get(stage, []))
+    result = {"sent": 0, "failures": 0}
+    caption = format_manual_promo_caption(promo)
+
+    for user_id in registered_users:
+        if user_id in sent_users:
+            continue
+        try:
+            await context.bot.send_photo(
+                chat_id=user_id,
+                photo=promo["image_file_id"],
+                caption=caption,
+                parse_mode="HTML",
+            )
+        except Exception:
+            result["failures"] += 1
+            logger.exception(
+                "Failed to send registered reminder for promo %s to user %s.",
+                promo.get("event_id", "unknown"),
+                user_id,
+            )
+            continue
+        sent_users.add(user_id)
+        result["sent"] += 1
+
+    reminders_sent[stage] = sorted(sent_users)
+    return result
+
+
 async def check_manual_promo_reminders(context, config, state):
     """Deliver active manual promos to subscribers with per-stage deduplication."""
     now = datetime.now(MANUAL_PROMO_TIMEZONE)
     promos = state.setdefault("manual_promos", {})
     subscribers = state.setdefault("subscribers", set())
     groups = state.setdefault("groups", set())
+    event_registrations = state.get("event_registrations", {})
+    registrations_removed = cleanup_expired_event_registrations(
+        event_registrations,
+        promos,
+        now,
+    )
+    if registrations_removed and config.get("EVENT_REGISTRATIONS_FILE"):
+        save_event_registrations(
+            config["EVENT_REGISTRATIONS_FILE"],
+            event_registrations,
+        )
     notification_preferences = state.get("notification_preferences")
     reminder_rules = config.get("REMINDER_RULES", {})
     changed = False
@@ -390,6 +444,25 @@ async def check_manual_promo_reminders(context, config, state):
         )
         if any(result.values()):
             changed = True
+
+        try:
+            seconds_until_event = (event_time - now).total_seconds()
+        except TypeError:
+            seconds_until_event = -1
+        if 0 < seconds_until_event <= timedelta(hours=1).total_seconds():
+            event_id = str(promo.get("event_id", promo_id))
+            registered_users = get_registered_users(
+                event_registrations,
+                event_id,
+            )
+            registered_result = await deliver_registered_manual_promo(
+                context,
+                promo,
+                registered_users,
+                "registered_1h",
+            )
+            if any(registered_result.values()):
+                changed = True
 
     if changed:
         save_manual_promos(config["MANUAL_PROMOS_FILE"], promos)

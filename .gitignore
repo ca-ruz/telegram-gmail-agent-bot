@@ -18,6 +18,7 @@ data/pending_promos.json
 data/prompt_history.json
 data/bot.log
 data/notification_preferences.json
+data/event_registrations.json
 data/payment_state.json
 data/coworking_state.json
 subscribers.json
