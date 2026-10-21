@@ -1136,8 +1136,13 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
     calendar_enabled = config.get("ENABLE_CALENDAR_POLLING", True)
     coffee_enabled = config.get("ENABLE_COFFEE_HOST_REMINDERS", True)
     manual_promos_enabled = config.get("ENABLE_MANUAL_PROMO_REMINDERS", True)
+    payment_enabled = config.get("ENABLE_PAYMENT_REMINDERS", True)
+    payment_group_configured = bool(config.get("MEMBERS_GROUP_ID", 0))
     same_day_hour = config.get("EVENT_SAME_DAY_REMINDER_HOUR", 13)
     morning_lead_hours = config.get("EVENT_MORNING_REMINDER_LEAD_HOURS", 2)
+    payment_hour = config.get("PAYMENT_REMINDER_HOUR", 9)
+    payment_state = state.get("payment_state", {})
+    payment_period = payment_state.get("period", "Sin periodo")
     msg = (
         f"📊 <b>BTC GDL Bot Status</b>\n\n"
         f"👥 <b>Subscribers:</b> {len(state['subscribers'])}\n"
@@ -1147,6 +1152,11 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
         f"📅 <b>Calendar polling:</b> {'✅ Enabled' if calendar_enabled else '⛔ Disabled'}\n"
         f"☕ <b>Coffee reminders:</b> {'✅ Enabled' if coffee_enabled else '⛔ Disabled'}\n"
         f"📰 <b>Manual promo reminders:</b> {'✅ Enabled' if manual_promos_enabled else '⛔ Disabled'}\n"
+        f"💳 <b>Payment reminders:</b> {'✅ Enabled' if payment_enabled else '⛔ Disabled'}\n"
+        f"🏠 <b>Payment group:</b> {'✅ Configured' if payment_group_configured else '❌ Missing'}\n"
+        f"👤 <b>Payment members:</b> {len(state.get('members', {}))}\n"
+        f"📆 <b>Payment period:</b> {escape(str(payment_period))}\n"
+        f"🕘 <b>Payment reminder hour:</b> {payment_hour:02d}:00\n"
         f"🔔 <b>Same-day event reminder:</b> {same_day_hour:02d}:00\n"
         f"🌅 <b>Morning-event fallback:</b> {morning_lead_hours} hours before\n"
         f"⏱ <b>Check Interval:</b> {config.get('CHECK_INTERVAL_MINUTES')} min"
