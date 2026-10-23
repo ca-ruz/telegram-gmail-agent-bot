@@ -205,6 +205,24 @@ def test_manual_promo_caption_places_links_after_event_details():
     assert caption.index("📍 Community Space") < caption.index("https://example.com/event")
 
 
+def test_manual_promo_caption_appends_community_link_after_event_link():
+    """The configured community CTA follows the event registration link."""
+    caption = manual_promos.format_manual_promo_caption(
+        {
+            "event_start": "2026-10-20T18:00:00-06:00",
+            "location": "Community Space",
+            "text": "Join us!\nhttps://example.com/event",
+        },
+        community_group_url="https://t.me/bitcoin_gdl?start=community&source=event",
+    )
+
+    assert "¿Tienes dudas o quieres más detalles?" in caption
+    assert "href=\"https://t.me/bitcoin_gdl?start=community&amp;source=event\"" in caption
+    assert caption.index("https://example.com/event") < caption.index(
+        "Únete al grupo de la comunidad"
+    )
+
+
 def test_manual_promo_caption_preserves_multiple_links_at_the_end():
     """Multiple unique publication links remain at the bottom in order."""
     caption = manual_promos.format_manual_promo_caption({
@@ -236,6 +254,7 @@ def test_manual_promo_caption_without_location_or_links_remains_clean():
     assert "🕕 6 PM" in caption
     assert "📍" not in caption
     assert "http" not in caption
+    assert "Únete al grupo" not in caption
 
 
 def test_legacy_manual_promo_preview_omits_missing_location():
