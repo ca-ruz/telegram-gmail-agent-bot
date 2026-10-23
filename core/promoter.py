@@ -8,6 +8,7 @@ from tools.local.calendar_api import get_calendar_service_with_creds, fetch_upco
 from tools.local.data_manager import save_json
 from core.notification_preferences import filter_users_by_category
 from core.reminder_timing import get_event_reminder_stage
+from core.community import format_community_group_cta
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -82,7 +83,7 @@ def _event_storage_key(event):
     return f"{event['id']}_{event_time.strftime('%Y%m%dT%H%M%SZ')}"
 
 
-def _event_reminder_message(event, now):
+def _event_reminder_message(event, now, community_group_url=""):
     """Build the HTML reminder message for one calendar event."""
     start_raw = event["start"].get("dateTime", event["start"].get("date"))
     event_time = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
@@ -93,13 +94,15 @@ def _event_reminder_message(event, now):
     event_time_gdl = event_time.astimezone(GDL_TZ)
     formatted_date = event_time_gdl.strftime("%d/%m")
     formatted_time = event_time_gdl.strftime("%I:%M %p")
-    return (
+    message = (
         f"📅 <b>Próximo evento: {event.get('summary', 'Evento')}</b>\n\n"
         f"🗓 <b>Fecha:</b> {formatted_date}\n"
         f"⏰ <b>Hora:</b> {formatted_time}\n"
         f"⏳ <b>Faltan:</b> {friendly_delta(event_time - now)}\n\n"
         f"🔗 <a href='{link}'>Más información y registro</a>"
     )
+    community_cta = format_community_group_cta(community_group_url)
+    return f"{message}\n\n{community_cta}" if community_cta else message
 
 
 async def send_manual_event_reminder(context, config, state, event_id):
@@ -130,7 +133,11 @@ async def send_manual_event_reminder(context, config, state, event_id):
         "events",
     )
     groups = state.get("groups", set())
-    message = _event_reminder_message(event, now)
+    message = _event_reminder_message(
+        event,
+        now,
+        config.get("COMMUNITY_GROUP_URL", ""),
+    )
     subscribers_sent = 0
     groups_sent = 0
     failures = 0
@@ -192,7 +199,11 @@ async def send_manual_event_reminder_test(context, config, admin_id, event_id):
     if not event:
         return {"found": False, "failures": 0}
 
-    message = "🧪 <b>MODO PRUEBA</b>\n\n" + _event_reminder_message(event, now)
+    message = "🧪 <b>MODO PRUEBA</b>\n\n" + _event_reminder_message(
+        event,
+        now,
+        config.get("COMMUNITY_GROUP_URL", ""),
+    )
     try:
         await context.bot.send_message(
             admin_id,
@@ -380,6 +391,11 @@ async def check_calendar(context, config, state):
                     f"⏳ <b>Faltan:</b> {actual_delta_desc}\n\n"
                     f"🔗 <a href='{link}'>Más información y registro</a>"
                 )
+                community_cta = format_community_group_cta(
+                    config.get("COMMUNITY_GROUP_URL", "")
+                )
+                if community_cta:
+                    message = f"{message}\n\n{community_cta}"
 
                 delivered_users = []
                 for user_id in pending_users:

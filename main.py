@@ -97,6 +97,7 @@ CONFIG = {
     'BOT_TOKEN': os.getenv("TELEGRAM_BOT_TOKEN"),
     'ADMIN_ID': int(os.getenv("TELEGRAM_ADMIN_ID", "0")),
     'PAYMENT_ADMIN_ID': parse_env_int('PAYMENT_ADMIN_ID', 0),
+    'COMMUNITY_GROUP_URL': os.getenv('COMMUNITY_GROUP_URL', '').strip(),
     'OPENAI_API_KEY': os.getenv("OPENAI_API_KEY"),
     'OPENAI_IMAGE_MODEL': os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1-mini"),
     'OPENAI_IMAGE_QUALITY': os.getenv("OPENAI_IMAGE_QUALITY", "medium"),
@@ -261,7 +262,6 @@ def main():
         .post_init(configure_command_menus)
         .build()
     )
-
     # Schedule the proactive calendar checker
     async def calendar_job(context):
         await check_calendar(context, config=CONFIG, state=STATE)
@@ -406,6 +406,7 @@ def main():
             handle_manual_promo_test,
             admin_id=CONFIG['ADMIN_ID'],
             state=STATE,
+            config=CONFIG,
         ),
         pattern="^manual_test_"))
     app.add_handler(CallbackQueryHandler(
@@ -457,6 +458,7 @@ def main():
             coffee_host_schedule=STATE['coffee_host_schedule'],
             event_registrations=STATE['event_registrations'],
             event_registrations_file=CONFIG['EVENT_REGISTRATIONS_FILE'],
+            community_group_url=CONFIG['COMMUNITY_GROUP_URL'],
         )))
 
     # Smart Admin Chat Handler (Natural Language)

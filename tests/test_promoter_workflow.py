@@ -88,6 +88,23 @@ def test_check_calendar_sends_subscriber_reminders_and_deduplicates(tmp_path):
     assert "https://example.com/meetup" in subscriber_messages[0]["message"]
 
 
+def test_check_calendar_appends_configured_community_link(tmp_path):
+    """Calendar reminders append the configured community CTA after the event link."""
+    now = datetime(2026, 10, 15, 11, 0, tzinfo=timezone.utc)
+    state = make_state({101})
+    config = make_config(tmp_path)
+    config["COMMUNITY_GROUP_URL"] = "https://t.me/bitcoin_gdl"
+    bot = FakeBot()
+
+    run_calendar_check([make_event()], now, state, config, bot)
+
+    message = bot.messages[0]["message"]
+    assert "Únete al grupo de la comunidad" in message
+    assert message.index("https://example.com/meetup") < message.index(
+        "Únete al grupo de la comunidad"
+    )
+
+
 def test_check_calendar_processes_a_recurring_series_once(tmp_path):
     """Only the first event instance in a recurring series is delivered per run."""
     now = datetime(2026, 10, 15, 11, 0, tzinfo=timezone.utc)
