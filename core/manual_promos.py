@@ -14,6 +14,7 @@ from core.event_registrations import (
 )
 from core.notification_preferences import filter_users_by_category
 from core.reminder_timing import get_event_reminder_stage
+from core.community import format_community_group_cta
 
 logger = logging.getLogger(__name__)
 MANUAL_PROMO_TIMEZONE = ZoneInfo("America/Mexico_City")
@@ -130,7 +131,7 @@ def _split_manual_promo_links(text):
     return text_without_links, links
 
 
-def format_manual_promo_caption(promo):
+def format_manual_promo_caption(promo, community_group_url=""):
     """Build the final HTML caption for a manually staged event promo."""
     publication_text, links = _split_manual_promo_links(
         str(promo.get("text", "")).strip()
@@ -152,7 +153,11 @@ def format_manual_promo_caption(promo):
         sections.append("\n".join(details))
     if links:
         sections.append("\n".join(links))
-    return escape("\n\n".join(sections))[:1024]
+    caption = escape("\n\n".join(sections))
+    community_cta = format_community_group_cta(community_group_url)
+    if community_cta:
+        caption = f"{caption}\n\n{community_cta}"
+    return caption[:1024]
 
 
 def build_manual_promo(event_id, summary, event_start, text, image_file_id, location=""):
@@ -247,6 +252,7 @@ async def deliver_manual_promo(
     stage,
     is_first_notification=False,
     notification_preferences=None,
+    community_group_url="",
 ):
     """Deliver one promo stage to subscribers and broadcast groups."""
     reminders_sent = promo.setdefault("reminders_sent", {})
@@ -264,7 +270,7 @@ async def deliver_manual_promo(
         "subscriber_failures": 0,
         "group_failures": 0,
     }
-    caption = format_manual_promo_caption(promo)
+    caption = format_manual_promo_caption(promo, community_group_url)
 
     for subscriber_id in subscribers:
         if subscriber_id in sent_subscribers:
@@ -318,9 +324,9 @@ async def deliver_manual_promo(
     return result
 
 
-async def deliver_manual_promo_test(context, promo, admin_id):
+async def deliver_manual_promo_test(context, promo, admin_id, community_group_url=""):
     """Send a manual promo test only to the administrator without persisting state."""
-    caption = format_manual_promo_caption(promo)
+    caption = format_manual_promo_caption(promo, community_group_url)
     test_caption = f"🧪 <b>MODO PRUEBA</b>\n\n{caption}"[:1024]
     try:
         await context.bot.send_photo(
@@ -344,12 +350,13 @@ async def deliver_registered_manual_promo(
     promo,
     registered_users,
     stage,
+    community_group_url="",
 ):
     """Deliver an additional event reminder to registered users by DM only."""
     reminders_sent = promo.setdefault("registered_reminders_sent", {})
     sent_users = set(reminders_sent.get(stage, []))
     result = {"sent": 0, "failures": 0}
-    caption = format_manual_promo_caption(promo)
+    caption = format_manual_promo_caption(promo, community_group_url)
 
     for user_id in registered_users:
         if user_id in sent_users:
@@ -441,6 +448,7 @@ async def check_manual_promo_reminders(context, config, state):
             stage,
             is_first_notification=is_first_notification,
             notification_preferences=notification_preferences,
+            community_group_url=config.get("COMMUNITY_GROUP_URL", ""),
         )
         if any(result.values()):
             changed = True
@@ -460,6 +468,7 @@ async def check_manual_promo_reminders(context, config, state):
                 promo,
                 registered_users,
                 "registered_1h",
+                config.get("COMMUNITY_GROUP_URL", ""),
             )
             if any(registered_result.values()):
                 changed = True

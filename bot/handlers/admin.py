@@ -739,6 +739,7 @@ async def handle_manual_promo_send_now(
         state.setdefault("groups", set()),
         stage,
         is_first_notification=True,
+        community_group_url=config.get("COMMUNITY_GROUP_URL", ""),
     )
     save_manual_promos(config["MANUAL_PROMOS_FILE"], state["manual_promos"])
     await query.edit_message_caption(
@@ -753,6 +754,7 @@ async def handle_manual_promo_test(
     context: ContextTypes.DEFAULT_TYPE,
     admin_id,
     state,
+    config=None,
 ):
     """Send a staged manual promo test only to the administrator's DM."""
     query = update.callback_query
@@ -766,7 +768,12 @@ async def handle_manual_promo_test(
         await query.edit_message_caption("❌ El promo manual ya no existe.")
         return
 
-    result = await deliver_manual_promo_test(context, promo, admin_id)
+    result = await deliver_manual_promo_test(
+        context,
+        promo,
+        admin_id,
+        (config or {}).get("COMMUNITY_GROUP_URL", ""),
+    )
     if result["failures"]:
         message = "❌ No se pudo enviar la prueba a tu DM."
     else:

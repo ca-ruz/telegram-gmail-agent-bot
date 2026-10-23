@@ -206,6 +206,7 @@ async def button_click(
     coffee_host_schedule=None,
     event_registrations=None,
     event_registrations_file=None,
+    community_group_url="",
 ):
     """
     Handles callback queries from inline keyboard buttons.
@@ -346,7 +347,7 @@ async def button_click(
                 await context.bot.send_photo(
                     chat_id=query.message.chat_id,
                     photo=promo["image_file_id"],
-                    caption=format_manual_promo_caption(promo),
+                    caption=format_manual_promo_caption(promo, community_group_url),
                     parse_mode="HTML",
                     reply_markup=get_event_registration_keyboard(
                         event_id,
