@@ -5,16 +5,44 @@ from zoneinfo import ZoneInfo
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from tools.local.calendar_api import get_calendar_service_with_creds, fetch_upcoming_events, extract_link, friendly_delta
+from tools.local.meetup_ics import fetch_meetup_ics_events
 from tools.local.data_manager import save_json
 from core.notification_preferences import filter_users_by_category
 from core.reminder_timing import get_event_reminder_stage
 from core.community import format_community_group_cta
+from core.imported_events import (
+    get_imported_event_key,
+    save_imported_events,
+    sync_imported_events,
+)
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
 
 # Configuration constants
 GDL_TZ = ZoneInfo("America/Mexico_City")
+
+
+def fetch_upcoming_events_for_source(config, days=8):
+    """Fetch upcoming events from the explicitly configured event source."""
+    source = str(config.get("EVENT_SOURCE", "google_calendar")).strip().lower()
+    if source == "meetup_ics":
+        now = datetime.now(timezone.utc)
+        events = fetch_meetup_ics_events(
+            config.get("MEETUP_ICS_URL", ""),
+            days=days,
+            now=now,
+        )
+        return events, now
+
+    if source != "google_calendar":
+        raise ValueError(f"Unsupported event source: {source}")
+
+    service = get_calendar_service_with_creds(
+        config["SCOPES"],
+        config["SERVICE_ACCOUNT_FILE"],
+    )
+    return fetch_upcoming_events(service, config["CALENDAR_ID"], days=days)
 
 def cleanup_sent_reminders(sent_reminders, reminders_file, now=None):
     """
@@ -107,9 +135,8 @@ def _event_reminder_message(event, now, community_group_url=""):
 
 async def send_manual_event_reminder(context, config, state, event_id):
     """Send one manually requested event reminder to eligible DMs and groups."""
-    service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
     try:
-        events, now = fetch_upcoming_events(service, config['CALENDAR_ID'])
+        events, now = fetch_upcoming_events_for_source(config)
     except Exception:
         logger.exception("Could not fetch calendar events for manual reminder %s.", event_id)
         return {"found": False, "subscribers_sent": 0, "groups_sent": 0, "failures": 1}
@@ -117,6 +144,20 @@ async def send_manual_event_reminder(context, config, state, event_id):
     event = next((item for item in events if item.get("id") == event_id), None)
     if not event:
         return {"found": False, "subscribers_sent": 0, "groups_sent": 0, "failures": 0}
+
+    source = str(config.get("EVENT_SOURCE", "google_calendar")).strip().lower()
+    if source == "meetup_ics":
+        imported_key = get_imported_event_key(source, event_id)
+        imported_event = state.get("imported_events", {}).get(imported_key, {})
+        if (
+            not imported_event.get("flyer_file_id")
+            or imported_event.get("status") in {"cancelled", "canceled", "removed"}
+        ):
+            logger.info(
+                "Skipping manual reminder for Meetup event %s because its flyer is missing or event is inactive.",
+                event_id,
+            )
+            return {"found": True, "subscribers_sent": 0, "groups_sent": 0, "failures": 0}
 
     storage_key = _event_storage_key(event)
     sent_reminders = state.setdefault("sent_reminders", {})
@@ -188,9 +229,8 @@ async def send_manual_event_reminder(context, config, state, event_id):
 
 async def send_manual_event_reminder_test(context, config, admin_id, event_id):
     """Send an event reminder test only to the administrator without saving state."""
-    service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
     try:
-        events, now = fetch_upcoming_events(service, config['CALENDAR_ID'])
+        events, now = fetch_upcoming_events_for_source(config)
     except Exception:
         logger.exception("Could not fetch calendar event test %s.", event_id)
         return {"found": False, "failures": 1}
@@ -261,7 +301,8 @@ async def check_calendar(context, config, state):
     """
     Orchestrator job that runs periodically to poll the calendar and send reminders.
     """
-    logger.info("Polling Google Calendar for upcoming events...")
+    source = str(config.get("EVENT_SOURCE", "google_calendar")).strip().lower()
+    logger.info("Polling %s for upcoming events...", source)
     
     sent_reminders = state['sent_reminders']
     subscribers = filter_users_by_category(
@@ -275,13 +316,21 @@ async def check_calendar(context, config, state):
         config['PENDING_PROMOS_FILE'],
     )
     
-    service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
-
     try:
-        events, now = fetch_upcoming_events(service, config['CALENDAR_ID'])
+        events, now = fetch_upcoming_events_for_source(config)
     except Exception as e:
         logger.error(f"Terminating calendar check due to fetch error: {e}")
         return
+
+    if source == "meetup_ics":
+        imported_events = sync_imported_events(
+            state.setdefault("imported_events", {}),
+            events,
+            source,
+            now=now,
+            lookahead_days=8,
+        )
+        save_imported_events(config["IMPORTED_EVENTS_FILE"], imported_events)
 
     sent_reminders = cleanup_sent_reminders(
         sent_reminders,
@@ -302,6 +351,10 @@ async def check_calendar(context, config, state):
     }
 
     for i, event in enumerate(events):
+        event_status = str(event.get("status", "confirmed")).strip().lower()
+        if event_status in {"cancelled", "canceled", "removed"}:
+            continue
+
         # Use recurringEventId if available to correctly group series, otherwise use id
         series_id = event.get("recurringEventId", event["id"])
         event_id = event["id"]
@@ -338,6 +391,19 @@ async def check_calendar(context, config, state):
 
         # --- PHASE B: SUBSCRIBER REMINDER LOGIC ---
         if series_id not in processed_reminder_series:
+            if source == "meetup_ics":
+                imported_key = get_imported_event_key(source, event.get("id", ""))
+                imported_event = state.get("imported_events", {}).get(imported_key, {})
+                if (
+                    not imported_event.get("flyer_file_id")
+                    or imported_event.get("status") in {
+                        "cancelled",
+                        "canceled",
+                        "removed",
+                    }
+                ):
+                    continue
+
             description = event.get("description", "")
             desc_link = extract_link(description)
             link = desc_link if desc_link else event.get("htmlLink", "https://btcgdl.com")
