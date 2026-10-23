@@ -14,6 +14,7 @@ from bot.handlers.admin import (
     coffee_host, remind, manual_promo, handle_admin_photo, monthly_calendar, payments,
     handle_payment_status,
     manage_members,
+    flyers, handle_imported_flyer_selection,
     handle_manual_promo_send_now, handle_manual_promo_test,
     handle_manual_promo_schedule,
     handle_manual_promo_cancel,
@@ -29,6 +30,7 @@ from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
 from core.coworking import check_coworking_notifications, load_coworking_state
 from core.event_registrations import load_event_registrations
+from core.imported_events import load_imported_events
 from core.notification_preferences import load_notification_preferences
 from core.membership_payments import (
     check_payment_reminders,
@@ -121,6 +123,9 @@ CONFIG = {
     'EVENT_REGISTRATIONS_FILE': os.getenv(
         'EVENT_REGISTRATIONS_FILE', 'data/event_registrations.json'
     ),
+    'IMPORTED_EVENTS_FILE': os.getenv(
+        'IMPORTED_EVENTS_FILE', 'data/imported_events.json'
+    ),
     'PROMOTED_FILE': "data/notified_promos.json",
     'GROUPS_FILE': "data/groups.json",
     'PROMPT_HISTORY_FILE': "data/prompt_history.json",
@@ -176,6 +181,7 @@ STATE = {
     'event_registrations': load_event_registrations(
         CONFIG['EVENT_REGISTRATIONS_FILE']
     ),
+    'imported_events': load_imported_events(CONFIG['IMPORTED_EVENTS_FILE']),
     'groups': set(load_json(CONFIG['GROUPS_FILE'], [])),
     'sent_reminders': load_json(CONFIG['REMINDERS_FILE'], {}),
     'notified_promos': raw_notified,
@@ -228,6 +234,7 @@ def main():
             BotCommand("status", "Ver el estado del bot"),
             BotCommand("groups", "Administrar grupos"),
             BotCommand("draft", "Crear un borrador"),
+            BotCommand("flyers", "Asignar flyers a eventos"),
             BotCommand("addevent", "Crear un evento"),
             BotCommand("editevent", "Editar un evento"),
             BotCommand("deleteevent", "Eliminar un evento"),
@@ -330,6 +337,12 @@ def main():
         partial(list_groups, admin_id=CONFIG['ADMIN_ID'], state=STATE)))
     app.add_handler(CommandHandler("draft",
         partial(draft, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
+    app.add_handler(CommandHandler("flyers",
+        partial(
+            flyers,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+        )))
     app.add_handler(CommandHandler("addevent",
         partial(add_event, admin_id=CONFIG['ADMIN_ID'], ai_service=AI_SERVICE)))
     app.add_handler(CommandHandler("editevent",
@@ -389,6 +402,13 @@ def main():
     app.add_handler(CallbackQueryHandler(
         partial(handle_auto_draft, admin_id=CONFIG['ADMIN_ID'], ai_service=AI_SERVICE, state=STATE, config=CONFIG),
         pattern="^auto_draft_"))
+    app.add_handler(CallbackQueryHandler(
+        partial(
+            handle_imported_flyer_selection,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+        ),
+        pattern="^imported_flyer_"))
     app.add_handler(CallbackQueryHandler(
         partial(handle_publish, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG),
         pattern="^publish_draft$"))

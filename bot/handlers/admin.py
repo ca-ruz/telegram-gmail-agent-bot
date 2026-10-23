@@ -45,6 +45,11 @@ from core.membership_payments import (
     save_members,
     save_payment_state,
 )
+from core.imported_events import (
+    assign_imported_event_flyer,
+    get_events_missing_flyers,
+    save_imported_events,
+)
 from core.promoter import send_manual_event_reminder, send_manual_event_reminder_test
 
 # Initialize logger for this module
@@ -592,7 +597,94 @@ async def handle_admin_photo(
     if context.user_data.get("monthly_calendar_upload"):
         await handle_monthly_calendar_photo(update, context, admin_id, state, config)
         return
+    if context.user_data.get("imported_flyer_event_key"):
+        await handle_imported_flyer_photo(update, context, admin_id, state, config)
+        return
     await handle_manual_promo_photo(update, context, admin_id, state, config)
+
+
+async def flyers(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state):
+    """List imported events that still need a manually assigned flyer."""
+    if update.effective_user.id != admin_id:
+        return
+
+    missing_events = get_events_missing_flyers(state.get("imported_events", {}))
+    if not missing_events:
+        await update.message.reply_text("✅ No hay eventos importados pendientes de flyer.")
+        return
+
+    keyboard = []
+    for event in missing_events[:10]:
+        label = f"📸 {event.get('summary', 'Evento')}"
+        keyboard.append([
+            InlineKeyboardButton(
+                label[:60],
+                callback_data=f"imported_flyer_{event['key']}",
+            )
+        ])
+    await update.message.reply_text(
+        "Selecciona el evento importado al que quieres asignar un flyer:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def handle_imported_flyer_selection(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+):
+    """Start the photo upload workflow for one imported event."""
+    query = update.callback_query
+    if query.from_user.id != admin_id:
+        return
+
+    await query.answer()
+    event_key = query.data.removeprefix("imported_flyer_")
+    event = state.get("imported_events", {}).get(event_key)
+    if not event or event.get("flyer_file_id"):
+        await query.edit_message_text("❌ Ese evento ya no necesita un flyer.")
+        return
+
+    context.user_data["imported_flyer_event_key"] = event_key
+    await query.edit_message_text(
+        f"📸 Envía ahora el flyer para: {escape(event.get('summary', 'Evento'))}",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def handle_imported_flyer_photo(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+    state,
+    config,
+):
+    """Persist an administrator's flyer assignment for an imported event."""
+    if update.effective_user.id != admin_id:
+        return
+
+    event_key = context.user_data.get("imported_flyer_event_key")
+    if not event_key:
+        return
+
+    image_file_id = update.message.photo[-1].file_id
+    event = assign_imported_event_flyer(
+        state.setdefault("imported_events", {}),
+        event_key,
+        image_file_id,
+    )
+    if not event:
+        context.user_data.pop("imported_flyer_event_key", None)
+        await update.message.reply_text("❌ No se encontró el evento importado.")
+        return
+
+    save_imported_events(config["IMPORTED_EVENTS_FILE"], state["imported_events"])
+    context.user_data.pop("imported_flyer_event_key", None)
+    await update.message.reply_text(
+        f"✅ Flyer asignado a: {escape(event.get('summary', 'Evento'))}",
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def manual_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):

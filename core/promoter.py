@@ -10,6 +10,11 @@ from tools.local.data_manager import save_json
 from core.notification_preferences import filter_users_by_category
 from core.reminder_timing import get_event_reminder_stage
 from core.community import format_community_group_cta
+from core.imported_events import (
+    get_imported_event_key,
+    save_imported_events,
+    sync_imported_events,
+)
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -302,6 +307,16 @@ async def check_calendar(context, config, state):
         logger.error(f"Terminating calendar check due to fetch error: {e}")
         return
 
+    source = str(config.get("EVENT_SOURCE", "google_calendar")).strip().lower()
+    if source == "meetup_ics":
+        imported_events = sync_imported_events(
+            state.setdefault("imported_events", {}),
+            events,
+            source,
+            now=now,
+        )
+        save_imported_events(config["IMPORTED_EVENTS_FILE"], imported_events)
+
     sent_reminders = cleanup_sent_reminders(
         sent_reminders,
         config['REMINDERS_FILE'],
@@ -357,6 +372,12 @@ async def check_calendar(context, config, state):
 
         # --- PHASE B: SUBSCRIBER REMINDER LOGIC ---
         if series_id not in processed_reminder_series:
+            if source == "meetup_ics":
+                imported_key = get_imported_event_key(source, event.get("id", ""))
+                imported_event = state.get("imported_events", {}).get(imported_key, {})
+                if not imported_event.get("flyer_file_id"):
+                    continue
+
             description = event.get("description", "")
             desc_link = extract_link(description)
             link = desc_link if desc_link else event.get("htmlLink", "https://btcgdl.com")
