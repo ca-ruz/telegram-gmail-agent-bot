@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from tools.local.calendar_api import get_calendar_service_with_creds, fetch_upcoming_events, extract_link, friendly_delta
+from tools.local.meetup_ics import fetch_meetup_ics_events
 from tools.local.data_manager import save_json
 from core.notification_preferences import filter_users_by_category
 from core.reminder_timing import get_event_reminder_stage
@@ -15,6 +16,28 @@ logger = logging.getLogger(__name__)
 
 # Configuration constants
 GDL_TZ = ZoneInfo("America/Mexico_City")
+
+
+def fetch_upcoming_events_for_source(config, days=8):
+    """Fetch upcoming events from the explicitly configured event source."""
+    source = str(config.get("EVENT_SOURCE", "google_calendar")).strip().lower()
+    if source == "meetup_ics":
+        now = datetime.now(timezone.utc)
+        events = fetch_meetup_ics_events(
+            config.get("MEETUP_ICS_URL", ""),
+            days=days,
+            now=now,
+        )
+        return events, now
+
+    if source != "google_calendar":
+        raise ValueError(f"Unsupported event source: {source}")
+
+    service = get_calendar_service_with_creds(
+        config["SCOPES"],
+        config["SERVICE_ACCOUNT_FILE"],
+    )
+    return fetch_upcoming_events(service, config["CALENDAR_ID"], days=days)
 
 def cleanup_sent_reminders(sent_reminders, reminders_file, now=None):
     """
@@ -107,9 +130,8 @@ def _event_reminder_message(event, now, community_group_url=""):
 
 async def send_manual_event_reminder(context, config, state, event_id):
     """Send one manually requested event reminder to eligible DMs and groups."""
-    service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
     try:
-        events, now = fetch_upcoming_events(service, config['CALENDAR_ID'])
+        events, now = fetch_upcoming_events_for_source(config)
     except Exception:
         logger.exception("Could not fetch calendar events for manual reminder %s.", event_id)
         return {"found": False, "subscribers_sent": 0, "groups_sent": 0, "failures": 1}
@@ -188,9 +210,8 @@ async def send_manual_event_reminder(context, config, state, event_id):
 
 async def send_manual_event_reminder_test(context, config, admin_id, event_id):
     """Send an event reminder test only to the administrator without saving state."""
-    service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
     try:
-        events, now = fetch_upcoming_events(service, config['CALENDAR_ID'])
+        events, now = fetch_upcoming_events_for_source(config)
     except Exception:
         logger.exception("Could not fetch calendar event test %s.", event_id)
         return {"found": False, "failures": 1}
@@ -275,10 +296,8 @@ async def check_calendar(context, config, state):
         config['PENDING_PROMOS_FILE'],
     )
     
-    service = get_calendar_service_with_creds(config['SCOPES'], config['SERVICE_ACCOUNT_FILE'])
-
     try:
-        events, now = fetch_upcoming_events(service, config['CALENDAR_ID'])
+        events, now = fetch_upcoming_events_for_source(config)
     except Exception as e:
         logger.error(f"Terminating calendar check due to fetch error: {e}")
         return
