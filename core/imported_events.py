@@ -1,6 +1,6 @@
 """Persistence helpers for events imported from external providers."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from tools.local.data_manager import load_json, save_json
 
@@ -21,21 +21,31 @@ def get_imported_event_key(source, event_id):
     return f"{str(source).strip().lower()}:{str(event_id)}"
 
 
-def sync_imported_events(imported_events, events, source, now=None):
-    """Merge provider events while preserving manually assigned flyer IDs."""
+def sync_imported_events(
+    imported_events,
+    events,
+    source,
+    now=None,
+    lookahead_days=None,
+):
+    """Merge provider events and reconcile absent events in the feed window."""
     records = imported_events if isinstance(imported_events, dict) else {}
     observed_at = now or datetime.now(timezone.utc)
     if observed_at.tzinfo is None:
         observed_at = observed_at.replace(tzinfo=timezone.utc)
 
+    source_name = str(source).strip().lower()
+    seen_keys = set()
     for event in events or []:
         event_id = event.get("id")
         if not event_id:
             continue
-        key = get_imported_event_key(source, event_id)
+        key = get_imported_event_key(source_name, event_id)
+        seen_keys.add(key)
         previous = records.get(key, {})
+        status = str(event.get("status", "confirmed")).strip().lower()
         records[key] = {
-            "source": str(source),
+            "source": source_name,
             "source_id": str(event_id),
             "summary": event.get("summary", "Evento"),
             "description": event.get("description", ""),
@@ -43,13 +53,29 @@ def sync_imported_events(imported_events, events, source, now=None):
             "htmlLink": event.get("htmlLink", ""),
             "start": event.get("start", {}),
             "end": event.get("end", {}),
-            "status": event.get("status", "confirmed"),
+            "status": status,
             "created": event.get("created"),
             "updated": event.get("updated"),
             "last_seen_at": observed_at.isoformat(),
             "flyer_file_id": previous.get("flyer_file_id"),
             "flyer_assigned_at": previous.get("flyer_assigned_at"),
         }
+
+    if lookahead_days is not None:
+        cutoff = observed_at + timedelta(days=lookahead_days)
+        for key, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            if record.get("source") != source_name or key in seen_keys:
+                continue
+            event_time = _event_start(record)
+            if event_time is None:
+                continue
+            event_time = event_time.astimezone(timezone.utc)
+            window_start = observed_at.astimezone(timezone.utc)
+            if window_start <= event_time <= cutoff.astimezone(timezone.utc):
+                record["status"] = "removed"
+                record["removed_at"] = observed_at.isoformat()
     return records
 
 
@@ -88,7 +114,11 @@ def get_events_missing_flyers(imported_events, now=None):
 
     missing = []
     for event_key, event in (imported_events or {}).items():
-        if not isinstance(event, dict) or event.get("status") in {"cancelled", "canceled"}:
+        if not isinstance(event, dict) or event.get("status") in {
+            "cancelled",
+            "canceled",
+            "removed",
+        }:
             continue
         if event.get("flyer_file_id"):
             continue

@@ -145,6 +145,20 @@ async def send_manual_event_reminder(context, config, state, event_id):
     if not event:
         return {"found": False, "subscribers_sent": 0, "groups_sent": 0, "failures": 0}
 
+    source = str(config.get("EVENT_SOURCE", "google_calendar")).strip().lower()
+    if source == "meetup_ics":
+        imported_key = get_imported_event_key(source, event_id)
+        imported_event = state.get("imported_events", {}).get(imported_key, {})
+        if (
+            not imported_event.get("flyer_file_id")
+            or imported_event.get("status") in {"cancelled", "canceled", "removed"}
+        ):
+            logger.info(
+                "Skipping manual reminder for Meetup event %s because its flyer is missing or event is inactive.",
+                event_id,
+            )
+            return {"found": True, "subscribers_sent": 0, "groups_sent": 0, "failures": 0}
+
     storage_key = _event_storage_key(event)
     sent_reminders = state.setdefault("sent_reminders", {})
     stored_sent = sent_reminders.get(storage_key, {})
@@ -287,7 +301,8 @@ async def check_calendar(context, config, state):
     """
     Orchestrator job that runs periodically to poll the calendar and send reminders.
     """
-    logger.info("Polling Google Calendar for upcoming events...")
+    source = str(config.get("EVENT_SOURCE", "google_calendar")).strip().lower()
+    logger.info("Polling %s for upcoming events...", source)
     
     sent_reminders = state['sent_reminders']
     subscribers = filter_users_by_category(
@@ -307,13 +322,13 @@ async def check_calendar(context, config, state):
         logger.error(f"Terminating calendar check due to fetch error: {e}")
         return
 
-    source = str(config.get("EVENT_SOURCE", "google_calendar")).strip().lower()
     if source == "meetup_ics":
         imported_events = sync_imported_events(
             state.setdefault("imported_events", {}),
             events,
             source,
             now=now,
+            lookahead_days=8,
         )
         save_imported_events(config["IMPORTED_EVENTS_FILE"], imported_events)
 
@@ -336,6 +351,10 @@ async def check_calendar(context, config, state):
     }
 
     for i, event in enumerate(events):
+        event_status = str(event.get("status", "confirmed")).strip().lower()
+        if event_status in {"cancelled", "canceled", "removed"}:
+            continue
+
         # Use recurringEventId if available to correctly group series, otherwise use id
         series_id = event.get("recurringEventId", event["id"])
         event_id = event["id"]
@@ -375,7 +394,14 @@ async def check_calendar(context, config, state):
             if source == "meetup_ics":
                 imported_key = get_imported_event_key(source, event.get("id", ""))
                 imported_event = state.get("imported_events", {}).get(imported_key, {})
-                if not imported_event.get("flyer_file_id"):
+                if (
+                    not imported_event.get("flyer_file_id")
+                    or imported_event.get("status") in {
+                        "cancelled",
+                        "canceled",
+                        "removed",
+                    }
+                ):
                     continue
 
             description = event.get("description", "")
