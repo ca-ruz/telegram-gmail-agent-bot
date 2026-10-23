@@ -2,7 +2,12 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from bot.handlers.admin import format_prompt_history_entry, save_prompt_history, status
+from bot.handlers.admin import (
+    format_imported_event_label,
+    format_prompt_history_entry,
+    save_prompt_history,
+    status,
+)
 from tools.local.data_manager import load_json, save_json
 
 
@@ -30,6 +35,16 @@ def test_status_reports_disabled_services_and_placeholder_openai_key():
     assert "Coffee reminders:</b> ✅ Enabled" in message
     assert "Manual promo reminders:</b> ⛔ Disabled" in message
     assert "Check Interval:</b> 30 min" in message
+
+
+def test_imported_event_label_includes_day_and_month():
+    """Flyer assignment buttons distinguish events with the same title."""
+    label = format_imported_event_label({
+        "summary": "Bitcoin Coffee",
+        "start": {"dateTime": "2026-10-24T11:00:00-06:00"},
+    })
+
+    assert label == "📸 Bitcoin Coffee · 24/10"
 
 
 def test_status_reports_payment_deployment_configuration():

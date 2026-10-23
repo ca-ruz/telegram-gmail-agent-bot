@@ -615,7 +615,7 @@ async def flyers(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
 
     keyboard = []
     for event in missing_events[:10]:
-        label = f"📸 {event.get('summary', 'Evento')}"
+        label = format_imported_event_label(event)
         keyboard.append([
             InlineKeyboardButton(
                 label[:60],
@@ -626,6 +626,22 @@ async def flyers(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
         "Selecciona el evento importado al que quieres asignar un flyer:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+
+
+def format_imported_event_label(event):
+    """Return an imported-event button label with its day and month."""
+    summary = str(event.get("summary", "Evento"))
+    start = event.get("start", {})
+    start_value = start.get("dateTime", start.get("date"))
+    if start_value:
+        try:
+            event_date = datetime.fromisoformat(
+                str(start_value).replace("Z", "+00:00")
+            )
+            return f"📸 {summary} · {event_date.day:02d}/{event_date.month:02d}"
+        except ValueError:
+            pass
+    return f"📸 {summary}"
 
 
 async def handle_imported_flyer_selection(
