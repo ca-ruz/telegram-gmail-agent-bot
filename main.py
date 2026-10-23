@@ -102,6 +102,8 @@ CONFIG = {
     'OPENAI_IMAGE_MODEL': os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1-mini"),
     'OPENAI_IMAGE_QUALITY': os.getenv("OPENAI_IMAGE_QUALITY", "medium"),
     'OPENAI_IMAGE_SIZE': os.getenv("OPENAI_IMAGE_SIZE", "1024x1536"),
+    'EVENT_SOURCE': os.getenv('EVENT_SOURCE', 'google_calendar').strip().lower(),
+    'MEETUP_ICS_URL': os.getenv('MEETUP_ICS_URL', '').strip(),
     'CALENDAR_ID': os.getenv("GOOGLE_CALENDAR_ID"),
     'SERVICE_ACCOUNT_FILE': "google_calendar.json",
     'SCOPES': ["https://www.googleapis.com/auth/calendar"],
