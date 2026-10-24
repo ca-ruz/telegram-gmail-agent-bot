@@ -30,7 +30,10 @@ def make_callback_update(callback_data, user_id=42):
         edit_message_text=AsyncMock(),
         edit_message_caption=AsyncMock(),
     )
-    return SimpleNamespace(callback_query=query)
+    return SimpleNamespace(
+        callback_query=query,
+        effective_chat=SimpleNamespace(id=123, type="private"),
+    )
 
 
 def make_promo(event_start, status="active", first_notification_sent=True):

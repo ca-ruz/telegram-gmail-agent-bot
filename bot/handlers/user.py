@@ -238,6 +238,10 @@ async def button_click(
     Edits existing message/caption to reduce clutter.
     """
     query = update.callback_query
+    if not is_private_chat(update):
+        await query.answer("Usa el chat privado con el bot.")
+        return
+
     user = query.from_user
     data = query.data
     notification_preferences = notification_preferences if notification_preferences is not None else {}
