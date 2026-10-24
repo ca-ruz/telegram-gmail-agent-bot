@@ -242,6 +242,75 @@ def format_personal_payment_reminder(member_name, period, stage):
     )
 
 
+def format_payment_admin_followup(period, stage):
+    """Build a private payment-review follow-up for the payment administrator."""
+    month_label = format_payment_period(period)
+    return (
+        "🔔 Revisión de pagos de membresía\n\n"
+        f"El recordatorio de {month_label} ({stage}) ya fue enviado.\n"
+        "¿Puedes revisar quién ya pagó y actualizar el estado de cada miembro?\n"
+        "Usa /payments para abrir la revisión."
+    )
+
+
+def _payment_admin_followups_due(payment_state, now, delay_hours):
+    """Return public reminder keys whose administrator follow-up is due."""
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    current_time = current_time.astimezone(timezone.utc)
+
+    public_reminders = payment_state.get("public_reminders_sent", {})
+    followups_sent = payment_state.get("payment_admin_followups_sent", {})
+    if not isinstance(public_reminders, dict):
+        return []
+    if not isinstance(followups_sent, dict):
+        followups_sent = {}
+
+    delay = timedelta(hours=max(0, delay_hours))
+    due = []
+    for reminder_key, sent_at in public_reminders.items():
+        if reminder_key in followups_sent or not isinstance(sent_at, str):
+            continue
+        try:
+            sent_time = datetime.fromisoformat(sent_at.replace("Z", "+00:00"))
+        except ValueError:
+            logger.warning(
+                "Skipping payment follow-up with invalid reminder timestamp: %s",
+                reminder_key,
+            )
+            continue
+        if sent_time.tzinfo is None:
+            sent_time = sent_time.replace(tzinfo=timezone.utc)
+        if current_time < sent_time.astimezone(timezone.utc) + delay:
+            continue
+        try:
+            period, stage = str(reminder_key).split(":", 1)
+        except ValueError:
+            logger.warning("Skipping malformed payment reminder key: %s", reminder_key)
+            continue
+        due.append((str(reminder_key), period, stage))
+
+    return due
+
+
+async def send_payment_admin_followup(context, payment_admin_id, period, stage):
+    """Send one private payment-review follow-up to the payment administrator."""
+    try:
+        await context.bot.send_message(
+            chat_id=payment_admin_id,
+            text=format_payment_admin_followup(period, stage),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to send payment follow-up for %s:%s.",
+            period,
+            stage,
+        )
+        return False
+    return True
+
+
 def load_payment_state(file_path):
     """Load persisted monthly payment state, returning an empty state when absent."""
     payment_state = load_json(file_path, {})
@@ -296,8 +365,14 @@ async def send_personal_payment_reminders(
 
 async def check_payment_reminders(context, config, state, now=None):
     """Send due public and private payment reminders with duplicate protection."""
+    if not config.get("ENABLE_PAYMENT_REMINDERS", True):
+        return
+
+    current_time = now or datetime.now(PAYMENT_TIMEZONE)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=PAYMENT_TIMEZONE)
     stage_info = get_payment_reminder_stage(
-        now,
+        current_time,
         config.get("PAYMENT_REMINDER_HOUR", 9),
     )
     if not stage_info:
@@ -317,7 +392,9 @@ async def check_payment_reminders(context, config, state, now=None):
                 chat_id=group_id,
                 text=format_payment_reminder(period, stage),
             )
-            public_reminders[public_key] = datetime.now(timezone.utc).isoformat()
+            public_reminders[public_key] = current_time.astimezone(
+                timezone.utc
+            ).isoformat()
             state_changed = True
         except Exception as error:
             public_error = error
@@ -348,6 +425,32 @@ async def check_payment_reminders(context, config, state, now=None):
             )
             for member_id in result.get("sent_member_ids", []):
                 personal_reminders[f"{period}:{stage}:{member_id}"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
+                state_changed = True
+
+    payment_admin_id = _normalize_user_id(config.get("PAYMENT_ADMIN_ID"))
+    if payment_admin_id is not None:
+        followups = payment_state.setdefault("payment_admin_followups_sent", {})
+        if not isinstance(followups, dict):
+            followups = {}
+            payment_state["payment_admin_followups_sent"] = followups
+        delay_hours = config.get("PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS", 2)
+        try:
+            delay_hours = int(delay_hours)
+        except (TypeError, ValueError):
+            delay_hours = 2
+        for reminder_key, followup_period, followup_stage in (
+            _payment_admin_followups_due(payment_state, current_time, delay_hours)
+        ):
+            sent = await send_payment_admin_followup(
+                context,
+                payment_admin_id,
+                followup_period,
+                followup_stage,
+            )
+            if sent:
+                followups[reminder_key] = current_time.astimezone(
                     timezone.utc
                 ).isoformat()
                 state_changed = True
