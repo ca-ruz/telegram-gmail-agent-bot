@@ -18,6 +18,7 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
 *   **Timezone Aware:** Correctly handles and displays times for Guadalajara (`America/Mexico_City`).
 *   **Multi-Channel Broadcast:** One-click publishing to all community groups and individual subscribers.
 *   **Deduplication:** Ensures users don't receive redundant notifications for the same event and filters recurring series to show only the closest instance.
+*   **Private User Interaction:** Interactive user commands and menus are handled in private chats, while scheduled notifications continue reaching configured groups.
 *   **Membership Payments:** Authorized administrators can maintain a member roster, review monthly payment status, and send scheduled public and private reminders.
 
 ## Prerequisites
@@ -97,6 +98,14 @@ python test_calendar.py
 *   `/suscripciones`: Choose which notification categories to receive or disable all notifications.
 
 The subscription categories are currently events, coffee-host reminders, and membership/payment notices. New subscriptions enable all available categories by default; users can change them or disable all notifications from this menu.
+
+### Telegram Group Behavior
+
+Users should open a private chat with the bot to use interactive commands and menus, including `/menu`, `/suscripciones`, `/cafe`, `/meetup`, `/eventos`, `/bitdevs`, and `/web`. The bot ignores these user interactions in groups so public conversations are not filled with command responses or private menu content.
+
+The bot must remain in configured groups so it can deliver scheduled event, payment, and coworking notifications. The primary administrator can still use the group-management commands `/addgroup` and `/removegroup` where group context is required.
+
+For additional group privacy, open the bot's conversation with [@BotFather](https://t.me/botfather), run `/setprivacy`, select the bot, and choose **Enable**. Do not use `/setjoingroups`; the bot needs to remain able to join groups for scheduled delivery.
 
 ### Admin Commands
 *   `/addevent [desc]`: Create a new event using natural language.
