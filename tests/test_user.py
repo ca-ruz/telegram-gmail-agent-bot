@@ -98,6 +98,69 @@ def test_coffee_schedule_handler_rejects_unassigned_user():
     assert "solo para" in update.message.reply_text.await_args.args[0]
 
 
+def test_coffee_schedule_command_uses_html_for_authorized_host():
+    """The direct coffee schedule command requests Telegram HTML parsing."""
+    update = make_update(user_id=123)
+
+    asyncio.run(
+        user.coffee_schedule(
+            update,
+            SimpleNamespace(),
+            admin_id=42,
+            coffee_hosts={
+                "host-001": {"telegram_id": 123, "active": True},
+            },
+            coffee_host_schedule={},
+        )
+    )
+
+    assert update.message.reply_text.await_args.kwargs["parse_mode"] == "HTML"
+
+
+def test_coffee_schedule_text_callback_uses_html():
+    """The text callback preserves HTML formatting for the coffee schedule."""
+    update = make_update(user_id=42, callback_data="coffee_schedule")
+
+    asyncio.run(
+        user.button_click(
+            update,
+            SimpleNamespace(),
+            set(),
+            admin_id=42,
+            coffee_hosts={},
+            coffee_host_schedule={},
+        )
+    )
+
+    assert update.callback_query.edit_message_text.await_args.kwargs[
+        "parse_mode"
+    ] == "HTML"
+
+
+def test_coffee_schedule_photo_callback_uses_html_caption():
+    """The photo callback preserves HTML formatting in the edited caption."""
+    update = make_update(
+        user_id=42,
+        callback_data="coffee_schedule",
+        photo=[SimpleNamespace(file_id="photo-id")],
+    )
+
+    asyncio.run(
+        user.button_click(
+            update,
+            SimpleNamespace(),
+            set(),
+            admin_id=42,
+            coffee_hosts={},
+            coffee_host_schedule={},
+        )
+    )
+
+    assert update.callback_query.edit_message_caption.await_args.kwargs[
+        "parse_mode"
+    ] == "HTML"
+
+
 def test_interactive_user_commands_are_ignored_in_groups():
     """User-facing commands do not reply when received in a group."""
     update = make_update(chat_type="supergroup")
