@@ -32,6 +32,7 @@ from core.event_registrations import (
     unregister_user,
 )
 from core.chat_scope import is_private_chat
+from core.telegram_metadata import record_user_metadata, save_telegram_metadata
 from tools.local.data_manager import load_json, save_json
 
 # Initialize logger for this module
@@ -42,6 +43,16 @@ WELCOME_IMAGE_PATH = "btcgdl.png"
 SUBSCRIBERS_FILE = "data/subscribers.json"
 NOTIFICATION_PREFERENCES_FILE = "data/notification_preferences.json"
 WELCOMED_USERS_FILE = "data/welcomed_users.json"
+
+
+def persist_user_metadata(user, metadata, file_path):
+    """Record a Telegram user when metadata storage is configured."""
+    if metadata is None or not file_path:
+        return
+
+    record = record_user_metadata(metadata, user)
+    if record is not None:
+        save_telegram_metadata(file_path, metadata)
 
 def get_user_main_keyboard(user_id, admin_id, coffee_hosts):
     """Build the main keyboard with the coffee action only for eligible users."""
@@ -90,6 +101,8 @@ async def start(
     context: ContextTypes.DEFAULT_TYPE,
     admin_id=None,
     coffee_hosts=None,
+    telegram_metadata=None,
+    telegram_metadata_file=None,
 ):
     """
     Handles the /start command. Sends a welcome image with a caption.
@@ -98,6 +111,7 @@ async def start(
         return
 
     user = update.effective_user
+    persist_user_metadata(user, telegram_metadata, telegram_metadata_file)
     logger.info(f"User {user.id} (@{user.username}) started the bot.")
     welcomed_users = set(load_json(WELCOMED_USERS_FILE, []))
     is_first_welcome = user.id not in welcomed_users
@@ -134,11 +148,24 @@ async def menu(
     )
 
 
-async def subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE, notification_preferences, subscribers, notification_preferences_file=NOTIFICATION_PREFERENCES_FILE):
+async def subscriptions(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    notification_preferences,
+    subscribers,
+    notification_preferences_file=NOTIFICATION_PREFERENCES_FILE,
+    telegram_metadata=None,
+    telegram_metadata_file=None,
+):
     """Show the current notification preferences for the requesting user."""
     if not is_private_chat(update):
         return
 
+    persist_user_metadata(
+        update.effective_user,
+        telegram_metadata,
+        telegram_metadata_file,
+    )
     user_id = update.effective_user.id
     preferences = ensure_user_preferences(
         notification_preferences,
@@ -232,6 +259,8 @@ async def button_click(
     event_registrations=None,
     event_registrations_file=None,
     community_group_url="",
+    telegram_metadata=None,
+    telegram_metadata_file=None,
 ):
     """
     Handles callback queries from inline keyboard buttons.
@@ -243,6 +272,7 @@ async def button_click(
         return
 
     user = query.from_user
+    persist_user_metadata(user, telegram_metadata, telegram_metadata_file)
     data = query.data
     notification_preferences = notification_preferences if notification_preferences is not None else {}
     had_saved_preferences = str(user.id) in notification_preferences

@@ -332,6 +332,8 @@ def main():
         start,
         admin_id=CONFIG['ADMIN_ID'],
         coffee_hosts=STATE['coffee_hosts'],
+        telegram_metadata=STATE['telegram_metadata'],
+        telegram_metadata_file=CONFIG['TELEGRAM_METADATA_FILE'],
     )))
     app.add_handler(CommandHandler("menu", partial(
         menu,
@@ -343,6 +345,8 @@ def main():
         notification_preferences=STATE['notification_preferences'],
         subscribers=STATE['subscribers'],
         notification_preferences_file=CONFIG['NOTIFICATION_PREFERENCES_FILE'],
+        telegram_metadata=STATE['telegram_metadata'],
+        telegram_metadata_file=CONFIG['TELEGRAM_METADATA_FILE'],
     )))
     app.add_handler(CommandHandler("cafe", partial(
         coffee_schedule,
@@ -522,6 +526,8 @@ def main():
             event_registrations=STATE['event_registrations'],
             event_registrations_file=CONFIG['EVENT_REGISTRATIONS_FILE'],
             community_group_url=CONFIG['COMMUNITY_GROUP_URL'],
+            telegram_metadata=STATE['telegram_metadata'],
+            telegram_metadata_file=CONFIG['TELEGRAM_METADATA_FILE'],
         )))
 
     # Smart Admin Chat Handler (Natural Language)

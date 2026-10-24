@@ -52,6 +52,7 @@ from core.imported_events import (
 )
 from core.linked_events import build_linked_event, validate_linked_events
 from core.promoter import send_manual_event_reminder, send_manual_event_reminder_test
+from core.telegram_metadata import record_group_metadata, save_telegram_metadata
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -2039,6 +2040,13 @@ async def add_group(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id
     if chat.type in ["group", "supergroup"]:
         state['groups'].add(chat.id)
         save_json(config['GROUPS_FILE'], list(state['groups']))
+        metadata = state.setdefault(
+            "telegram_metadata",
+            {"users": {}, "groups": {}},
+        )
+        record_group_metadata(metadata, chat)
+        if config.get("TELEGRAM_METADATA_FILE"):
+            save_telegram_metadata(config["TELEGRAM_METADATA_FILE"], metadata)
         await update.message.reply_text(f"✅ Grupo '{chat.title}' añadido a la lista de difusión.")
         logger.info(f"Group added: {chat.title} ({chat.id})")
 
