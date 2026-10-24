@@ -33,6 +33,7 @@ from core.coworking import check_coworking_notifications, load_coworking_state
 from core.event_registrations import load_event_registrations
 from core.imported_events import load_imported_events
 from core.notification_preferences import load_notification_preferences
+from core.telegram_metadata import load_telegram_metadata
 from core.membership_payments import (
     check_payment_reminders,
     load_members,
@@ -120,6 +121,9 @@ CONFIG = {
     'REMINDERS_FILE': "data/sent_reminders.json",
     'REMINDER_CONFIG_FILE': "data/reminder_config.json",
     'SUBSCRIBERS_FILE': "data/subscribers.json",
+    'TELEGRAM_METADATA_FILE': os.getenv(
+        'TELEGRAM_METADATA_FILE', 'data/telegram_metadata.json'
+    ),
     'NOTIFICATION_PREFERENCES_FILE': "data/notification_preferences.json",
     'EVENT_REGISTRATIONS_FILE': os.getenv(
         'EVENT_REGISTRATIONS_FILE', 'data/event_registrations.json'
@@ -191,6 +195,9 @@ save_payment_state(CONFIG['PAYMENT_STATE_FILE'], payment_state)
 
 STATE = {
     'subscribers': event_subscribers,
+    'telegram_metadata': load_telegram_metadata(
+        CONFIG['TELEGRAM_METADATA_FILE']
+    ),
     'notification_preferences': load_notification_preferences(
         CONFIG['NOTIFICATION_PREFERENCES_FILE'],
         event_subscribers,
