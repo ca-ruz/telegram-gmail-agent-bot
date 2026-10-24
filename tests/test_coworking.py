@@ -50,7 +50,6 @@ def test_coworking_invitation_renders_configured_details_and_links():
     """Configured coworking content is rendered as safe Telegram HTML."""
     message = format_coworking_invitation({
         "COWORKING_SPACE_NAME": "Espacio <central>",
-        "COWORKING_LOCATION": "Calle A & Calle B",
         "COWORKING_DESCRIPTION": "Trabaja <b>y conecta</b>.",
         "COWORKING_VISIT_URL": "https://example.com/visit?a=1&b=2",
         "COWORKING_DAY_PASS_URL": "https://example.com/day-pass",
@@ -58,8 +57,8 @@ def test_coworking_invitation_renders_configured_details_and_links():
     })
 
     assert "<b>Espacio &lt;central&gt;</b>" in message
-    assert "Calle A &amp; Calle B" in message
     assert "Trabaja &lt;b&gt;y conecta&lt;/b&gt;." in message
+    assert "Ubicación" not in message
     assert 'href="https://example.com/visit?a=1&amp;b=2"' in message
     assert "Pase por día" in message
     assert "Membresías" not in message

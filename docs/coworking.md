@@ -13,7 +13,6 @@ COWORKING_WEEKDAY=2
 COWORKING_HOUR=10
 COWORKING_QUIET_WINDOW_HOURS=24
 COWORKING_SPACE_NAME=Espacio de coworking de la comunidad
-COWORKING_LOCATION=Ubicación por confirmar
 COWORKING_DESCRIPTION=Un espacio para trabajar, aprender y conectar con la comunidad.
 COWORKING_VISIT_URL=
 COWORKING_DAY_PASS_URL=
@@ -23,7 +22,6 @@ COWORKING_MEMBERSHIP_URL=
 The content settings are:
 
 - `COWORKING_SPACE_NAME`: the name shown in the invitation heading.
-- `COWORKING_LOCATION`: where people can visit the space.
 - `COWORKING_DESCRIPTION`: the short explanation of what visitors can do.
 - `COWORKING_VISIT_URL`: optional page with visiting information.
 - `COWORKING_DAY_PASS_URL`: optional page for day-pass details.
