@@ -25,7 +25,7 @@ def make_update(user_id=42, callback_data=None, photo=None):
     )
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=user_id, username="test-user"),
-        effective_chat=SimpleNamespace(id=123),
+        effective_chat=SimpleNamespace(id=123, type="private"),
         message=message,
         callback_query=query,
     )

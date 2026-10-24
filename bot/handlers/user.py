@@ -31,6 +31,7 @@ from core.event_registrations import (
     save_event_registrations,
     unregister_user,
 )
+from core.chat_scope import is_private_chat
 from tools.local.data_manager import load_json, save_json
 
 # Initialize logger for this module
@@ -93,6 +94,9 @@ async def start(
     """
     Handles the /start command. Sends a welcome image with a caption.
     """
+    if not is_private_chat(update):
+        return
+
     user = update.effective_user
     logger.info(f"User {user.id} (@{user.username}) started the bot.")
     welcomed_users = set(load_json(WELCOMED_USERS_FILE, []))
@@ -119,6 +123,9 @@ async def menu(
     """
     Handles the /menu command. Shows the main action buttons without the logo.
     """
+    if not is_private_chat(update):
+        return
+
     await send_main_menu(
         update,
         context,
@@ -129,6 +136,9 @@ async def menu(
 
 async def subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE, notification_preferences, subscribers, notification_preferences_file=NOTIFICATION_PREFERENCES_FILE):
     """Show the current notification preferences for the requesting user."""
+    if not is_private_chat(update):
+        return
+
     user_id = update.effective_user.id
     preferences = ensure_user_preferences(
         notification_preferences,
@@ -150,6 +160,9 @@ async def coffee_schedule(
     coffee_host_schedule,
 ):
     """Show the private coffee schedule to the admin or an assigned host."""
+    if not is_private_chat(update):
+        return
+
     user_id = update.effective_user.id
     if not can_view_coffee_schedule(user_id, admin_id, coffee_hosts):
         await update.message.reply_text(
@@ -171,24 +184,36 @@ async def coffee_schedule(
 
 async def meetup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /meetup command."""
+    if not is_private_chat(update):
+        return
+
     await update.message.reply_text(
         "https://www.meetup.com/guadalajara-bitcoin-and-lightning/"
     )
 
 async def eventos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /eventos command."""
+    if not is_private_chat(update):
+        return
+
     await update.message.reply_text(
         "https://btcgdl.com/eventos.html"
     )
 
 async def bitdevs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /bitdevs command."""
+    if not is_private_chat(update):
+        return
+
     await update.message.reply_text(
         "https://bitdevs.btcgdl.com/"
     )
 
 async def web(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle the /web command."""
+    if not is_private_chat(update):
+        return
+
     await update.message.reply_text(
         "https://btcgdl.com/"
     )
