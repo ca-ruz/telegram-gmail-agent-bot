@@ -342,6 +342,37 @@ async def payments(
     )
 
 
+async def handle_payment_review(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    primary_admin_id,
+    payment_admin_id,
+    state,
+):
+    """Open the payment review from an authorized follow-up button."""
+    query = update.callback_query
+    if not can_manage_payments(
+        query.from_user.id,
+        primary_admin_id,
+        payment_admin_id,
+    ):
+        await query.answer("No tienes permisos para revisar pagos.", show_alert=True)
+        return
+
+    await query.answer()
+    await query.edit_message_text(
+        format_payment_review(
+            state.get("payment_state", {}),
+            state.get("members", {}),
+        ),
+        parse_mode=ParseMode.HTML,
+        reply_markup=payment_review_keyboard(
+            state.get("payment_state", {}),
+            state.get("members", {}),
+        ),
+    )
+
+
 async def handle_payment_status(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,

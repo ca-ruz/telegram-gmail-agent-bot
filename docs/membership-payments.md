@@ -13,6 +13,7 @@ MEMBERS_FILE=data/members.json
 PAYMENT_STATE_FILE=data/payment_state.json
 MEMBERS_GROUP_ID=-1001234567890
 PAYMENT_REMINDER_HOUR=9
+PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS=2
 ENABLE_PAYMENT_REMINDERS=true
 ```
 
@@ -23,6 +24,12 @@ same as the general broadcast-group list.
 
 The reminder hour uses `America/Mexico_City`. The payment and member JSON files
 are runtime data and must remain outside Git.
+
+After each successful public reminder, the bot waits the configured number of
+hours before privately notifying `PAYMENT_ADMIN_ID`. The follow-up includes a
+`Revisar pagos` button that opens the same authorized review screen as
+`/payments`. Set the delay to `0` to send the follow-up during the same
+scheduler check as the public reminder.
 
 ## Initial Setup
 
@@ -80,6 +87,11 @@ Public messages do not include member names or payment details. The bot stores
 each successful public stage in `payment_state.json` so scheduler restarts do
 not resend it.
 
+The payment administrator follow-up is sent only after the corresponding
+public reminder succeeds. Each public stage produces at most one follow-up;
+failed deliveries remain eligible for a later scheduler retry. Follow-ups are
+private and never sent to the membership group or regular subscribers.
+
 Private reminders begin on the first day and may be sent again at the overdue
 stage. They are sent only when all of these conditions are true:
 
@@ -121,6 +133,9 @@ updating. Back up runtime data before intentionally changing the deployment.
 
 - No public reminder: verify `MEMBERS_GROUP_ID`, bot permissions, and `ENABLE_PAYMENT_REMINDERS=true`.
 - No private reminder: verify the member is active, unpaid, has the correct Telegram ID, and has `payments` enabled.
+- No payment-admin follow-up: verify `PAYMENT_ADMIN_ID`,
+  `PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS`, and that the public reminder was
+  delivered successfully.
 - Repeated reminder after a restart: inspect `data/payment_state.json` and confirm the service user can write to the `data/` directory.
 - Wrong time: check the device timezone and `PAYMENT_REMINDER_HOUR`; the schedule is evaluated in `America/Mexico_City`.
 - Check logs with `journalctl`; never paste `.env` or runtime JSON contents into public issues.
