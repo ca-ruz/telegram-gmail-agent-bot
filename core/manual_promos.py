@@ -12,6 +12,7 @@ from core.event_registrations import (
     get_registered_users,
     save_event_registrations,
 )
+from core.linked_events import validate_linked_events
 from core.notification_preferences import filter_users_by_category
 from core.reminder_timing import get_event_reminder_stage
 from core.community import format_community_group_cta
@@ -52,6 +53,15 @@ def load_manual_promos(file_path):
 
 def save_manual_promos(file_path, promos):
     """Persist manually staged event promos atomically."""
+    for promo_id, promo in (promos or {}).items():
+        if not isinstance(promo, dict) or not promo.get("linked_events"):
+            continue
+        try:
+            promo["linked_events"] = validate_linked_events(
+                promo["linked_events"]
+            )
+        except ValueError as exc:
+            raise ValueError(f"Invalid linked events for promo {promo_id}.") from exc
     save_json(file_path, promos)
 
 
@@ -160,8 +170,19 @@ def format_manual_promo_caption(promo, community_group_url=""):
     return caption[:1024]
 
 
-def build_manual_promo(event_id, summary, event_start, text, image_file_id, location=""):
+def build_manual_promo(
+    event_id,
+    summary,
+    event_start,
+    text,
+    image_file_id,
+    location="",
+    linked_events=None,
+):
     """Build a JSON-serializable manually staged event promo record."""
+    normalized_linked_events = []
+    if linked_events is not None:
+        normalized_linked_events = validate_linked_events(linked_events)
     return {
         "event_id": event_id,
         "summary": summary,
@@ -169,6 +190,7 @@ def build_manual_promo(event_id, summary, event_start, text, image_file_id, loca
         "event_start": event_start,
         "text": text,
         "image_file_id": image_file_id,
+        "linked_events": normalized_linked_events,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "reminders_sent": {},
         "group_reminders_sent": {},
