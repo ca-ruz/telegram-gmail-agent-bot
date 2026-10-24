@@ -165,9 +165,6 @@ CONFIG = {
     'COWORKING_SPACE_NAME': os.getenv(
         'COWORKING_SPACE_NAME', 'Espacio de coworking de la comunidad'
     ),
-    'COWORKING_LOCATION': os.getenv(
-        'COWORKING_LOCATION', 'Ubicación por confirmar'
-    ),
     'COWORKING_DESCRIPTION': os.getenv(
         'COWORKING_DESCRIPTION',
         'Un espacio para trabajar, aprender y conectar con la comunidad.',

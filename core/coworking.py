@@ -83,9 +83,6 @@ def format_coworking_invitation(config=None):
         config.get("COWORKING_SPACE_NAME")
         or "Espacio de coworking de la comunidad"
     ))
-    location = escape(str(
-        config.get("COWORKING_LOCATION") or "Ubicación por confirmar"
-    ))
     description = escape(str(
         config.get("COWORKING_DESCRIPTION")
         or "Un espacio para trabajar, aprender y conectar con la comunidad."
@@ -94,8 +91,6 @@ def format_coworking_invitation(config=None):
         f"🏠 <b>{space_name}</b>",
         "",
         description,
-        "",
-        f"📍 <b>Ubicación:</b> {location}",
     ]
     links = (
         ("COWORKING_VISIT_URL", "ℹ️ Información para visitar"),
