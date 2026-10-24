@@ -15,7 +15,7 @@ from core.monthly_calendar import (
 )
 
 
-def make_callback_update(callback_data, user_id=42):
+def make_callback_update(callback_data, user_id=42, chat_type="private"):
     """Build a minimal callback update for public content tests."""
     message = SimpleNamespace(
         photo=[],
@@ -32,7 +32,7 @@ def make_callback_update(callback_data, user_id=42):
     )
     return SimpleNamespace(
         callback_query=query,
-        effective_chat=SimpleNamespace(id=123, type="private"),
+        effective_chat=SimpleNamespace(id=123, type=chat_type),
     )
 
 
@@ -48,6 +48,19 @@ def make_promo(event_start, status="active", first_notification_sent=True):
         "status": status,
         "first_notification_sent": first_notification_sent,
     }
+
+
+def test_user_callbacks_are_ignored_in_groups():
+    """User callback keyboards cannot open private content in groups."""
+    update = make_callback_update("subscriptions", chat_type="group")
+
+    asyncio.run(user.button_click(update, SimpleNamespace(), set()))
+
+    update.callback_query.answer.assert_awaited_once_with(
+        "Usa el chat privado con el bot."
+    )
+    update.callback_query.edit_message_text.assert_not_awaited()
+    update.callback_query.edit_message_caption.assert_not_awaited()
 
 
 def test_monthly_calendar_round_trip_and_title(tmp_path):
