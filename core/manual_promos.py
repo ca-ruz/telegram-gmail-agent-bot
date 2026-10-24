@@ -141,11 +141,51 @@ def _split_manual_promo_links(text):
     return text_without_links, links
 
 
+def _format_linked_event_section(event):
+    """Format one linked event with its structured publication details."""
+    date_text, time_text = _format_manual_promo_datetime(event["event_start"])
+    event_end = event.get("event_end")
+    if event_end:
+        end_date, end_time = _format_manual_promo_datetime(event_end)
+        if end_date == date_text:
+            time_text = f"{time_text} - {end_time}"
+        else:
+            time_text = f"{time_text} - {end_date}, {end_time}"
+
+    lines = [f"🎟️ {event.get('summary', 'Evento')}"]
+    relationship = str(event.get("relationship", "")).strip()
+    if relationship:
+        lines.append(f"➡️ {relationship}")
+    lines.append(f"📅 {date_text}")
+    lines.append(f"🕕 {time_text}")
+    location = str(event.get("location", "")).strip()
+    if location:
+        lines.append(f"📍 {location}")
+    return escape("\n".join(lines))
+
+
 def format_manual_promo_caption(promo, community_group_url=""):
     """Build the final HTML caption for a manually staged event promo."""
     publication_text, links = _split_manual_promo_links(
         str(promo.get("text", "")).strip()
     )
+
+    linked_events = promo.get("linked_events") or []
+    if linked_events:
+        sections = [escape(publication_text)] if publication_text else []
+        for event in linked_events:
+            sections.append(_format_linked_event_section(event))
+            event_url = str(event.get("url", "")).strip()
+            if event_url and event_url not in links:
+                links.append(event_url)
+        if links:
+            sections.append(escape("\n".join(links)))
+        caption = "\n\n".join(sections)
+        community_cta = format_community_group_cta(community_group_url)
+        if community_cta:
+            caption = f"{caption}\n\n{community_cta}"
+        return caption[:1024]
+
     date_text, time_text = _format_manual_promo_datetime(promo["event_start"])
     details = []
 
