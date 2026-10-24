@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
+from html import escape
 from zoneinfo import ZoneInfo
 
 from tools.local.data_manager import load_json, save_json
@@ -75,14 +76,39 @@ def has_nearby_event(now, events, manual_promos, quiet_window_hours):
     return any(abs(event_time - current_time) <= quiet_window for event_time in event_times)
 
 
-def format_coworking_invitation():
-    """Build the weekly coworking invitation message."""
-    return (
-        "🏠 <b>Espacio de coworking</b>\n\n"
-        "Recuerda que tenemos un espacio para trabajar, aprender y conectar "
-        "con la comunidad. Ven a compartir proyectos, ideas y buenas conversaciones.\n\n"
-        "¡Te esperamos! ⚡"
+def format_coworking_invitation(config=None):
+    """Build a configured, HTML-safe weekly coworking invitation."""
+    config = config or {}
+    space_name = escape(str(
+        config.get("COWORKING_SPACE_NAME")
+        or "Espacio de coworking de la comunidad"
+    ))
+    location = escape(str(
+        config.get("COWORKING_LOCATION") or "Ubicación por confirmar"
+    ))
+    description = escape(str(
+        config.get("COWORKING_DESCRIPTION")
+        or "Un espacio para trabajar, aprender y conectar con la comunidad."
+    ))
+    message = [
+        f"🏠 <b>{space_name}</b>",
+        "",
+        description,
+        "",
+        f"📍 <b>Ubicación:</b> {location}",
+    ]
+    links = (
+        ("COWORKING_VISIT_URL", "ℹ️ Información para visitar"),
+        ("COWORKING_DAY_PASS_URL", "🎟️ Pase por día"),
+        ("COWORKING_MEMBERSHIP_URL", "🤝 Membresías"),
     )
+    for setting, label in links:
+        url = str(config.get(setting, "") or "").strip()
+        if url:
+            message.append(f'\n<a href="{escape(url, quote=True)}">{label}</a>')
+
+    message.extend(("", "¿Te interesa conocer el espacio? Escríbenos en el grupo para confirmar horarios y disponibilidad. ⚡"))
+    return "\n".join(message)
 
 
 def _get_coworking_group_targets(state):
@@ -137,7 +163,7 @@ async def check_coworking_notifications(context, config, state, now=None):
         try:
             await context.bot.send_message(
                 chat_id=group_id,
-                text=format_coworking_invitation(),
+                text=format_coworking_invitation(config),
                 parse_mode="HTML",
             )
         except Exception:
