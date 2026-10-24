@@ -67,6 +67,7 @@ def test_monthly_payment_state_contains_active_members_only():
                 "reminders_sent": [],
             }
         },
+        "payment_admin_followups_sent": {},
     }
 
 

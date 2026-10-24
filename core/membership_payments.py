@@ -118,6 +118,7 @@ def build_monthly_payment_state(members, period=None):
             for member_id, member in members.items()
             if isinstance(member, dict) and member.get("active", True)
         },
+        "payment_admin_followups_sent": {},
     }
 
 
@@ -157,6 +158,12 @@ def synchronize_payment_state(payment_state, members, period=None):
         else {},
         "personal_reminders_sent": payment_state.get("personal_reminders_sent", {})
         if isinstance(payment_state.get("personal_reminders_sent", {}), dict)
+        else {},
+        "payment_admin_followups_sent": payment_state.get(
+            "payment_admin_followups_sent",
+            {},
+        )
+        if isinstance(payment_state.get("payment_admin_followups_sent", {}), dict)
         else {},
     }
 
