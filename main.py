@@ -11,7 +11,8 @@ from bot.handlers.admin import (
     list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
-    coffee_host, remind, manual_promo, handle_admin_photo, monthly_calendar, payments,
+    coffee_host, remind, manual_promo, linked_promo, linked_promo_done,
+    linked_promo_cancel, handle_admin_photo, monthly_calendar, payments,
     handle_payment_status,
     manage_members,
     flyers, handle_imported_flyer_selection,
@@ -247,6 +248,9 @@ def main():
             BotCommand("coffeehost", "Administrar anfitriones"),
             BotCommand("remind", "Enviar recordatorios"),
             BotCommand("manualpromo", "Publicar una promoción"),
+            BotCommand("linkedpromo", "Crear promo de eventos relacionados"),
+            BotCommand("linkedpromodone", "Terminar eventos relacionados"),
+            BotCommand("linkedpromocancel", "Cancelar promo relacionada"),
             BotCommand("calendario", "Subir calendario mensual"),
             BotCommand("members", "Administrar miembros"),
             BotCommand("payments", "Revisar pagos"),
@@ -377,6 +381,12 @@ def main():
         )))
     app.add_handler(CommandHandler("manualpromo",
         partial(manual_promo, admin_id=CONFIG['ADMIN_ID'])))
+    app.add_handler(CommandHandler("linkedpromo",
+        partial(linked_promo, admin_id=CONFIG['ADMIN_ID'])))
+    app.add_handler(CommandHandler("linkedpromodone",
+        partial(linked_promo_done, admin_id=CONFIG['ADMIN_ID'])))
+    app.add_handler(CommandHandler("linkedpromocancel",
+        partial(linked_promo_cancel, admin_id=CONFIG['ADMIN_ID'])))
     app.add_handler(CommandHandler("calendario",
         partial(monthly_calendar, admin_id=CONFIG['ADMIN_ID'])))
     app.add_handler(CommandHandler("members",

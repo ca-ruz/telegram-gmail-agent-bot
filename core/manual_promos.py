@@ -12,6 +12,7 @@ from core.event_registrations import (
     get_registered_users,
     save_event_registrations,
 )
+from core.linked_events import validate_linked_events
 from core.notification_preferences import filter_users_by_category
 from core.reminder_timing import get_event_reminder_stage
 from core.community import format_community_group_cta
@@ -52,6 +53,15 @@ def load_manual_promos(file_path):
 
 def save_manual_promos(file_path, promos):
     """Persist manually staged event promos atomically."""
+    for promo_id, promo in (promos or {}).items():
+        if not isinstance(promo, dict) or not promo.get("linked_events"):
+            continue
+        try:
+            promo["linked_events"] = validate_linked_events(
+                promo["linked_events"]
+            )
+        except ValueError as exc:
+            raise ValueError(f"Invalid linked events for promo {promo_id}.") from exc
     save_json(file_path, promos)
 
 
@@ -131,11 +141,61 @@ def _split_manual_promo_links(text):
     return text_without_links, links
 
 
-def format_manual_promo_caption(promo, community_group_url=""):
+def _format_linked_event_section(event):
+    """Format one linked event with its structured publication details."""
+    date_text, time_text = _format_manual_promo_datetime(event["event_start"])
+    event_end = event.get("event_end")
+    if event_end:
+        end_date, end_time = _format_manual_promo_datetime(event_end)
+        if end_date == date_text:
+            time_text = f"{time_text} - {end_time}"
+        else:
+            time_text = f"{time_text} - {end_date}, {end_time}"
+
+    lines = [f"🎟️ {event.get('summary', 'Evento')}"]
+    relationship = str(event.get("relationship", "")).strip()
+    if relationship:
+        lines.append(f"➡️ {relationship}")
+    lines.append(f"📅 {date_text}")
+    lines.append(f"🕕 {time_text}")
+    location = str(event.get("location", "")).strip()
+    if location:
+        lines.append(f"📍 {location}")
+    return escape("\n".join(lines))
+
+
+def format_manual_promo_caption(
+    promo,
+    community_group_url="",
+    reminder_event=None,
+):
     """Build the final HTML caption for a manually staged event promo."""
     publication_text, links = _split_manual_promo_links(
         str(promo.get("text", "")).strip()
     )
+
+    linked_events = promo.get("linked_events") or []
+    if linked_events:
+        sections = [escape(publication_text)] if publication_text else []
+        if reminder_event:
+            sections.append(
+                escape(
+                    f"🔔 Recordatorio: {reminder_event.get('summary', 'Evento')}"
+                )
+            )
+        for event in linked_events:
+            sections.append(_format_linked_event_section(event))
+            event_url = str(event.get("url", "")).strip()
+            if event_url and event_url not in links:
+                links.append(event_url)
+        if links:
+            sections.append(escape("\n".join(links)))
+        caption = "\n\n".join(sections)
+        community_cta = format_community_group_cta(community_group_url)
+        if community_cta:
+            caption = f"{caption}\n\n{community_cta}"
+        return caption[:1024]
+
     date_text, time_text = _format_manual_promo_datetime(promo["event_start"])
     details = []
 
@@ -160,8 +220,19 @@ def format_manual_promo_caption(promo, community_group_url=""):
     return caption[:1024]
 
 
-def build_manual_promo(event_id, summary, event_start, text, image_file_id, location=""):
+def build_manual_promo(
+    event_id,
+    summary,
+    event_start,
+    text,
+    image_file_id,
+    location="",
+    linked_events=None,
+):
     """Build a JSON-serializable manually staged event promo record."""
+    normalized_linked_events = []
+    if linked_events is not None:
+        normalized_linked_events = validate_linked_events(linked_events)
     return {
         "event_id": event_id,
         "summary": summary,
@@ -169,6 +240,7 @@ def build_manual_promo(event_id, summary, event_start, text, image_file_id, loca
         "event_start": event_start,
         "text": text,
         "image_file_id": image_file_id,
+        "linked_events": normalized_linked_events,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "reminders_sent": {},
         "group_reminders_sent": {},
@@ -192,10 +264,12 @@ def get_manual_promo_stage(
     reminder_rules,
     same_day_hour=13,
     morning_lead_hours=2,
+    reminder_event=None,
 ):
     """Return the configured reminder stage for a manual promo."""
+    event_source = reminder_event or promo
     event_time = datetime.fromisoformat(
-        str(promo["event_start"]).replace("Z", "+00:00")
+        str(event_source["event_start"]).replace("Z", "+00:00")
     )
     if event_time.tzinfo is None:
         event_time = event_time.replace(tzinfo=MANUAL_PROMO_TIMEZONE)
@@ -253,24 +327,31 @@ async def deliver_manual_promo(
     is_first_notification=False,
     notification_preferences=None,
     community_group_url="",
+    reminder_event=None,
+    reminder_key=None,
 ):
     """Deliver one promo stage to subscribers and broadcast groups."""
     reminders_sent = promo.setdefault("reminders_sent", {})
     group_reminders_sent = promo.setdefault("group_reminders_sent", {})
+    state_key = reminder_key or stage
     subscribers = filter_users_by_category(
         subscribers,
         notification_preferences,
         "events",
     )
-    sent_subscribers = set(reminders_sent.get(stage, []))
-    sent_groups = set(group_reminders_sent.get(stage, []))
+    sent_subscribers = set(reminders_sent.get(state_key, []))
+    sent_groups = set(group_reminders_sent.get(state_key, []))
     result = {
         "subscribers_sent": 0,
         "groups_sent": 0,
         "subscriber_failures": 0,
         "group_failures": 0,
     }
-    caption = format_manual_promo_caption(promo, community_group_url)
+    caption = format_manual_promo_caption(
+        promo,
+        community_group_url,
+        reminder_event=reminder_event,
+    )
 
     for subscriber_id in subscribers:
         if subscriber_id in sent_subscribers:
@@ -314,8 +395,8 @@ async def deliver_manual_promo(
         sent_groups.add(group_id)
         result["groups_sent"] += 1
 
-    reminders_sent[stage] = sorted(sent_subscribers)
-    group_reminders_sent[stage] = sorted(sent_groups)
+    reminders_sent[state_key] = sorted(sent_subscribers)
+    group_reminders_sent[state_key] = sorted(sent_groups)
     if is_first_notification and not (
         result["subscriber_failures"] or result["group_failures"]
     ):
@@ -351,12 +432,19 @@ async def deliver_registered_manual_promo(
     registered_users,
     stage,
     community_group_url="",
+    reminder_event=None,
+    reminder_key=None,
 ):
     """Deliver an additional event reminder to registered users by DM only."""
     reminders_sent = promo.setdefault("registered_reminders_sent", {})
-    sent_users = set(reminders_sent.get(stage, []))
+    state_key = reminder_key or stage
+    sent_users = set(reminders_sent.get(state_key, []))
     result = {"sent": 0, "failures": 0}
-    caption = format_manual_promo_caption(promo, community_group_url)
+    caption = format_manual_promo_caption(
+        promo,
+        community_group_url,
+        reminder_event=reminder_event,
+    )
 
     for user_id in registered_users:
         if user_id in sent_users:
@@ -379,8 +467,118 @@ async def deliver_registered_manual_promo(
         sent_users.add(user_id)
         result["sent"] += 1
 
-    reminders_sent[stage] = sorted(sent_users)
+    reminders_sent[state_key] = sorted(sent_users)
     return result
+
+
+def _parse_manual_event_time(event_start):
+    """Parse a manual event timestamp in the configured local timezone."""
+    event_time = datetime.fromisoformat(str(event_start).replace("Z", "+00:00"))
+    if event_time.tzinfo is None:
+        event_time = event_time.replace(tzinfo=MANUAL_PROMO_TIMEZONE)
+    return event_time
+
+
+def _linked_event_reminder_key(event, stage):
+    """Build a persistent reminder key for one linked event segment."""
+    return f"linked:{event['event_id']}:{stage}"
+
+
+async def _check_linked_manual_promo_reminders(
+    context,
+    promo,
+    subscribers,
+    groups,
+    event_registrations,
+    reminder_rules,
+    notification_preferences,
+    community_group_url,
+    now,
+    same_day_hour,
+    morning_lead_hours,
+):
+    """Deliver due reminders for each event in a linked promo."""
+    linked_events = promo.get("linked_events") or []
+
+    if promo.get("first_notification_at") and not promo.get(
+        "first_notification_sent",
+        False,
+    ):
+        initial_stage = _get_manual_promo_stage(
+            _parse_manual_event_time(promo["event_start"]),
+            now,
+            reminder_rules,
+            promo,
+            same_day_hour,
+            morning_lead_hours,
+        )
+        if initial_stage is None:
+            return False
+
+        result = await deliver_manual_promo(
+            context,
+            promo,
+            subscribers,
+            groups,
+            "initial",
+            is_first_notification=True,
+            notification_preferences=notification_preferences,
+            community_group_url=community_group_url,
+        )
+        return bool(any(result.values()))
+
+    changed = False
+    for event in linked_events:
+        stage = get_manual_promo_stage(
+            promo,
+            now,
+            reminder_rules,
+            same_day_hour,
+            morning_lead_hours,
+            reminder_event=event,
+        )
+        if stage is None:
+            continue
+
+        result = await deliver_manual_promo(
+            context,
+            promo,
+            subscribers,
+            groups,
+            stage,
+            notification_preferences=notification_preferences,
+            community_group_url=community_group_url,
+            reminder_event=event,
+            reminder_key=_linked_event_reminder_key(event, stage),
+        )
+        if any(result.values()):
+            changed = True
+
+        try:
+            event_time = _parse_manual_event_time(event["event_start"])
+            seconds_until_event = (event_time - now).total_seconds()
+        except (KeyError, TypeError, ValueError):
+            seconds_until_event = -1
+
+        if 0 < seconds_until_event <= timedelta(hours=1).total_seconds():
+            event_id = str(event["event_id"])
+            registered_users = get_registered_users(
+                event_registrations,
+                event_id,
+            )
+            registered_result = await deliver_registered_manual_promo(
+                context,
+                promo,
+                registered_users,
+                "registered_1h",
+                community_group_url,
+                reminder_event=event,
+                reminder_key=f"registered_1h:{event_id}",
+            )
+            if any(registered_result.values()):
+                changed = True
+
+    return changed
 
 
 async def check_manual_promo_reminders(context, config, state):
@@ -406,6 +604,23 @@ async def check_manual_promo_reminders(context, config, state):
 
     for promo_id, promo in promos.items():
         if not isinstance(promo, dict) or promo.get("status") != "active":
+            continue
+
+        if promo.get("linked_events"):
+            linked_changed = await _check_linked_manual_promo_reminders(
+                context,
+                promo,
+                subscribers,
+                groups,
+                event_registrations,
+                reminder_rules,
+                notification_preferences,
+                config.get("COMMUNITY_GROUP_URL", ""),
+                now,
+                config.get("EVENT_SAME_DAY_REMINDER_HOUR", 13),
+                config.get("EVENT_MORNING_REMINDER_LEAD_HOURS", 2),
+            )
+            changed = changed or linked_changed
             continue
 
         try:

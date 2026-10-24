@@ -70,16 +70,24 @@ def cleanup_expired_event_registrations(registrations, promos, now=None):
     for promo_id, promo in promos.items() if isinstance(promos, dict) else []:
         if not isinstance(promo, dict) or not promo.get("event_start"):
             continue
-        try:
-            event_time = datetime.fromisoformat(
-                str(promo["event_start"]).replace("Z", "+00:00")
-            )
-            if event_time.tzinfo is None:
-                event_time = event_time.replace(tzinfo=timezone.utc)
-        except (TypeError, ValueError):
-            continue
-        if event_time <= current_time:
-            expired_event_ids.add(str(promo.get("event_id", promo_id)))
+        event_records = [
+            {
+                "event_id": promo.get("event_id", promo_id),
+                "event_start": promo["event_start"],
+            }
+        ]
+        event_records.extend(promo.get("linked_events") or [])
+        for event in event_records:
+            try:
+                event_time = datetime.fromisoformat(
+                    str(event["event_start"]).replace("Z", "+00:00")
+                )
+                if event_time.tzinfo is None:
+                    event_time = event_time.replace(tzinfo=timezone.utc)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if event_time <= current_time:
+                expired_event_ids.add(str(event.get("event_id", promo_id)))
 
     removed = 0
     for event_id in expired_event_ids:

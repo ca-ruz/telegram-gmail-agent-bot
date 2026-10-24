@@ -50,6 +50,7 @@ from core.imported_events import (
     get_events_missing_flyers,
     save_imported_events,
 )
+from core.linked_events import build_linked_event, validate_linked_events
 from core.promoter import send_manual_event_reminder, send_manual_event_reminder_test
 
 # Initialize logger for this module
@@ -743,6 +744,171 @@ async def manual_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin
     )
 
 
+def parse_linked_event_input(raw_text, display_order, event_group_id):
+    """Parse one guided linked-event input line into a validated segment."""
+    parts = [part.strip() for part in raw_text.split("|")]
+    if len(parts) != 6:
+        raise ValueError(
+            "Usa: Título | Inicio | Fin (opcional) | Lugar | "
+            "URL (opcional) | Relación (opcional)"
+        )
+
+    summary, start_text, end_text, location, url, relationship = parts
+    if not summary or not start_text or not location:
+        raise ValueError("Título, inicio y lugar son obligatorios.")
+
+    try:
+        event_start = datetime.fromisoformat(start_text)
+    except ValueError as exc:
+        raise ValueError("El inicio debe tener formato AAAA-MM-DD HH:MM.") from exc
+    if event_start.tzinfo is None:
+        event_start = event_start.replace(tzinfo=COFFEE_TIMEZONE)
+    if event_start <= datetime.now(event_start.tzinfo):
+        raise ValueError("La fecha del evento debe estar en el futuro.")
+
+    event_end = None
+    if end_text:
+        try:
+            event_end = datetime.fromisoformat(end_text)
+        except ValueError as exc:
+            raise ValueError("El fin debe tener formato AAAA-MM-DD HH:MM.") from exc
+        if event_end.tzinfo is None:
+            event_end = event_end.replace(tzinfo=event_start.tzinfo)
+
+    return build_linked_event(
+        event_id=f"{event_group_id}-event-{display_order + 1}",
+        summary=summary,
+        event_start=event_start.isoformat(),
+        event_end=event_end.isoformat() if event_end else None,
+        location=location,
+        url=url,
+        relationship=relationship,
+        display_order=display_order,
+    )
+
+
+async def linked_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):
+    """Start the guided administrator workflow for a linked-event promo."""
+    if update.effective_user.id != admin_id:
+        return
+
+    draft_id = f"linked-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}"
+    context.user_data["linked_promo_draft"] = {
+        "event_group_id": draft_id,
+        "events": [],
+        "phase": "events",
+    }
+    await update.message.reply_text(
+        "✅ Promo de eventos relacionados iniciado.\n\n"
+        "Envía cada evento en una línea con este formato:\n"
+        "Título | AAAA-MM-DD HH:MM | AAAA-MM-DD HH:MM (opcional) | "
+        "Lugar | URL (opcional) | Relación (opcional)\n\n"
+        "Ejemplo:\n"
+        "Forks Meetup | 2026-10-20 18:00 | 2026-10-20 20:00 | "
+        "Community Space | https://ejemplo.com |\n\n"
+        "Agrega al menos dos eventos y después escribe /linkedpromodone.\n"
+        "Para cancelar: /linkedpromocancel"
+    )
+
+
+async def linked_promo_done(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):
+    """Move a linked-event draft from event entry to publication text."""
+    if update.effective_user.id != admin_id:
+        return
+
+    draft = context.user_data.get("linked_promo_draft")
+    if not draft:
+        await update.message.reply_text("❌ No hay un promo de eventos relacionados activo.")
+        return
+    if len(draft["events"]) < 2:
+        await update.message.reply_text("❌ Agrega al menos dos eventos antes de continuar.")
+        return
+
+    try:
+        draft["events"] = validate_linked_events(draft["events"])
+    except ValueError as exc:
+        await update.message.reply_text(f"❌ {exc}")
+        return
+
+    draft["phase"] = "text"
+    await update.message.reply_text(
+        "✅ Eventos guardados. Ahora envía el texto de publicación.\n"
+        "Puedes explicar la relación entre los eventos y añadir hashtags."
+    )
+
+
+async def linked_promo_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):
+    """Cancel the active linked-event administrator workflow."""
+    if update.effective_user.id != admin_id:
+        return
+
+    removed = context.user_data.pop("linked_promo_draft", None)
+    await update.message.reply_text(
+        "🗑 Promo de eventos relacionados cancelado."
+        if removed
+        else "No hay un promo de eventos relacionados activo."
+    )
+
+
+async def handle_linked_promo_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    admin_id,
+):
+    """Handle one event line or the publication text in a linked-event draft."""
+    if update.effective_user.id != admin_id:
+        return
+
+    draft = context.user_data.get("linked_promo_draft")
+    if not draft or not update.message or not update.message.text:
+        return
+
+    text = update.message.text.strip()
+    if draft["phase"] == "events":
+        try:
+            event = parse_linked_event_input(
+                text,
+                len(draft["events"]),
+                draft["event_group_id"],
+            )
+        except ValueError as exc:
+            await update.message.reply_text(f"❌ {exc}")
+            return
+        draft["events"].append(event)
+        await update.message.reply_text(
+            f"✅ Evento {len(draft['events'])} guardado: {escape(event['summary'])}.\n"
+            "Agrega otro evento o escribe /linkedpromodone.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if draft["phase"] != "text":
+        return
+    if not text:
+        await update.message.reply_text("❌ El texto de publicación no puede estar vacío.")
+        return
+
+    events = validate_linked_events(draft["events"])
+    first_event = events[0]
+    promo = build_manual_promo(
+        draft["event_group_id"],
+        " + ".join(event["summary"] for event in events),
+        first_event["event_start"],
+        text,
+        "",
+        location=first_event["location"],
+        linked_events=events,
+    )
+    draft.clear()
+    draft.update(promo)
+    draft["phase"] = "photo"
+    context.user_data["manual_promo_draft"] = draft
+    context.user_data.pop("linked_promo_draft", None)
+    await update.message.reply_text(
+        "✅ Texto guardado. Ahora envía el flyer como una foto para continuar."
+    )
+
+
 async def handle_manual_promo_photo(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -766,6 +932,7 @@ async def handle_manual_promo_photo(
         draft["text"],
         image_file_id,
         location=draft["location"],
+        linked_events=draft.get("linked_events"),
     )
     promo["status"] = "pending"
     state.setdefault("manual_promos", {})[draft["event_id"]] = promo
@@ -1722,6 +1889,10 @@ async def handle_admin_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             state,
             config,
         )
+        return
+
+    if context.user_data.get("linked_promo_draft"):
+        await handle_linked_promo_input(update, context, admin_id)
         return
 
     # Replies go to refinement logic (only for text messages, not forced voice text)
