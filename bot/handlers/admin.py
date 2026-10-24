@@ -52,6 +52,7 @@ from core.imported_events import (
 )
 from core.linked_events import build_linked_event, validate_linked_events
 from core.promoter import send_manual_event_reminder, send_manual_event_reminder_test
+from core.telegram_metadata import record_group_metadata, save_telegram_metadata
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -243,6 +244,7 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "<b>Admin commands</b>\n\n"
         "/status - Show bot health and configuration\n"
         "/groups - List all broadcast groups\n"
+        "/users - List known Telegram users\n"
         "/addgroup - Add this group to broadcast targets\n"
         "/removegroup - Remove this group from broadcast targets\n"
         "/addevent - Create a Google Calendar event (natural language)\n"
@@ -2039,19 +2041,82 @@ async def add_group(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id
     if chat.type in ["group", "supergroup"]:
         state['groups'].add(chat.id)
         save_json(config['GROUPS_FILE'], list(state['groups']))
+        metadata = state.setdefault(
+            "telegram_metadata",
+            {"users": {}, "groups": {}},
+        )
+        record_group_metadata(metadata, chat)
+        if config.get("TELEGRAM_METADATA_FILE"):
+            save_telegram_metadata(config["TELEGRAM_METADATA_FILE"], metadata)
         await update.message.reply_text(f"✅ Grupo '{chat.title}' añadido a la lista de difusión.")
         logger.info(f"Group added: {chat.title} ({chat.id})")
 
 async def list_groups(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state):
-    """
-    Lists registered groups.
-    """
-    if update.effective_user.id != admin_id: return
-    if not state['groups']:
+    """List registered groups with readable metadata and canonical IDs."""
+    if update.effective_user.id != admin_id:
+        return
+    groups = state.get("groups", set())
+    if not groups:
         await update.message.reply_text("No hay grupos configurados.")
         return
-    msg = "📢 <b>Grupos de difusión:</b>\n\n" + "\n".join([f"• <code>{gid}</code>" for gid in state['groups']])
+
+    metadata = state.get("telegram_metadata", {})
+    group_metadata = metadata.get("groups", {}) if isinstance(metadata, dict) else {}
+    if not isinstance(group_metadata, dict):
+        group_metadata = {}
+    lines = []
+    for group_id in sorted(groups, key=str):
+        record = group_metadata.get(str(group_id), {})
+        if not isinstance(record, dict):
+            record = {}
+        display_name = record.get("display_name", "Grupo sin nombre")
+        username = record.get("username", "")
+        line = f"• <b>{escape(str(display_name))}</b>"
+        if username:
+            line += f" (@{escape(str(username))})"
+        line += f"\n  ID: <code>{escape(str(group_id))}</code>"
+        lines.append(line)
+
+    msg = "📢 <b>Grupos de difusión:</b>\n\n" + "\n".join(lines)
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state):
+    """List known Telegram users with subscription status and canonical IDs."""
+    if update.effective_user.id != admin_id:
+        return
+
+    metadata = state.get("telegram_metadata", {})
+    user_metadata = metadata.get("users", {}) if isinstance(metadata, dict) else {}
+    if not isinstance(user_metadata, dict):
+        user_metadata = {}
+    user_ids = set(user_metadata)
+    user_ids.update(str(user_id) for user_id in state.get("subscribers", set()))
+    if not user_ids:
+        await update.message.reply_text("No hay usuarios registrados.")
+        return
+
+    subscribed_ids = {str(user_id) for user_id in state.get("subscribers", set())}
+    lines = []
+    for user_id in sorted(user_ids, key=str):
+        record = user_metadata.get(user_id, {})
+        if not isinstance(record, dict):
+            record = {}
+        display_name = record.get("display_name", "Usuario sin nombre")
+        username = record.get("username", "")
+        status = "suscrito" if user_id in subscribed_ids else "no suscrito"
+        line = f"• <b>{escape(str(display_name))}</b>"
+        if username:
+            line += f" (@{escape(str(username))})"
+        line += (
+            f"\n  ID: <code>{escape(str(user_id))}</code>"
+            f" · {status}"
+        )
+        lines.append(line)
+
+    msg = "👤 <b>Usuarios conocidos:</b>\n\n" + "\n".join(lines)
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
 
 async def remove_group(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
     """

@@ -8,7 +8,7 @@ from bot.handlers.user import start, menu, subscriptions, meetup, eventos, bitde
 from bot.handlers.admin import (
     broadcast, draft, handle_draft_selection, handle_auto_draft, 
     handle_publish, handle_clear_pending_promo, add_group, remove_group,
-    list_groups, check_prompt, check_prompts, help_admin, pending_promo, status, 
+    list_groups, list_users, check_prompt, check_prompts, help_admin, pending_promo, status,
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
     coffee_host, remind, manual_promo, linked_promo, linked_promo_done,
@@ -33,6 +33,7 @@ from core.coworking import check_coworking_notifications, load_coworking_state
 from core.event_registrations import load_event_registrations
 from core.imported_events import load_imported_events
 from core.notification_preferences import load_notification_preferences
+from core.telegram_metadata import load_telegram_metadata
 from core.membership_payments import (
     check_payment_reminders,
     load_members,
@@ -120,6 +121,9 @@ CONFIG = {
     'REMINDERS_FILE': "data/sent_reminders.json",
     'REMINDER_CONFIG_FILE': "data/reminder_config.json",
     'SUBSCRIBERS_FILE': "data/subscribers.json",
+    'TELEGRAM_METADATA_FILE': os.getenv(
+        'TELEGRAM_METADATA_FILE', 'data/telegram_metadata.json'
+    ),
     'NOTIFICATION_PREFERENCES_FILE': "data/notification_preferences.json",
     'EVENT_REGISTRATIONS_FILE': os.getenv(
         'EVENT_REGISTRATIONS_FILE', 'data/event_registrations.json'
@@ -191,6 +195,9 @@ save_payment_state(CONFIG['PAYMENT_STATE_FILE'], payment_state)
 
 STATE = {
     'subscribers': event_subscribers,
+    'telegram_metadata': load_telegram_metadata(
+        CONFIG['TELEGRAM_METADATA_FILE']
+    ),
     'notification_preferences': load_notification_preferences(
         CONFIG['NOTIFICATION_PREFERENCES_FILE'],
         event_subscribers,
@@ -250,6 +257,7 @@ def main():
             BotCommand("broadcast", "Enviar un mensaje"),
             BotCommand("status", "Ver el estado del bot"),
             BotCommand("groups", "Administrar grupos"),
+            BotCommand("users", "Ver usuarios conocidos"),
             BotCommand("draft", "Crear un borrador"),
             BotCommand("flyers", "Asignar flyers a eventos"),
             BotCommand("addevent", "Crear un evento"),
@@ -325,6 +333,8 @@ def main():
         start,
         admin_id=CONFIG['ADMIN_ID'],
         coffee_hosts=STATE['coffee_hosts'],
+        telegram_metadata=STATE['telegram_metadata'],
+        telegram_metadata_file=CONFIG['TELEGRAM_METADATA_FILE'],
     )))
     app.add_handler(CommandHandler("menu", partial(
         menu,
@@ -336,6 +346,8 @@ def main():
         notification_preferences=STATE['notification_preferences'],
         subscribers=STATE['subscribers'],
         notification_preferences_file=CONFIG['NOTIFICATION_PREFERENCES_FILE'],
+        telegram_metadata=STATE['telegram_metadata'],
+        telegram_metadata_file=CONFIG['TELEGRAM_METADATA_FILE'],
     )))
     app.add_handler(CommandHandler("cafe", partial(
         coffee_schedule,
@@ -355,6 +367,8 @@ def main():
         partial(status, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG)))
     app.add_handler(CommandHandler("groups",
         partial(list_groups, admin_id=CONFIG['ADMIN_ID'], state=STATE)))
+    app.add_handler(CommandHandler("users",
+        partial(list_users, admin_id=CONFIG['ADMIN_ID'], state=STATE)))
     app.add_handler(CommandHandler("draft",
         partial(draft, admin_id=CONFIG['ADMIN_ID'], config=CONFIG)))
     app.add_handler(CommandHandler("flyers",
@@ -515,6 +529,8 @@ def main():
             event_registrations=STATE['event_registrations'],
             event_registrations_file=CONFIG['EVENT_REGISTRATIONS_FILE'],
             community_group_url=CONFIG['COMMUNITY_GROUP_URL'],
+            telegram_metadata=STATE['telegram_metadata'],
+            telegram_metadata_file=CONFIG['TELEGRAM_METADATA_FILE'],
         )))
 
     # Smart Admin Chat Handler (Natural Language)
