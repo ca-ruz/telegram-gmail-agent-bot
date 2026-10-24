@@ -4,7 +4,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from core.notification_preferences import filter_users_by_category
 from tools.local.data_manager import load_json, save_json
 
 
@@ -86,8 +85,22 @@ def format_coworking_invitation():
     )
 
 
+def _get_coworking_group_targets(state):
+    """Return configured broadcast-group IDs without subscriber filtering."""
+    raw_groups = state.get("groups", set())
+    if isinstance(raw_groups, dict):
+        raw_groups = raw_groups.keys()
+    if isinstance(raw_groups, (str, bytes)) or not raw_groups:
+        return []
+
+    return sorted(
+        {group_id for group_id in raw_groups if group_id not in (None, "")},
+        key=str,
+    )
+
+
 async def check_coworking_notifications(context, config, state, now=None):
-    """Send one weekly coworking invitation when its quiet-window checks pass."""
+    """Send one weekly coworking invitation to broadcast groups."""
     if not config.get("ENABLE_COWORKING_NOTIFICATIONS", True):
         return
 
@@ -112,22 +125,24 @@ async def check_coworking_notifications(context, config, state, now=None):
     ):
         return
 
+    group_ids = _get_coworking_group_targets(state)
+    if not group_ids:
+        logger.warning(
+            "Coworking notification is due, but no broadcast groups are configured."
+        )
+        return
+
     failures = 0
-    subscribers = filter_users_by_category(
-        state.get("subscribers", set()),
-        state.get("notification_preferences"),
-        "coworking",
-    )
-    for user_id in subscribers:
+    for group_id in group_ids:
         try:
             await context.bot.send_message(
-                chat_id=user_id,
+                chat_id=group_id,
                 text=format_coworking_invitation(),
                 parse_mode="HTML",
             )
         except Exception:
             failures += 1
-            logger.exception("Failed to send coworking invitation to subscriber %s.", user_id)
+            logger.exception("Failed to send coworking invitation to group %s.", group_id)
 
     if failures == 0:
         coworking_state["last_sent_week"] = week_key

@@ -45,16 +45,13 @@ def test_coworking_quiet_window_detects_calendar_and_manual_events():
     assert not has_nearby_event(now, [], manual_promos, quiet_window_hours=24)
 
 
-def test_coworking_delivery_respects_preferences_and_deduplicates(tmp_path):
-    """Eligible subscribers receive one coworking invitation per week."""
+def test_coworking_delivery_targets_groups_and_deduplicates(tmp_path):
+    """Configured groups receive one coworking invitation per week."""
     bot = SimpleNamespace(send_message=AsyncMock())
     context = SimpleNamespace(bot=bot, bot_data={"current_events": []})
     state = {
+        "groups": {-100123},
         "subscribers": {101, 202},
-        "notification_preferences": {
-            "101": {"coworking": True},
-            "202": {"coworking": False},
-        },
         "manual_promos": {},
         "coworking": {},
     }
@@ -71,7 +68,7 @@ def test_coworking_delivery_respects_preferences_and_deduplicates(tmp_path):
     asyncio.run(check_coworking_notifications(context, config, state, now=now))
 
     bot.send_message.assert_awaited_once()
-    assert bot.send_message.await_args.kwargs["chat_id"] == 101
+    assert bot.send_message.await_args.kwargs["chat_id"] == -100123
     assert state["coworking"]["last_sent_week"] == "2026-W43"
 
 
@@ -82,8 +79,8 @@ def test_failed_coworking_delivery_is_retried(tmp_path):
     )
     context = SimpleNamespace(bot=bot, bot_data={"current_events": []})
     state = {
+        "groups": {-100123},
         "subscribers": {101},
-        "notification_preferences": {"101": {"coworking": True}},
         "manual_promos": {},
         "coworking": {},
     }
