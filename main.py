@@ -158,6 +158,19 @@ CONFIG = {
     'COWORKING_QUIET_WINDOW_HOURS': parse_env_int(
         'COWORKING_QUIET_WINDOW_HOURS', 24
     ),
+    'COWORKING_SPACE_NAME': os.getenv(
+        'COWORKING_SPACE_NAME', 'Espacio de coworking de la comunidad'
+    ),
+    'COWORKING_LOCATION': os.getenv(
+        'COWORKING_LOCATION', 'Ubicación por confirmar'
+    ),
+    'COWORKING_DESCRIPTION': os.getenv(
+        'COWORKING_DESCRIPTION',
+        'Un espacio para trabajar, aprender y conectar con la comunidad.',
+    ),
+    'COWORKING_VISIT_URL': os.getenv('COWORKING_VISIT_URL', ''),
+    'COWORKING_DAY_PASS_URL': os.getenv('COWORKING_DAY_PASS_URL', ''),
+    'COWORKING_MEMBERSHIP_URL': os.getenv('COWORKING_MEMBERSHIP_URL', ''),
 }
 
 # --- STATE INITIALIZATION & MIGRATION ---
