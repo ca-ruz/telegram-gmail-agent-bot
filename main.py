@@ -13,7 +13,7 @@ from bot.handlers.admin import (
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
     coffee_host, remind, manual_promo, linked_promo, linked_promo_done,
     linked_promo_cancel, handle_admin_photo, monthly_calendar, payments,
-    handle_payment_status,
+    handle_payment_review, handle_payment_status,
     manage_members,
     flyers, handle_imported_flyer_selection,
     handle_manual_promo_send_now, handle_manual_promo_test,
@@ -459,6 +459,14 @@ def main():
             config=CONFIG,
         ),
         pattern="^manual_cancel_"))
+    app.add_handler(CallbackQueryHandler(
+        partial(
+            handle_payment_review,
+            primary_admin_id=CONFIG['ADMIN_ID'],
+            payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
+            state=STATE,
+        ),
+        pattern="^payment_review$"))
     app.add_handler(CallbackQueryHandler(
         partial(
             handle_payment_status,

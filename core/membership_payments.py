@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from core.notification_preferences import is_notification_enabled
 from tools.local.data_manager import load_json, save_json
 
@@ -253,6 +255,13 @@ def format_payment_admin_followup(period, stage):
     )
 
 
+def payment_admin_followup_keyboard():
+    """Build the button that opens the payment review interface."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Revisar pagos", callback_data="payment_review")]
+    ])
+
+
 def _payment_admin_followups_due(payment_state, now, delay_hours):
     """Return public reminder keys whose administrator follow-up is due."""
     current_time = now or datetime.now(timezone.utc)
@@ -300,6 +309,7 @@ async def send_payment_admin_followup(context, payment_admin_id, period, stage):
         await context.bot.send_message(
             chat_id=payment_admin_id,
             text=format_payment_admin_followup(period, stage),
+            reply_markup=payment_admin_followup_keyboard(),
         )
     except Exception:
         logger.exception(
