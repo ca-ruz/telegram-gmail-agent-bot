@@ -262,12 +262,15 @@ async def button_click(
     is_photo_msg = bool(query.message.photo)
     main_keyboard = get_user_main_keyboard(user.id, admin_id, coffee_hosts)
 
-    async def edit_subscription_message(text, reply_markup):
+    async def edit_subscription_message(text, reply_markup, parse_mode=None):
         """Edit a callback message while preserving photo and text support."""
+        edit_kwargs = {"reply_markup": reply_markup}
+        if parse_mode:
+            edit_kwargs["parse_mode"] = parse_mode
         if is_photo_msg:
-            await query.edit_message_caption(caption=text, reply_markup=reply_markup)
+            await query.edit_message_caption(caption=text, **edit_kwargs)
         else:
-            await query.edit_message_text(text=text, reply_markup=reply_markup)
+            await query.edit_message_text(text=text, **edit_kwargs)
 
     def persist_preferences():
         """Persist preferences when the application supplies a storage path."""
@@ -360,6 +363,7 @@ async def button_click(
                     datetime.now(COFFEE_TIMEZONE).date(),
                 ),
                 get_coffee_schedule_keyboard(),
+                parse_mode="HTML",
             )
 
     elif data == "upcoming_flyers":
