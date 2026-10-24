@@ -35,3 +35,16 @@ will omit that link from the invitation.
 `COWORKING_WEEKDAY` uses Python weekday numbering: Monday is `0` and Sunday is
 `6`. `COWORKING_HOUR` and the quiet-window check use
 `America/Mexico_City`.
+
+## Delivery Behavior
+
+Coworking invitations are sent to every group managed through `/addgroup`.
+They are group announcements, not private messages, and do not depend on a
+user's coworking notification preference. The bot does not send a separate
+copy to subscribers.
+
+The scheduler sends at most one invitation per ISO week. It skips the weekly
+send when another calendar event or active manual promotion is inside the
+configured quiet window. If no groups are configured, the week is not marked as
+sent. If delivery to any group fails, the weekly slot remains retryable on the
+next scheduler check.
