@@ -7,7 +7,7 @@ from bot.interface import get_main_keyboard, get_main_menu_text
 from tools.local.data_manager import load_json
 
 
-def make_update(user_id=42, callback_data=None, photo=None):
+def make_update(user_id=42, callback_data=None, photo=None, chat_type="private"):
     """Build the minimal Telegram update shape used by the user handlers."""
     message = SimpleNamespace(
         photo=photo or [],
@@ -25,7 +25,7 @@ def make_update(user_id=42, callback_data=None, photo=None):
     )
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=user_id, username="test-user"),
-        effective_chat=SimpleNamespace(id=123),
+        effective_chat=SimpleNamespace(id=123, type=chat_type),
         message=message,
         callback_query=query,
     )
@@ -96,6 +96,24 @@ def test_coffee_schedule_handler_rejects_unassigned_user():
     )
 
     assert "solo para" in update.message.reply_text.await_args.args[0]
+
+
+def test_interactive_user_commands_are_ignored_in_groups():
+    """User-facing commands do not reply when received in a group."""
+    update = make_update(chat_type="supergroup")
+
+    asyncio.run(user.start(update, SimpleNamespace()))
+    asyncio.run(
+        user.subscriptions(
+            update,
+            SimpleNamespace(),
+            notification_preferences={},
+            subscribers=set(),
+        )
+    )
+    asyncio.run(user.meetup(update, SimpleNamespace()))
+
+    update.message.reply_text.assert_not_awaited()
 
 
 def test_start_sends_welcome_once_and_persists_user(tmp_path):
