@@ -16,6 +16,7 @@ from core.linked_events import validate_linked_events
 from core.notification_preferences import filter_users_by_category
 from core.reminder_timing import get_event_reminder_stage
 from core.community import format_community_group_cta
+from core.group_notification_routing import get_group_targets
 
 logger = logging.getLogger(__name__)
 MANUAL_PROMO_TIMEZONE = ZoneInfo("America/Mexico_City")
@@ -329,6 +330,7 @@ async def deliver_manual_promo(
     community_group_url="",
     reminder_event=None,
     reminder_key=None,
+    group_notification_categories=None,
 ):
     """Deliver one promo stage to subscribers and broadcast groups."""
     reminders_sent = promo.setdefault("reminders_sent", {})
@@ -340,6 +342,11 @@ async def deliver_manual_promo(
         "events",
     )
     sent_subscribers = set(reminders_sent.get(state_key, []))
+    if group_notification_categories is not None:
+        groups = get_group_targets(
+            {"group_notification_categories": group_notification_categories},
+            "events",
+        )
     sent_groups = set(group_reminders_sent.get(state_key, []))
     result = {
         "subscribers_sent": 0,
@@ -496,6 +503,7 @@ async def _check_linked_manual_promo_reminders(
     now,
     same_day_hour,
     morning_lead_hours,
+    group_notification_categories,
 ):
     """Deliver due reminders for each event in a linked promo."""
     linked_events = promo.get("linked_events") or []
@@ -524,6 +532,7 @@ async def _check_linked_manual_promo_reminders(
             is_first_notification=True,
             notification_preferences=notification_preferences,
             community_group_url=community_group_url,
+            group_notification_categories=group_notification_categories,
         )
         return bool(any(result.values()))
 
@@ -550,6 +559,7 @@ async def _check_linked_manual_promo_reminders(
             community_group_url=community_group_url,
             reminder_event=event,
             reminder_key=_linked_event_reminder_key(event, stage),
+            group_notification_categories=group_notification_categories,
         )
         if any(result.values()):
             changed = True
@@ -587,6 +597,7 @@ async def check_manual_promo_reminders(context, config, state):
     promos = state.setdefault("manual_promos", {})
     subscribers = state.setdefault("subscribers", set())
     groups = state.setdefault("groups", set())
+    group_notification_categories = state.get("group_notification_categories")
     event_registrations = state.get("event_registrations", {})
     registrations_removed = cleanup_expired_event_registrations(
         event_registrations,
@@ -619,6 +630,7 @@ async def check_manual_promo_reminders(context, config, state):
                 now,
                 config.get("EVENT_SAME_DAY_REMINDER_HOUR", 13),
                 config.get("EVENT_MORNING_REMINDER_LEAD_HOURS", 2),
+                group_notification_categories,
             )
             changed = changed or linked_changed
             continue
@@ -664,6 +676,7 @@ async def check_manual_promo_reminders(context, config, state):
             is_first_notification=is_first_notification,
             notification_preferences=notification_preferences,
             community_group_url=config.get("COMMUNITY_GROUP_URL", ""),
+            group_notification_categories=group_notification_categories,
         )
         if any(result.values()):
             changed = True

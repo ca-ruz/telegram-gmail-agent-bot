@@ -10,6 +10,7 @@ from tools.local.data_manager import save_json
 from core.notification_preferences import filter_users_by_category
 from core.reminder_timing import get_event_reminder_stage
 from core.community import format_community_group_cta
+from core.group_notification_routing import get_group_targets
 from core.imported_events import (
     get_imported_event_key,
     save_imported_events,
@@ -173,7 +174,7 @@ async def send_manual_event_reminder(context, config, state, event_id):
         state.get("notification_preferences"),
         "events",
     )
-    groups = state.get("groups", set())
+    groups = get_group_targets(state, "events")
     message = _event_reminder_message(
         event,
         now,
@@ -442,7 +443,7 @@ async def check_calendar(context, config, state):
                     if user_id not in sent_for_stage
                 ]
                 pending_groups = [
-                    group_id for group_id in state.get('groups', set())
+                    group_id for group_id in get_group_targets(state, "events")
                     if group_id not in sent_groups
                 ]
                 if not pending_users and not pending_groups:

@@ -176,6 +176,11 @@ def test_check_calendar_sends_same_day_reminders_to_groups(tmp_path):
     now = datetime(2026, 10, 15, 11, 0, tzinfo=timezone.utc)
     state = make_state({101})
     state["groups"] = {-100}
+    state["group_notification_categories"] = {
+        "events": [-100],
+        "payments": [],
+        "coworking": [],
+    }
     config = make_config(tmp_path)
     bot = FakeBot()
 
@@ -185,6 +190,24 @@ def test_check_calendar_sends_same_day_reminders_to_groups(tmp_path):
     assert bot.messages[2]["chat_id"] == 42
     storage_key = "event-001_20261015T120000Z"
     assert state["sent_reminders"][storage_key]["same_day_groups"] == [-100]
+
+
+def test_check_calendar_skips_groups_without_event_category(tmp_path):
+    """Scheduled event reminders exclude groups outside the event category."""
+    now = datetime(2026, 10, 15, 11, 0, tzinfo=timezone.utc)
+    state = make_state({101})
+    state["groups"] = {-100, -200}
+    state["group_notification_categories"] = {
+        "events": [-100],
+        "payments": [-200],
+        "coworking": [-100, -200],
+    }
+    config = make_config(tmp_path)
+    bot = FakeBot()
+
+    run_calendar_check([make_event()], now, state, config, bot)
+
+    assert [message["chat_id"] for message in bot.messages[:2]] == [101, -100]
 
 
 def test_check_calendar_stops_after_calendar_fetch_failure(tmp_path):

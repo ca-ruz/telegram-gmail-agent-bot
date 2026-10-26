@@ -1048,6 +1048,7 @@ async def handle_manual_promo_send_now(
         stage,
         is_first_notification=True,
         community_group_url=config.get("COMMUNITY_GROUP_URL", ""),
+        group_notification_categories=state.get("group_notification_categories"),
     )
     save_manual_promos(config["MANUAL_PROMOS_FILE"], state["manual_promos"])
     await query.edit_message_caption(

@@ -86,3 +86,16 @@ def get_group_ids_for_category(categories, category):
         return set()
     normalized_categories = normalize_group_notification_categories(categories)
     return set(normalized_categories[category])
+
+
+def get_group_targets(state, category):
+    """Return category targets, falling back to legacy broadcast groups when needed."""
+    if not isinstance(state, dict):
+        return set()
+
+    categories = state.get("group_notification_categories")
+    if categories is None:
+        raw_groups = state.get("groups", set())
+        return set(_normalize_group_ids(raw_groups))
+
+    return get_group_ids_for_category(categories, category)
