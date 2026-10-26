@@ -52,6 +52,12 @@ from core.imported_events import (
 )
 from core.linked_events import build_linked_event, validate_linked_events
 from core.promoter import send_manual_event_reminder, send_manual_event_reminder_test
+from core.group_notification_routing import (
+    GROUP_NOTIFICATION_CATEGORIES,
+    add_group_to_category,
+    remove_group_from_category,
+    save_group_notification_categories,
+)
 from core.telegram_metadata import record_group_metadata, save_telegram_metadata
 
 # Initialize logger for this module
@@ -244,6 +250,7 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "<b>Admin commands</b>\n\n"
         "/status - Show bot health and configuration\n"
         "/groups - List all broadcast groups\n"
+        "/groupnotifications - Configure group notification categories\n"
         "/users - List known Telegram users\n"
         "/addgroup - Add this group to broadcast targets\n"
         "/removegroup - Remove this group from broadcast targets\n"
@@ -2042,6 +2049,15 @@ async def add_group(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id
     if chat.type in ["group", "supergroup"]:
         state['groups'].add(chat.id)
         save_json(config['GROUPS_FILE'], list(state['groups']))
+        categories = state.get("group_notification_categories")
+        if isinstance(categories, dict):
+            categories, _ = add_group_to_category(categories, "events", chat.id)
+            categories, _ = add_group_to_category(categories, "coworking", chat.id)
+            state["group_notification_categories"] = categories
+            save_group_notification_categories(
+                config["GROUP_NOTIFICATION_CATEGORIES_FILE"],
+                categories,
+            )
         metadata = state.setdefault(
             "telegram_metadata",
             {"users": {}, "groups": {}},
@@ -2080,6 +2096,120 @@ async def list_groups(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_
 
     msg = "📢 <b>Grupos de difusión:</b>\n\n" + "\n".join(lines)
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+GROUP_NOTIFICATION_CATEGORY_ALIASES = {
+    "events": "events",
+    "eventos": "events",
+    "payments": "payments",
+    "pagos": "payments",
+    "coworking": "coworking",
+}
+
+GROUP_NOTIFICATION_CATEGORY_LABELS = {
+    "events": "📅 Eventos",
+    "payments": "💳 Pagos",
+    "coworking": "🏠 Coworking",
+}
+
+
+def _group_notification_category(value):
+    """Normalize an administrator category argument, including Spanish aliases."""
+    return GROUP_NOTIFICATION_CATEGORY_ALIASES.get(str(value).strip().lower())
+
+
+def _format_group_notification_target(group_id, metadata):
+    """Format one group category target using stored Telegram metadata when available."""
+    group_metadata = metadata.get("groups", {}) if isinstance(metadata, dict) else {}
+    record = group_metadata.get(str(group_id), {}) if isinstance(group_metadata, dict) else {}
+    if not isinstance(record, dict):
+        record = {}
+    display_name = record.get("display_name", "Grupo sin nombre")
+    username = record.get("username", "")
+    label = f"<b>{escape(str(display_name))}</b>"
+    if username:
+        label += f" (@{escape(str(username))})"
+    return f"• {label}\n  ID: <code>{escape(str(group_id))}</code>"
+
+
+def _format_group_notification_categories(categories, metadata):
+    """Build an administrator-facing summary of group notification assignments."""
+    lines = ["📢 <b>Categorías de notificaciones por grupo</b>", ""]
+    for category in GROUP_NOTIFICATION_CATEGORIES:
+        lines.append(f"<b>{GROUP_NOTIFICATION_CATEGORY_LABELS[category]}</b>")
+        group_ids = categories.get(category, []) if isinstance(categories, dict) else []
+        if group_ids:
+            lines.extend(_format_group_notification_target(group_id, metadata) for group_id in group_ids)
+        else:
+            lines.append("• Ningún grupo")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+async def group_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
+    """List or modify notification categories assigned to Telegram groups."""
+    if update.effective_user.id != admin_id:
+        return
+
+    args = list(getattr(context, "args", []) or [])
+    categories = state.setdefault("group_notification_categories", {})
+    if not args or args[0].lower() in {"list", "lista"}:
+        await update.message.reply_text(
+            _format_group_notification_categories(
+                categories,
+                state.get("telegram_metadata", {}),
+            ),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if len(args) != 3 or args[0].lower() not in {"add", "remove", "agregar", "quitar"}:
+        await update.message.reply_text(
+            "Uso: /groupnotifications [add|remove] [events|payments|coworking] [ID del grupo]\n"
+            "Ejemplo: /groupnotifications add payments -100123456789"
+        )
+        return
+
+    action = args[0].lower()
+    category = _group_notification_category(args[1])
+    try:
+        group_id = int(args[2])
+    except ValueError:
+        group_id = 0
+
+    if category is None or not group_id:
+        await update.message.reply_text(
+            "Categoría o ID inválido. Usa events, payments o coworking y un ID numérico."
+        )
+        return
+
+    if action in {"add", "agregar"}:
+        updated_categories, changed = add_group_to_category(
+            categories,
+            category,
+            group_id,
+        )
+    else:
+        updated_categories, changed = remove_group_from_category(
+            categories,
+            category,
+            group_id,
+        )
+
+    state["group_notification_categories"] = updated_categories
+    save_group_notification_categories(
+        config["GROUP_NOTIFICATION_CATEGORIES_FILE"],
+        updated_categories,
+    )
+    if not changed:
+        await update.message.reply_text("No hubo cambios: esa asignación ya estaba así.")
+        return
+
+    verb = "agregado a" if action in {"add", "agregar"} else "quitado de"
+    await update.message.reply_text(
+        f"✅ Grupo <code>{group_id}</code> {verb} {GROUP_NOTIFICATION_CATEGORY_LABELS[category]}.",
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state):
@@ -2128,6 +2258,19 @@ async def remove_group(update: Update, context: ContextTypes.DEFAULT_TYPE, admin
     if cid in state['groups']:
         state['groups'].discard(cid)
         save_json(config['GROUPS_FILE'], list(state['groups']))
+        categories = state.get("group_notification_categories")
+        if isinstance(categories, dict):
+            for category in ("events", "coworking"):
+                categories, _ = remove_group_from_category(
+                    categories,
+                    category,
+                    cid,
+                )
+            state["group_notification_categories"] = categories
+            save_group_notification_categories(
+                config["GROUP_NOTIFICATION_CATEGORIES_FILE"],
+                categories,
+            )
         await update.message.reply_text("✅ Grupo removido de la lista de difusión.")
         logger.info(f"Group removed: {cid}")
     else:

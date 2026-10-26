@@ -8,7 +8,7 @@ from bot.handlers.user import start, menu, subscriptions, meetup, eventos, bitde
 from bot.handlers.admin import (
     broadcast, draft, handle_draft_selection, handle_auto_draft, 
     handle_publish, handle_clear_pending_promo, add_group, remove_group,
-    list_groups, list_users, check_prompt, check_prompts, help_admin, pending_promo, status,
+    list_groups, list_users, group_notifications, check_prompt, check_prompts, help_admin, pending_promo, status,
     handle_admin_reply, add_event, handle_add_confirm, delete_event, handle_delete_selection,
     edit_event_start, handle_edit_selection, handle_edit_confirm, handle_admin_chat, handle_voice_admin,
     coffee_host, remind, manual_promo, linked_promo, linked_promo_done,
@@ -266,6 +266,7 @@ def main():
             BotCommand("broadcast", "Enviar un mensaje"),
             BotCommand("status", "Ver el estado del bot"),
             BotCommand("groups", "Administrar grupos"),
+            BotCommand("groupnotifications", "Configurar categorías de grupos"),
             BotCommand("users", "Ver usuarios conocidos"),
             BotCommand("draft", "Crear un borrador"),
             BotCommand("flyers", "Asignar flyers a eventos"),
@@ -376,6 +377,13 @@ def main():
         partial(status, admin_id=CONFIG['ADMIN_ID'], state=STATE, config=CONFIG)))
     app.add_handler(CommandHandler("groups",
         partial(list_groups, admin_id=CONFIG['ADMIN_ID'], state=STATE)))
+    app.add_handler(CommandHandler("groupnotifications",
+        partial(
+            group_notifications,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        )))
     app.add_handler(CommandHandler("users",
         partial(list_users, admin_id=CONFIG['ADMIN_ID'], state=STATE)))
     app.add_handler(CommandHandler("draft",

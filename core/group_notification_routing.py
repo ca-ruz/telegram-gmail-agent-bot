@@ -99,3 +99,35 @@ def get_group_targets(state, category):
         return set(_normalize_group_ids(raw_groups))
 
     return get_group_ids_for_category(categories, category)
+
+
+def add_group_to_category(categories, category, group_id):
+    """Add one valid group ID to a known category and report whether it changed."""
+    normalized_categories = normalize_group_notification_categories(categories)
+    normalized_id = _normalize_group_id(group_id)
+    if category not in GROUP_NOTIFICATION_CATEGORIES or normalized_id is None:
+        return normalized_categories, False
+
+    group_ids = set(normalized_categories[category])
+    if normalized_id in group_ids:
+        return normalized_categories, False
+
+    group_ids.add(normalized_id)
+    normalized_categories[category] = sorted(group_ids)
+    return normalized_categories, True
+
+
+def remove_group_from_category(categories, category, group_id):
+    """Remove one group ID from a known category and report whether it changed."""
+    normalized_categories = normalize_group_notification_categories(categories)
+    normalized_id = _normalize_group_id(group_id)
+    if category not in GROUP_NOTIFICATION_CATEGORIES or normalized_id is None:
+        return normalized_categories, False
+
+    group_ids = set(normalized_categories[category])
+    if normalized_id not in group_ids:
+        return normalized_categories, False
+
+    group_ids.remove(normalized_id)
+    normalized_categories[category] = sorted(group_ids)
+    return normalized_categories, True
