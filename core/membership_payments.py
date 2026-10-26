@@ -22,6 +22,21 @@ PAYMENT_MONTHS = (
     "enero", "febrero", "marzo", "abril", "mayo", "junio",
     "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
 )
+# The first day has its own public announcement. After the five-day grace
+# period, these dates provide one, two, three, and four public reminders per
+# month week respectively.
+PAYMENT_PUBLIC_REMINDER_DAYS = {
+    6: "week_1_1",
+    8: "week_2_1",
+    11: "week_2_2",
+    15: "week_3_1",
+    17: "week_3_2",
+    19: "week_3_3",
+    22: "week_4_1",
+    24: "week_4_2",
+    26: "week_4_3",
+    28: "week_4_4",
+}
 
 
 def _normalize_user_id(user_id):
@@ -386,6 +401,36 @@ def get_payment_reminder_stage(now=None, reminder_hour=9):
         return first_of_current_month.strftime("%Y-%m"), "overdue_5d"
 
     return None
+
+
+def get_payment_reminder_schedule(now=None, reminder_hour=9):
+    """Return the private and public reminder actions due on a local date.
+
+    The first day sends both reminder types. Days two through five send only
+    daily private reminders. Public reminders resume on fixed dates after the
+    five-day grace period, with increasing weekly frequency through the month.
+    """
+    current_time = now or datetime.now(PAYMENT_TIMEZONE)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=PAYMENT_TIMEZONE)
+    local_time = current_time.astimezone(PAYMENT_TIMEZONE)
+    if local_time.hour < reminder_hour:
+        return None
+
+    period = local_time.strftime("%Y-%m")
+    day = local_time.day
+    if day == 1:
+        return {
+            "period": period,
+            "personal_stage": "first_day",
+            "public_stage": "first_day",
+        }
+
+    return {
+        "period": period,
+        "personal_stage": "daily",
+        "public_stage": PAYMENT_PUBLIC_REMINDER_DAYS.get(day),
+    }
 
 
 def format_payment_period(period):
