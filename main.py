@@ -31,6 +31,7 @@ from core.manual_promos import check_manual_promo_reminders, load_manual_promos
 from core.monthly_calendar import load_monthly_calendar
 from core.coworking import check_coworking_notifications, load_coworking_state
 from core.event_registrations import load_event_registrations
+from core.group_notification_routing import load_group_notification_categories
 from core.imported_events import load_imported_events
 from core.notification_preferences import load_notification_preferences
 from core.telegram_metadata import load_telegram_metadata
@@ -133,6 +134,10 @@ CONFIG = {
     ),
     'PROMOTED_FILE': "data/notified_promos.json",
     'GROUPS_FILE': "data/groups.json",
+    'GROUP_NOTIFICATION_CATEGORIES_FILE': os.getenv(
+        'GROUP_NOTIFICATION_CATEGORIES_FILE',
+        'data/group_notification_categories.json',
+    ),
     'PROMPT_HISTORY_FILE': "data/prompt_history.json",
     'PENDING_PROMOS_FILE': "data/pending_promos.json",
     'MANUAL_PROMOS_FILE': os.getenv("MANUAL_PROMOS_FILE", "data/manual_promos.json"),
@@ -189,6 +194,12 @@ payment_state = synchronize_payment_state(
     members,
 )
 save_payment_state(CONFIG['PAYMENT_STATE_FILE'], payment_state)
+broadcast_groups = set(load_json(CONFIG['GROUPS_FILE'], []))
+group_notification_categories = load_group_notification_categories(
+    CONFIG['GROUP_NOTIFICATION_CATEGORIES_FILE'],
+    broadcast_groups,
+    CONFIG['MEMBERS_GROUP_ID'],
+)
 
 STATE = {
     'subscribers': event_subscribers,
@@ -203,7 +214,8 @@ STATE = {
         CONFIG['EVENT_REGISTRATIONS_FILE']
     ),
     'imported_events': load_imported_events(CONFIG['IMPORTED_EVENTS_FILE']),
-    'groups': set(load_json(CONFIG['GROUPS_FILE'], [])),
+    'groups': broadcast_groups,
+    'group_notification_categories': group_notification_categories,
     'sent_reminders': load_json(CONFIG['REMINDERS_FILE'], {}),
     'notified_promos': raw_notified,
     'pending_promos': load_json(CONFIG['PENDING_PROMOS_FILE'], {}),
