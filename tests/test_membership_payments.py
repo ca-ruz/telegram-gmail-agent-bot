@@ -272,17 +272,17 @@ def test_payment_reminder_writes_to_due_period_without_overwriting_previous_peri
             context,
             config,
             state,
-            now=datetime(2026, 10, 25, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+            now=datetime(2026, 11, 6, 10, 0, tzinfo=PAYMENT_TIMEZONE),
         )
     )
 
-    assert "2026-11:7d" in state["payment_state"]["periods"]["2026-11"][
+    assert "2026-11:week_1_1" in state["payment_state"]["periods"]["2026-11"][
         "public_reminders_sent"
     ]
     assert state["payment_state"]["periods"]["2026-10"][
         "public_reminders_sent"
     ] == {}
-    assert "2026-11:7d" in load_json(str(tmp_path / "payment_state.json"), {})[
+    assert "2026-11:week_1_1" in load_json(str(tmp_path / "payment_state.json"), {})[
         "periods"
     ]["2026-11"]["public_reminders_sent"]
 

@@ -445,7 +445,7 @@ def format_payment_period(period):
 def format_payment_reminder(period, stage):
     """Build an anonymous public reminder for a billing stage."""
     month_label = format_payment_period(period)
-    if stage == "overdue_5d":
+    if stage == "overdue_5d" or str(stage).startswith("week_"):
         return (
             f"💳 Recordatorio: hay pagos de membresía pendientes de {month_label}.\n"
             "Si todavía no has pagado, por favor ponte al corriente."
@@ -469,6 +469,11 @@ def format_personal_payment_reminder(member_name, period, stage):
         return (
             f"{greeting}💳 Tu pago de membresía de {month_label} todavía aparece "
             "como pendiente. Por favor ponte al corriente cuando puedas."
+        )
+    if stage == "daily":
+        return (
+            f"{greeting}💳 Tu pago de membresía de {month_label} todavía aparece "
+            "como pendiente. Por favor realiza tu pago cuando te sea posible."
         )
     return (
         f"{greeting}💳 El periodo de membresía de {month_label} comenzó hoy.\n"
@@ -617,16 +622,26 @@ async def check_payment_reminders(context, config, state, now=None):
     current_time = now or datetime.now(PAYMENT_TIMEZONE)
     if current_time.tzinfo is None:
         current_time = current_time.replace(tzinfo=PAYMENT_TIMEZONE)
-    stage_info = get_payment_reminder_stage(
-        current_time,
-        config.get("PAYMENT_REMINDER_HOUR", 9),
-    )
-    if not stage_info:
-        return
-
-    period, stage = stage_info
     payment_state = state.setdefault("payment_state", {})
     multi_period_state = isinstance(payment_state.get("periods"), dict)
+    reminder_hour = config.get("PAYMENT_REMINDER_HOUR", 9)
+    if multi_period_state:
+        schedule = get_payment_reminder_schedule(current_time, reminder_hour)
+        if not schedule:
+            return
+        period = schedule["period"]
+        public_stage = schedule["public_stage"]
+        personal_stage = schedule["personal_stage"]
+    else:
+        stage_info = get_payment_reminder_stage(current_time, reminder_hour)
+        if not stage_info:
+            return
+        period, public_stage = stage_info
+        personal_stage = public_stage if public_stage in {
+            "first_day",
+            "overdue_5d",
+        } else None
+
     state_changed = False
     public_error = None
 
@@ -658,8 +673,8 @@ async def check_payment_reminders(context, config, state, now=None):
     if not isinstance(public_group_reminders, dict):
         public_group_reminders = {}
         period_state["public_reminder_groups_sent"] = public_group_reminders
-    public_key = f"{period}:{stage}"
-    if payment_group_ids and public_key not in public_reminders:
+    public_key = f"{period}:{public_stage}" if public_stage else None
+    if public_key and payment_group_ids and public_key not in public_reminders:
         sent_group_ids = {
             group_id
             for group_id in public_group_reminders.get(public_key, [])
@@ -671,7 +686,7 @@ async def check_payment_reminders(context, config, state, now=None):
             try:
                 await context.bot.send_message(
                     chat_id=group_id,
-                    text=format_payment_reminder(period, stage),
+                    text=format_payment_reminder(period, public_stage),
                 )
                 sent_group_ids.add(group_id)
                 state_changed = True
@@ -690,8 +705,13 @@ async def check_payment_reminders(context, config, state, now=None):
             ).isoformat()
             state_changed = True
 
-    if stage in {"first_day", "overdue_5d"}:
+    if personal_stage:
         personal_reminders = period_state.setdefault("personal_reminders_sent", {})
+        personal_key_stage = personal_stage
+        if personal_stage == "daily":
+            personal_key_stage = (
+                f"daily:{current_time.astimezone(PAYMENT_TIMEZONE).date()}"
+            )
         members = state.get("members", {})
         notification_preferences = state.get("notification_preferences")
         pending_recipients = [
@@ -701,7 +721,7 @@ async def check_payment_reminders(context, config, state, now=None):
                 members,
                 notification_preferences,
             )
-            if f"{period}:{stage}:{member_id}" not in personal_reminders
+            if f"{period}:{personal_key_stage}:{member_id}" not in personal_reminders
         ]
         if pending_recipients:
             result = await send_personal_payment_reminders(
@@ -710,11 +730,13 @@ async def check_payment_reminders(context, config, state, now=None):
                 members,
                 notification_preferences,
                 period,
-                stage,
+                personal_stage,
                 recipients=pending_recipients,
             )
             for member_id in result.get("sent_member_ids", []):
-                personal_reminders[f"{period}:{stage}:{member_id}"] = datetime.now(
+                personal_reminders[
+                    f"{period}:{personal_key_stage}:{member_id}"
+                ] = datetime.now(
                     timezone.utc
                 ).isoformat()
                 state_changed = True
