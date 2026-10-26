@@ -27,8 +27,8 @@ are runtime data and must remain outside Git.
 
 After each successful public reminder, the bot waits the configured number of
 hours before privately notifying `PAYMENT_ADMIN_ID`. The follow-up includes a
-`Revisar pagos` button that opens the same authorized review screen as
-`/payments`. Set the delay to `0` to send the follow-up during the same
+`Revisar pagos` button that opens the authorized review screen for the same
+billing period. Set the delay to `0` to send the follow-up during the same
 scheduler check as the public reminder.
 
 ## Initial Setup
@@ -66,8 +66,10 @@ Run:
 /payments
 ```
 
-The bot shows the current billing period and separates paid members from
-pending members. Each member has a button to toggle their payment status.
+The bot shows the available billing periods and separates paid members from
+pending members for the selected period. Each member has a button to toggle
+their payment status. A follow-up button opens the period that caused that
+follow-up, even if a newer period is already active.
 
 Marking a member as paid records the UTC timestamp and stops future reminders
 for that member. Marking them pending clears the payment timestamp and makes

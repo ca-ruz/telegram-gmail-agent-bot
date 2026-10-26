@@ -15,6 +15,7 @@ from tools.local.data_manager import load_json, save_json
 
 PRIMARY_ADMIN_ROLE = "primary_admin"
 PAYMENT_ADMIN_ROLE = "payment_admin"
+PAYMENT_STATE_VERSION = 2
 logger = logging.getLogger(__name__)
 PAYMENT_TIMEZONE = ZoneInfo("America/Mexico_City")
 PAYMENT_MONTHS = (
@@ -105,6 +106,185 @@ def current_billing_period(now=None):
     """Return the UTC billing period represented as ``YYYY-MM``."""
     current_time = now or datetime.now(timezone.utc)
     return current_time.strftime("%Y-%m")
+
+
+def next_billing_period(period=None):
+    """Return the billing period immediately after the supplied period."""
+    period_key = _normalize_period_key(period) if period else current_billing_period()
+    if period_key is None:
+        period_key = current_billing_period()
+    current_date = datetime.strptime(period_key, "%Y-%m")
+    next_month = (current_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return next_month.strftime("%Y-%m")
+
+
+def _normalize_period_key(period):
+    """Return a valid ``YYYY-MM`` period key or ``None``."""
+    try:
+        normalized_period = datetime.strptime(str(period), "%Y-%m").strftime("%Y-%m")
+    except (TypeError, ValueError):
+        return None
+    return normalized_period
+
+
+def _normalize_payment_members(raw_members):
+    """Normalize member payment records without discarding historical records."""
+    if not isinstance(raw_members, dict):
+        return {}
+
+    members = {}
+    for member_id, raw_record in raw_members.items():
+        if not isinstance(raw_record, dict):
+            continue
+        record = dict(raw_record)
+        record.setdefault("status", "unpaid")
+        record.setdefault("paid_at", None)
+        record["reminders_sent"] = (
+            record.get("reminders_sent", [])
+            if isinstance(record.get("reminders_sent", []), list)
+            else []
+        )
+        members[str(member_id)] = record
+    return members
+
+
+def _normalize_payment_period_state(raw_state):
+    """Normalize one period record while preserving its delivery history."""
+    if not isinstance(raw_state, dict):
+        raw_state = {}
+
+    return {
+        "members": _normalize_payment_members(raw_state.get("members", {})),
+        "public_reminders_sent": raw_state.get("public_reminders_sent", {})
+        if isinstance(raw_state.get("public_reminders_sent", {}), dict)
+        else {},
+        "personal_reminders_sent": raw_state.get("personal_reminders_sent", {})
+        if isinstance(raw_state.get("personal_reminders_sent", {}), dict)
+        else {},
+        "public_reminder_groups_sent": raw_state.get(
+            "public_reminder_groups_sent",
+            {},
+        )
+        if isinstance(raw_state.get("public_reminder_groups_sent", {}), dict)
+        else {},
+        "payment_admin_followups_sent": raw_state.get(
+            "payment_admin_followups_sent",
+            {},
+        )
+        if isinstance(raw_state.get("payment_admin_followups_sent", {}), dict)
+        else {},
+    }
+
+
+def migrate_payment_state(payment_state):
+    """Convert legacy single-period payment state into the versioned period map."""
+    if not isinstance(payment_state, dict):
+        return {"version": PAYMENT_STATE_VERSION, "periods": {}}
+
+    raw_periods = payment_state.get("periods")
+    if isinstance(raw_periods, dict):
+        periods = {
+            normalized_period: _normalize_payment_period_state(raw_period)
+            for period, raw_period in raw_periods.items()
+            if (normalized_period := _normalize_period_key(period)) is not None
+        }
+    else:
+        legacy_period = _normalize_period_key(payment_state.get("period"))
+        periods = {}
+        if legacy_period is not None:
+            periods[legacy_period] = _normalize_payment_period_state(payment_state)
+
+    return {
+        "version": PAYMENT_STATE_VERSION,
+        "periods": periods,
+    }
+
+
+def build_payment_period_state(members):
+    """Build a new unpaid payment record for the active membership roster."""
+    return {
+        "members": {
+            str(member_id): {
+                "status": "unpaid",
+                "paid_at": None,
+                "reminders_sent": [],
+            }
+            for member_id, member in members.items()
+            if isinstance(member, dict) and member.get("active", True)
+        },
+        "public_reminders_sent": {},
+        "personal_reminders_sent": {},
+        "public_reminder_groups_sent": {},
+        "payment_admin_followups_sent": {},
+    }
+
+
+def build_multi_period_payment_state(members, periods=None):
+    """Build versioned payment state for one or more billing periods."""
+    requested_periods = periods or [current_billing_period()]
+    normalized_periods = sorted({
+        normalized_period
+        for period in requested_periods
+        if (normalized_period := _normalize_period_key(period)) is not None
+    })
+    return {
+        "version": PAYMENT_STATE_VERSION,
+        "periods": {
+            period: build_payment_period_state(members)
+            for period in normalized_periods
+        },
+    }
+
+
+def ensure_payment_period(payment_state, members, period=None):
+    """Ensure one period exists without replacing any existing period records."""
+    normalized_state = migrate_payment_state(payment_state)
+    period_key = _normalize_period_key(period) or current_billing_period()
+    normalized_state["periods"].setdefault(
+        period_key,
+        build_payment_period_state(members),
+    )
+    return normalized_state
+
+
+def synchronize_multi_period_payment_state(payment_state, members, periods):
+    """Ensure requested periods exist and include newly active members."""
+    normalized_state = migrate_payment_state(payment_state)
+    requested_periods = {
+        normalized_period
+        for period in periods or []
+        if (normalized_period := _normalize_period_key(period)) is not None
+    }
+
+    for period in requested_periods:
+        if period not in normalized_state["periods"]:
+            normalized_state["periods"][period] = build_payment_period_state(members)
+            continue
+
+        period_state = normalized_state["periods"][period]
+        period_members = period_state.setdefault("members", {})
+        for member_id, member in members.items():
+            member_key = str(member_id)
+            if not isinstance(member, dict) or not member.get("active", True):
+                continue
+            if member_key not in period_members:
+                period_members[member_key] = {
+                    "status": "unpaid",
+                    "paid_at": None,
+                    "reminders_sent": [],
+                }
+
+    return normalized_state
+
+
+def load_multi_period_payment_state(file_path):
+    """Load and migrate the versioned multi-period payment state."""
+    return migrate_payment_state(load_json(file_path, {}))
+
+
+def save_multi_period_payment_state(file_path, payment_state):
+    """Persist normalized multi-period payment state atomically."""
+    save_json(file_path, migrate_payment_state(payment_state))
 
 
 def build_monthly_payment_state(members, period=None):
@@ -263,10 +443,13 @@ def format_payment_admin_followup(period, stage):
     )
 
 
-def payment_admin_followup_keyboard():
-    """Build the button that opens the payment review interface."""
+def payment_admin_followup_keyboard(period=None):
+    """Build the button that opens the review for the relevant period."""
+    callback_data = "payment_review"
+    if period:
+        callback_data = f"payment_review:{period}"
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Revisar pagos", callback_data="payment_review")]
+        [InlineKeyboardButton("📋 Revisar pagos", callback_data=callback_data)]
     ])
 
 
@@ -317,7 +500,7 @@ async def send_payment_admin_followup(context, payment_admin_id, period, stage):
         await context.bot.send_message(
             chat_id=payment_admin_id,
             text=format_payment_admin_followup(period, stage),
-            reply_markup=payment_admin_followup_keyboard(),
+            reply_markup=payment_admin_followup_keyboard(period),
         )
     except Exception:
         logger.exception(
@@ -398,8 +581,20 @@ async def check_payment_reminders(context, config, state, now=None):
 
     period, stage = stage_info
     payment_state = state.setdefault("payment_state", {})
+    multi_period_state = isinstance(payment_state.get("periods"), dict)
     state_changed = False
     public_error = None
+
+    if multi_period_state:
+        payment_state = ensure_payment_period(
+            payment_state,
+            state.get("members", {}),
+            period,
+        )
+        state["payment_state"] = payment_state
+        period_state = payment_state["periods"][period]
+    else:
+        period_state = payment_state
 
     configured_group_id = config.get("MEMBERS_GROUP_ID", 0)
     if "group_notification_categories" in state:
@@ -410,14 +605,14 @@ async def check_payment_reminders(context, config, state, now=None):
         except (TypeError, ValueError):
             payment_group_ids = set()
 
-    public_reminders = payment_state.setdefault("public_reminders_sent", {})
-    public_group_reminders = payment_state.setdefault(
+    public_reminders = period_state.setdefault("public_reminders_sent", {})
+    public_group_reminders = period_state.setdefault(
         "public_reminder_groups_sent",
         {},
     )
     if not isinstance(public_group_reminders, dict):
         public_group_reminders = {}
-        payment_state["public_reminder_groups_sent"] = public_group_reminders
+        period_state["public_reminder_groups_sent"] = public_group_reminders
     public_key = f"{period}:{stage}"
     if payment_group_ids and public_key not in public_reminders:
         sent_group_ids = {
@@ -451,13 +646,13 @@ async def check_payment_reminders(context, config, state, now=None):
             state_changed = True
 
     if stage in {"first_day", "overdue_5d"}:
-        personal_reminders = payment_state.setdefault("personal_reminders_sent", {})
+        personal_reminders = period_state.setdefault("personal_reminders_sent", {})
         members = state.get("members", {})
         notification_preferences = state.get("notification_preferences")
         pending_recipients = [
             (member_id, telegram_id)
             for member_id, telegram_id in get_unpaid_member_recipients(
-                payment_state,
+                period_state,
                 members,
                 notification_preferences,
             )
@@ -466,7 +661,7 @@ async def check_payment_reminders(context, config, state, now=None):
         if pending_recipients:
             result = await send_personal_payment_reminders(
                 context,
-                payment_state,
+                period_state,
                 members,
                 notification_preferences,
                 period,
@@ -481,17 +676,17 @@ async def check_payment_reminders(context, config, state, now=None):
 
     payment_admin_id = _normalize_user_id(config.get("PAYMENT_ADMIN_ID"))
     if payment_admin_id is not None:
-        followups = payment_state.setdefault("payment_admin_followups_sent", {})
+        followups = period_state.setdefault("payment_admin_followups_sent", {})
         if not isinstance(followups, dict):
             followups = {}
-            payment_state["payment_admin_followups_sent"] = followups
+            period_state["payment_admin_followups_sent"] = followups
         delay_hours = config.get("PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS", 2)
         try:
             delay_hours = int(delay_hours)
         except (TypeError, ValueError):
             delay_hours = 2
         for reminder_key, followup_period, followup_stage in (
-            _payment_admin_followups_due(payment_state, current_time, delay_hours)
+            _payment_admin_followups_due(period_state, current_time, delay_hours)
         ):
             sent = await send_payment_admin_followup(
                 context,
@@ -506,7 +701,13 @@ async def check_payment_reminders(context, config, state, now=None):
                 state_changed = True
 
     if state_changed:
-        save_payment_state(config["PAYMENT_STATE_FILE"], payment_state)
+        if multi_period_state:
+            save_multi_period_payment_state(
+                config["PAYMENT_STATE_FILE"],
+                payment_state,
+            )
+        else:
+            save_payment_state(config["PAYMENT_STATE_FILE"], payment_state)
     if public_error:
         raise public_error
 

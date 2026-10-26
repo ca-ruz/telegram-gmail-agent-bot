@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot.handlers.admin import handle_payment_review
+from bot.handlers.admin import (
+    handle_payment_period,
+    handle_payment_review,
+    handle_payment_status,
+)
 from core.membership_payments import (
     PAYMENT_ADMIN_ROLE,
     PRIMARY_ADMIN_ROLE,
@@ -14,18 +18,26 @@ from core.membership_payments import (
     can_manage_payments,
     check_payment_reminders,
     current_billing_period,
+    build_multi_period_payment_state,
+    ensure_payment_period,
     get_payment_admin_role,
     get_payment_reminder_stage,
     get_unpaid_member_recipients,
     load_members,
+    load_multi_period_payment_state,
     load_payment_state,
+    migrate_payment_state,
+    next_billing_period,
     next_member_id,
     PAYMENT_TIMEZONE,
     save_members,
+    save_multi_period_payment_state,
     save_payment_state,
     send_payment_admin_followup,
     send_personal_payment_reminders,
+    synchronize_multi_period_payment_state,
 )
+from tools.local.data_manager import load_json
 
 
 def test_payment_roles_distinguish_primary_and_payment_administrators():
@@ -79,6 +91,95 @@ def test_billing_period_uses_utc_month():
     timestamp = datetime(2026, 11, 1, 0, 15, tzinfo=timezone.utc)
 
     assert current_billing_period(timestamp) == "2026-11"
+    assert next_billing_period("2026-12") == "2027-01"
+
+
+def test_legacy_payment_state_migrates_without_losing_period_history():
+    """Legacy single-period data is retained under its original period key."""
+    legacy_state = {
+        "period": "2026-10",
+        "members": {
+            "member-001": {
+                "status": "unpaid",
+                "paid_at": None,
+                "reminders_sent": ["first_day"],
+            },
+        },
+        "public_reminders_sent": {"2026-10:first_day": "sent-at"},
+        "personal_reminders_sent": {"2026-10:first_day:member-001": "sent-at"},
+        "payment_admin_followups_sent": {},
+    }
+
+    migrated = migrate_payment_state(legacy_state)
+
+    assert migrated["version"] == 2
+    assert migrated["periods"]["2026-10"]["members"]["member-001"]["status"] == "unpaid"
+    assert migrated["periods"]["2026-10"]["public_reminders_sent"] == {
+        "2026-10:first_day": "sent-at"
+    }
+    assert migrated["periods"]["2026-10"]["personal_reminders_sent"] == {
+        "2026-10:first_day:member-001": "sent-at"
+    }
+
+
+def test_ensure_payment_period_adds_new_period_without_replacing_old_period():
+    """Creating a new month leaves the previous period and its unpaid records intact."""
+    members = {"member-001": build_member("Ada", 101)}
+    october_state = {
+        "period": "2026-10",
+        "members": {"member-001": {"status": "unpaid"}},
+    }
+
+    state = ensure_payment_period(october_state, members, "2026-11")
+
+    assert set(state["periods"]) == {"2026-10", "2026-11"}
+    assert state["periods"]["2026-10"]["members"]["member-001"]["status"] == "unpaid"
+    assert state["periods"]["2026-11"]["members"]["member-001"]["status"] == "unpaid"
+
+
+def test_synchronize_multi_period_state_preserves_paid_status_and_adds_new_members():
+    """Startup synchronization preserves each period while adding new active members."""
+    state = {
+        "periods": {
+            "2026-10": {
+                "members": {
+                    "member-001": {"status": "paid", "paid_at": "paid-at"},
+                },
+            },
+        },
+    }
+    members = {
+        "member-001": build_member("Ada", 101),
+        "member-002": build_member("Lin", 202),
+    }
+
+    synchronized = synchronize_multi_period_payment_state(
+        state,
+        members,
+        ["2026-10", "2026-11"],
+    )
+
+    october = synchronized["periods"]["2026-10"]["members"]
+    assert october["member-001"]["status"] == "paid"
+    assert october["member-002"]["status"] == "unpaid"
+    assert set(synchronized["periods"]["2026-11"]["members"]) == {
+        "member-001",
+        "member-002",
+    }
+
+
+def test_multi_period_payment_state_round_trip(tmp_path):
+    """Versioned payment state persists multiple periods independently."""
+    file_path = tmp_path / "payment_state.json"
+    members = {"member-001": build_member("Ada", 101)}
+    state = build_multi_period_payment_state(members, ["2026-10", "2026-11"])
+    state["periods"]["2026-10"]["members"]["member-001"]["status"] = "paid"
+
+    save_multi_period_payment_state(str(file_path), state)
+
+    loaded = load_multi_period_payment_state(str(file_path))
+    assert loaded["periods"]["2026-10"]["members"]["member-001"]["status"] == "paid"
+    assert loaded["periods"]["2026-11"]["members"]["member-001"]["status"] == "unpaid"
 
 
 def test_payment_state_round_trip_and_invalid_data_fallback(tmp_path):
@@ -131,6 +232,59 @@ def test_payment_reminder_sends_once_and_persists_duplicate_key(tmp_path):
     assert bot.send_message.await_args.kwargs["chat_id"] == -100123
     assert "noviembre de 2026" in bot.send_message.await_args.kwargs["text"]
     assert "2026-11:7d" in state["payment_state"]["public_reminders_sent"]
+
+
+def test_payment_reminder_writes_to_due_period_without_overwriting_previous_period(tmp_path):
+    """A November reminder updates November while preserving October payment history."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    state = {
+        "groups": {-100123},
+        "group_notification_categories": {
+            "events": [],
+            "payments": [-100123],
+            "coworking": [],
+        },
+        "payment_state": {
+            "version": 2,
+            "periods": {
+                "2026-10": {
+                    "members": {
+                        "member-001": {"status": "unpaid"},
+                    },
+                },
+                "2026-11": {
+                    "members": {
+                        "member-001": {"status": "unpaid"},
+                    },
+                },
+            },
+        },
+        "members": {"member-001": build_member("Ada", 101)},
+    }
+    config = {
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+
+    asyncio.run(
+        check_payment_reminders(
+            context,
+            config,
+            state,
+            now=datetime(2026, 10, 25, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+
+    assert "2026-11:7d" in state["payment_state"]["periods"]["2026-11"][
+        "public_reminders_sent"
+    ]
+    assert state["payment_state"]["periods"]["2026-10"][
+        "public_reminders_sent"
+    ] == {}
+    assert "2026-11:7d" in load_json(str(tmp_path / "payment_state.json"), {})[
+        "periods"
+    ]["2026-11"]["public_reminders_sent"]
 
 
 def test_payment_reminder_uses_payment_groups_and_excludes_event_groups(tmp_path):
@@ -234,7 +388,44 @@ def test_payment_admin_followup_includes_review_button():
     assert bot.send_message.await_args.kwargs["chat_id"] == 20
     assert "Revisión de pagos" in bot.send_message.await_args.kwargs["text"]
     keyboard = bot.send_message.await_args.kwargs["reply_markup"]
-    assert keyboard.inline_keyboard[0][0].callback_data == "payment_review"
+    assert keyboard.inline_keyboard[0][0].callback_data == "payment_review:2026-11"
+
+
+def test_payment_admin_followup_opens_the_relevant_period():
+    """A follow-up review button preserves the billing period it references."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    asyncio.run(send_payment_admin_followup(context, 20, "2026-11", "7d"))
+
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=20),
+        data="payment_review:2026-11",
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    state = {
+        "payment_state": {
+            "version": 2,
+            "periods": {
+                "2026-10": {"members": {"member-001": {"status": "paid"}}},
+                "2026-11": {"members": {"member-001": {"status": "unpaid"}}},
+            },
+        },
+        "members": {"member-001": {"name": "Ada", "active": True}},
+    }
+
+    asyncio.run(
+        handle_payment_review(
+            SimpleNamespace(callback_query=query),
+            SimpleNamespace(),
+            primary_admin_id=10,
+            payment_admin_id=20,
+            state=state,
+        )
+    )
+
+    assert "2026-11" in query.edit_message_text.await_args.args[0]
+    assert "Pendientes (1)" in query.edit_message_text.await_args.args[0]
 
 
 def test_payment_admin_followup_waits_for_delay_and_is_sent_once(tmp_path):
@@ -394,6 +585,80 @@ def test_payment_review_callback_opens_review_for_payment_admin():
     query.edit_message_text.assert_awaited_once()
     assert "2026-11" in query.edit_message_text.await_args.args[0]
     assert query.edit_message_text.await_args.kwargs["reply_markup"] is not None
+
+
+def test_payment_period_selector_switches_between_periods():
+    """Authorized reviewers can switch the payment review to another period."""
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=20),
+        data="payment_period:2026-10",
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    state = {
+        "payment_state": {
+            "version": 2,
+            "periods": {
+                "2026-10": {"members": {"member-001": {"status": "unpaid"}}},
+                "2026-11": {"members": {"member-001": {"status": "paid"}}},
+            },
+        },
+        "members": {"member-001": {"name": "Ada", "active": True}},
+    }
+
+    asyncio.run(
+        handle_payment_period(
+            SimpleNamespace(callback_query=query),
+            SimpleNamespace(),
+            primary_admin_id=10,
+            payment_admin_id=20,
+            state=state,
+        )
+    )
+
+    assert query.answer.await_args.args == ()
+    assert "2026-10" in query.edit_message_text.await_args.args[0]
+    buttons = query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard
+    assert buttons[0][0].callback_data == "payment_period:2026-10"
+    assert buttons[1][0].callback_data == "payment_period:2026-11"
+
+
+def test_payment_status_toggle_updates_only_selected_period(tmp_path):
+    """Period-scoped status changes do not alter another billing period."""
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=20),
+        data="payment_toggle:2026-10:member-001",
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    state = {
+        "payment_state": {
+            "version": 2,
+            "periods": {
+                "2026-10": {"members": {"member-001": {"status": "unpaid"}}},
+                "2026-11": {"members": {"member-001": {"status": "unpaid"}}},
+            },
+        },
+        "members": {"member-001": {"name": "Ada", "active": True}},
+    }
+    config = {"PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json")}
+
+    asyncio.run(
+        handle_payment_status(
+            SimpleNamespace(callback_query=query),
+            SimpleNamespace(),
+            primary_admin_id=10,
+            payment_admin_id=20,
+            state=state,
+            config=config,
+        )
+    )
+
+    assert state["payment_state"]["periods"]["2026-10"]["members"]["member-001"]["status"] == "paid"
+    assert state["payment_state"]["periods"]["2026-11"]["members"]["member-001"]["status"] == "unpaid"
+    persisted = load_json(str(tmp_path / "payment_state.json"), {})
+    assert persisted["periods"]["2026-10"]["members"]["member-001"]["status"] == "paid"
+    assert persisted["periods"]["2026-11"]["members"]["member-001"]["status"] == "unpaid"
 
 
 def test_unpaid_recipients_filter_status_activity_preferences_and_duplicates():

@@ -82,6 +82,28 @@ def test_status_reports_payment_deployment_configuration():
     assert "Payment reminder hour:</b> 09:00" in message
 
 
+def test_status_reports_current_period_for_multi_period_payment_state():
+    """Admin status reports the current period after payment-state migration."""
+    reply_text = AsyncMock()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        message=SimpleNamespace(reply_text=reply_text),
+    )
+    state = {
+        "subscribers": set(),
+        "groups": set(),
+        "pending_promos": {},
+        "members": {},
+        "payment_state": {"version": 2, "periods": {"2026-10": {}, "2026-11": {}}},
+    }
+    config = {"CHECK_INTERVAL_MINUTES": 30}
+
+    asyncio.run(status(update, SimpleNamespace(), 42, state, config))
+
+    message = reply_text.await_args.args[0]
+    assert "Payment period:</b> 2026-10" in message
+
+
 def test_status_reports_coworking_deployment_configuration():
     """Admin status exposes safe coworking scheduler configuration details."""
     reply_text = AsyncMock()
