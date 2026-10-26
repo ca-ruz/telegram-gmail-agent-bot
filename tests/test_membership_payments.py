@@ -388,7 +388,44 @@ def test_payment_admin_followup_includes_review_button():
     assert bot.send_message.await_args.kwargs["chat_id"] == 20
     assert "Revisión de pagos" in bot.send_message.await_args.kwargs["text"]
     keyboard = bot.send_message.await_args.kwargs["reply_markup"]
-    assert keyboard.inline_keyboard[0][0].callback_data == "payment_review"
+    assert keyboard.inline_keyboard[0][0].callback_data == "payment_review:2026-11"
+
+
+def test_payment_admin_followup_opens_the_relevant_period():
+    """A follow-up review button preserves the billing period it references."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    asyncio.run(send_payment_admin_followup(context, 20, "2026-11", "7d"))
+
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=20),
+        data="payment_review:2026-11",
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    state = {
+        "payment_state": {
+            "version": 2,
+            "periods": {
+                "2026-10": {"members": {"member-001": {"status": "paid"}}},
+                "2026-11": {"members": {"member-001": {"status": "unpaid"}}},
+            },
+        },
+        "members": {"member-001": {"name": "Ada", "active": True}},
+    }
+
+    asyncio.run(
+        handle_payment_review(
+            SimpleNamespace(callback_query=query),
+            SimpleNamespace(),
+            primary_admin_id=10,
+            payment_admin_id=20,
+            state=state,
+        )
+    )
+
+    assert "2026-11" in query.edit_message_text.await_args.args[0]
+    assert "Pendientes (1)" in query.edit_message_text.await_args.args[0]
 
 
 def test_payment_admin_followup_waits_for_delay_and_is_sent_once(tmp_path):

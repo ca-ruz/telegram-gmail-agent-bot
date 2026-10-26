@@ -417,16 +417,26 @@ async def handle_payment_review(
         await query.answer("No tienes permisos para revisar pagos.", show_alert=True)
         return
 
+    review_period = None
+    callback_data = getattr(query, "data", "")
+    if callback_data.startswith("payment_review:"):
+        review_period = callback_data.removeprefix("payment_review:")
+        if review_period not in _payment_periods(state.get("payment_state", {})):
+            await query.answer("Ese periodo de pagos no está disponible.", show_alert=True)
+            return
+
     await query.answer()
     await query.edit_message_text(
         format_payment_review(
             state.get("payment_state", {}),
             state.get("members", {}),
+            review_period,
         ),
         parse_mode=ParseMode.HTML,
         reply_markup=payment_review_keyboard(
             state.get("payment_state", {}),
             state.get("members", {}),
+            review_period,
         ),
     )
 

@@ -443,10 +443,13 @@ def format_payment_admin_followup(period, stage):
     )
 
 
-def payment_admin_followup_keyboard():
-    """Build the button that opens the payment review interface."""
+def payment_admin_followup_keyboard(period=None):
+    """Build the button that opens the review for the relevant period."""
+    callback_data = "payment_review"
+    if period:
+        callback_data = f"payment_review:{period}"
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Revisar pagos", callback_data="payment_review")]
+        [InlineKeyboardButton("📋 Revisar pagos", callback_data=callback_data)]
     ])
 
 
@@ -497,7 +500,7 @@ async def send_payment_admin_followup(context, payment_admin_id, period, stage):
         await context.bot.send_message(
             chat_id=payment_admin_id,
             text=format_payment_admin_followup(period, stage),
-            reply_markup=payment_admin_followup_keyboard(),
+            reply_markup=payment_admin_followup_keyboard(period),
         )
     except Exception:
         logger.exception(

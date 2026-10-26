@@ -513,7 +513,7 @@ def main():
             payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
             state=STATE,
         ),
-        pattern="^payment_review$"))
+        pattern="^payment_review(?::.*)?$"))
     app.add_handler(CallbackQueryHandler(
         partial(
             handle_payment_period,
