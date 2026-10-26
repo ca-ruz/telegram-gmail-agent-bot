@@ -14,14 +14,19 @@ from core.membership_payments import (
     can_manage_payments,
     check_payment_reminders,
     current_billing_period,
+    build_multi_period_payment_state,
+    ensure_payment_period,
     get_payment_admin_role,
     get_payment_reminder_stage,
     get_unpaid_member_recipients,
     load_members,
+    load_multi_period_payment_state,
     load_payment_state,
+    migrate_payment_state,
     next_member_id,
     PAYMENT_TIMEZONE,
     save_members,
+    save_multi_period_payment_state,
     save_payment_state,
     send_payment_admin_followup,
     send_personal_payment_reminders,
@@ -79,6 +84,63 @@ def test_billing_period_uses_utc_month():
     timestamp = datetime(2026, 11, 1, 0, 15, tzinfo=timezone.utc)
 
     assert current_billing_period(timestamp) == "2026-11"
+
+
+def test_legacy_payment_state_migrates_without_losing_period_history():
+    """Legacy single-period data is retained under its original period key."""
+    legacy_state = {
+        "period": "2026-10",
+        "members": {
+            "member-001": {
+                "status": "unpaid",
+                "paid_at": None,
+                "reminders_sent": ["first_day"],
+            },
+        },
+        "public_reminders_sent": {"2026-10:first_day": "sent-at"},
+        "personal_reminders_sent": {"2026-10:first_day:member-001": "sent-at"},
+        "payment_admin_followups_sent": {},
+    }
+
+    migrated = migrate_payment_state(legacy_state)
+
+    assert migrated["version"] == 2
+    assert migrated["periods"]["2026-10"]["members"]["member-001"]["status"] == "unpaid"
+    assert migrated["periods"]["2026-10"]["public_reminders_sent"] == {
+        "2026-10:first_day": "sent-at"
+    }
+    assert migrated["periods"]["2026-10"]["personal_reminders_sent"] == {
+        "2026-10:first_day:member-001": "sent-at"
+    }
+
+
+def test_ensure_payment_period_adds_new_period_without_replacing_old_period():
+    """Creating a new month leaves the previous period and its unpaid records intact."""
+    members = {"member-001": build_member("Ada", 101)}
+    october_state = {
+        "period": "2026-10",
+        "members": {"member-001": {"status": "unpaid"}},
+    }
+
+    state = ensure_payment_period(october_state, members, "2026-11")
+
+    assert set(state["periods"]) == {"2026-10", "2026-11"}
+    assert state["periods"]["2026-10"]["members"]["member-001"]["status"] == "unpaid"
+    assert state["periods"]["2026-11"]["members"]["member-001"]["status"] == "unpaid"
+
+
+def test_multi_period_payment_state_round_trip(tmp_path):
+    """Versioned payment state persists multiple periods independently."""
+    file_path = tmp_path / "payment_state.json"
+    members = {"member-001": build_member("Ada", 101)}
+    state = build_multi_period_payment_state(members, ["2026-10", "2026-11"])
+    state["periods"]["2026-10"]["members"]["member-001"]["status"] = "paid"
+
+    save_multi_period_payment_state(str(file_path), state)
+
+    loaded = load_multi_period_payment_state(str(file_path))
+    assert loaded["periods"]["2026-10"]["members"]["member-001"]["status"] == "paid"
+    assert loaded["periods"]["2026-11"]["members"]["member-001"]["status"] == "unpaid"
 
 
 def test_payment_state_round_trip_and_invalid_data_fallback(tmp_path):

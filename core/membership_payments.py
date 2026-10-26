@@ -15,6 +15,7 @@ from tools.local.data_manager import load_json, save_json
 
 PRIMARY_ADMIN_ROLE = "primary_admin"
 PAYMENT_ADMIN_ROLE = "payment_admin"
+PAYMENT_STATE_VERSION = 2
 logger = logging.getLogger(__name__)
 PAYMENT_TIMEZONE = ZoneInfo("America/Mexico_City")
 PAYMENT_MONTHS = (
@@ -105,6 +106,145 @@ def current_billing_period(now=None):
     """Return the UTC billing period represented as ``YYYY-MM``."""
     current_time = now or datetime.now(timezone.utc)
     return current_time.strftime("%Y-%m")
+
+
+def _normalize_period_key(period):
+    """Return a valid ``YYYY-MM`` period key or ``None``."""
+    try:
+        normalized_period = datetime.strptime(str(period), "%Y-%m").strftime("%Y-%m")
+    except (TypeError, ValueError):
+        return None
+    return normalized_period
+
+
+def _normalize_payment_members(raw_members):
+    """Normalize member payment records without discarding historical records."""
+    if not isinstance(raw_members, dict):
+        return {}
+
+    members = {}
+    for member_id, raw_record in raw_members.items():
+        if not isinstance(raw_record, dict):
+            continue
+        record = dict(raw_record)
+        record.setdefault("status", "unpaid")
+        record.setdefault("paid_at", None)
+        record["reminders_sent"] = (
+            record.get("reminders_sent", [])
+            if isinstance(record.get("reminders_sent", []), list)
+            else []
+        )
+        members[str(member_id)] = record
+    return members
+
+
+def _normalize_payment_period_state(raw_state):
+    """Normalize one period record while preserving its delivery history."""
+    if not isinstance(raw_state, dict):
+        raw_state = {}
+
+    return {
+        "members": _normalize_payment_members(raw_state.get("members", {})),
+        "public_reminders_sent": raw_state.get("public_reminders_sent", {})
+        if isinstance(raw_state.get("public_reminders_sent", {}), dict)
+        else {},
+        "personal_reminders_sent": raw_state.get("personal_reminders_sent", {})
+        if isinstance(raw_state.get("personal_reminders_sent", {}), dict)
+        else {},
+        "public_reminder_groups_sent": raw_state.get(
+            "public_reminder_groups_sent",
+            {},
+        )
+        if isinstance(raw_state.get("public_reminder_groups_sent", {}), dict)
+        else {},
+        "payment_admin_followups_sent": raw_state.get(
+            "payment_admin_followups_sent",
+            {},
+        )
+        if isinstance(raw_state.get("payment_admin_followups_sent", {}), dict)
+        else {},
+    }
+
+
+def migrate_payment_state(payment_state):
+    """Convert legacy single-period payment state into the versioned period map."""
+    if not isinstance(payment_state, dict):
+        return {"version": PAYMENT_STATE_VERSION, "periods": {}}
+
+    raw_periods = payment_state.get("periods")
+    if isinstance(raw_periods, dict):
+        periods = {
+            normalized_period: _normalize_payment_period_state(raw_period)
+            for period, raw_period in raw_periods.items()
+            if (normalized_period := _normalize_period_key(period)) is not None
+        }
+    else:
+        legacy_period = _normalize_period_key(payment_state.get("period"))
+        periods = {}
+        if legacy_period is not None:
+            periods[legacy_period] = _normalize_payment_period_state(payment_state)
+
+    return {
+        "version": PAYMENT_STATE_VERSION,
+        "periods": periods,
+    }
+
+
+def build_payment_period_state(members):
+    """Build a new unpaid payment record for the active membership roster."""
+    return {
+        "members": {
+            str(member_id): {
+                "status": "unpaid",
+                "paid_at": None,
+                "reminders_sent": [],
+            }
+            for member_id, member in members.items()
+            if isinstance(member, dict) and member.get("active", True)
+        },
+        "public_reminders_sent": {},
+        "personal_reminders_sent": {},
+        "public_reminder_groups_sent": {},
+        "payment_admin_followups_sent": {},
+    }
+
+
+def build_multi_period_payment_state(members, periods=None):
+    """Build versioned payment state for one or more billing periods."""
+    requested_periods = periods or [current_billing_period()]
+    normalized_periods = sorted({
+        normalized_period
+        for period in requested_periods
+        if (normalized_period := _normalize_period_key(period)) is not None
+    })
+    return {
+        "version": PAYMENT_STATE_VERSION,
+        "periods": {
+            period: build_payment_period_state(members)
+            for period in normalized_periods
+        },
+    }
+
+
+def ensure_payment_period(payment_state, members, period=None):
+    """Ensure one period exists without replacing any existing period records."""
+    normalized_state = migrate_payment_state(payment_state)
+    period_key = _normalize_period_key(period) or current_billing_period()
+    normalized_state["periods"].setdefault(
+        period_key,
+        build_payment_period_state(members),
+    )
+    return normalized_state
+
+
+def load_multi_period_payment_state(file_path):
+    """Load and migrate the versioned multi-period payment state."""
+    return migrate_payment_state(load_json(file_path, {}))
+
+
+def save_multi_period_payment_state(file_path, payment_state):
+    """Persist normalized multi-period payment state atomically."""
+    save_json(file_path, migrate_payment_state(payment_state))
 
 
 def build_monthly_payment_state(members, period=None):
