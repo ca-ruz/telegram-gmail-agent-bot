@@ -21,6 +21,7 @@ from core.membership_payments import (
     build_multi_period_payment_state,
     ensure_payment_period,
     get_payment_admin_role,
+    get_payment_reminder_schedule,
     get_payment_reminder_stage,
     get_unpaid_member_recipients,
     load_members,
@@ -211,6 +212,164 @@ def test_payment_reminder_stages_follow_the_monthly_schedule():
     assert get_payment_reminder_stage(
         datetime(2026, 11, 6, 9, 0, tzinfo=PAYMENT_TIMEZONE),
     ) == ("2026-11", "overdue_5d")
+
+
+def test_payment_reminder_schedule_waits_until_the_configured_hour():
+    """The new cadence does not run before the configured local hour."""
+    assert get_payment_reminder_schedule(
+        datetime(2026, 11, 1, 8, 59, tzinfo=PAYMENT_TIMEZONE),
+    ) is None
+
+
+@pytest.mark.parametrize(
+    ("day", "personal_stage", "public_stage"),
+    [
+        (1, "first_day", "first_day"),
+        (2, "daily", None),
+        (5, "daily", None),
+        (6, "daily", "week_1_1"),
+        (8, "daily", "week_2_1"),
+        (11, "daily", "week_2_2"),
+        (15, "daily", "week_3_1"),
+        (17, "daily", "week_3_2"),
+        (19, "daily", "week_3_3"),
+        (22, "daily", "week_4_1"),
+        (24, "daily", "week_4_2"),
+        (26, "daily", "week_4_3"),
+        (28, "daily", "week_4_4"),
+        (29, "daily", None),
+    ],
+)
+def test_payment_reminder_schedule_has_expected_monthly_cadence(
+    day,
+    personal_stage,
+    public_stage,
+):
+    """The cadence matches the agreed private and public reminder frequency."""
+    schedule = get_payment_reminder_schedule(
+        datetime(2026, 11, day, 9, 0, tzinfo=PAYMENT_TIMEZONE),
+    )
+
+    assert schedule == {
+        "period": "2026-11",
+        "personal_stage": personal_stage,
+        "public_stage": public_stage,
+    }
+
+
+def test_daily_payment_dms_are_deduplicated_per_day(tmp_path):
+    """Daily private reminders repeat on new dates but not within one date."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    state = {
+        "members": {"member-001": build_member("Ada", 101)},
+        "notification_preferences": {"101": {"payments": True}},
+        "payment_state": build_multi_period_payment_state(
+            {"member-001": build_member("Ada", 101)},
+            ["2026-11"],
+        ),
+    }
+    config = {
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+
+    asyncio.run(
+        check_payment_reminders(
+            context,
+            config,
+            state,
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+    asyncio.run(
+        check_payment_reminders(
+            context,
+            config,
+            state,
+            now=datetime(2026, 11, 2, 10, 30, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+    asyncio.run(
+        check_payment_reminders(
+            context,
+            config,
+            state,
+            now=datetime(2026, 11, 3, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+
+    assert [call.kwargs["chat_id"] for call in bot.send_message.await_args_list] == [
+        101,
+        101,
+    ]
+    personal_reminders = state["payment_state"]["periods"]["2026-11"][
+        "personal_reminders_sent"
+    ]
+    assert "2026-11:daily:2026-11-02:member-001" in personal_reminders
+    assert "2026-11:daily:2026-11-03:member-001" in personal_reminders
+
+
+def test_public_payment_reminders_follow_weekly_frequency(tmp_path):
+    """Public reminders follow the configured weekly frequency after the grace period."""
+    bot = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+    state = {
+        "payment_state": build_multi_period_payment_state({}, ["2026-11"]),
+    }
+    config = {
+        "MEMBERS_GROUP_ID": -100123,
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+
+    for day in (6, 6, 7, 8, 11):
+        asyncio.run(
+            check_payment_reminders(
+                bot,
+                config,
+                state,
+                now=datetime(2026, 11, day, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+            )
+        )
+
+    assert [call.kwargs["chat_id"] for call in bot.bot.send_message.await_args_list] == [
+        -100123,
+        -100123,
+        -100123,
+    ]
+    assert set(
+        state["payment_state"]["periods"]["2026-11"]["public_reminders_sent"]
+    ) == {
+        "2026-11:week_1_1",
+        "2026-11:week_2_1",
+        "2026-11:week_2_2",
+    }
+
+
+def test_new_cadence_retries_failed_public_delivery(tmp_path):
+    """A failed public reminder remains eligible on the next scheduler run."""
+    bot = SimpleNamespace(
+        send_message=AsyncMock(side_effect=[RuntimeError("network"), None])
+    )
+    context = SimpleNamespace(bot=bot)
+    state = {
+        "payment_state": build_multi_period_payment_state({}, ["2026-11"]),
+    }
+    config = {
+        "MEMBERS_GROUP_ID": -100123,
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+    now = datetime(2026, 11, 6, 10, 0, tzinfo=PAYMENT_TIMEZONE)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(check_payment_reminders(context, config, state, now=now))
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+
+    assert bot.send_message.await_count == 2
+    assert "2026-11:week_1_1" in state["payment_state"]["periods"]["2026-11"][
+        "public_reminders_sent"
+    ]
 
 
 def test_payment_reminder_sends_once_and_persists_duplicate_key(tmp_path):
