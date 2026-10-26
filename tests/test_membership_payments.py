@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bot.handlers.admin import handle_payment_review
+from bot.handlers.admin import (
+    handle_payment_period,
+    handle_payment_review,
+    handle_payment_status,
+)
 from core.membership_payments import (
     PAYMENT_ADMIN_ROLE,
     PRIMARY_ADMIN_ROLE,
@@ -544,6 +548,80 @@ def test_payment_review_callback_opens_review_for_payment_admin():
     query.edit_message_text.assert_awaited_once()
     assert "2026-11" in query.edit_message_text.await_args.args[0]
     assert query.edit_message_text.await_args.kwargs["reply_markup"] is not None
+
+
+def test_payment_period_selector_switches_between_periods():
+    """Authorized reviewers can switch the payment review to another period."""
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=20),
+        data="payment_period:2026-10",
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    state = {
+        "payment_state": {
+            "version": 2,
+            "periods": {
+                "2026-10": {"members": {"member-001": {"status": "unpaid"}}},
+                "2026-11": {"members": {"member-001": {"status": "paid"}}},
+            },
+        },
+        "members": {"member-001": {"name": "Ada", "active": True}},
+    }
+
+    asyncio.run(
+        handle_payment_period(
+            SimpleNamespace(callback_query=query),
+            SimpleNamespace(),
+            primary_admin_id=10,
+            payment_admin_id=20,
+            state=state,
+        )
+    )
+
+    assert query.answer.await_args.args == ()
+    assert "2026-10" in query.edit_message_text.await_args.args[0]
+    buttons = query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard
+    assert buttons[0][0].callback_data == "payment_period:2026-10"
+    assert buttons[1][0].callback_data == "payment_period:2026-11"
+
+
+def test_payment_status_toggle_updates_only_selected_period(tmp_path):
+    """Period-scoped status changes do not alter another billing period."""
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=20),
+        data="payment_toggle:2026-10:member-001",
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    state = {
+        "payment_state": {
+            "version": 2,
+            "periods": {
+                "2026-10": {"members": {"member-001": {"status": "unpaid"}}},
+                "2026-11": {"members": {"member-001": {"status": "unpaid"}}},
+            },
+        },
+        "members": {"member-001": {"name": "Ada", "active": True}},
+    }
+    config = {"PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json")}
+
+    asyncio.run(
+        handle_payment_status(
+            SimpleNamespace(callback_query=query),
+            SimpleNamespace(),
+            primary_admin_id=10,
+            payment_admin_id=20,
+            state=state,
+            config=config,
+        )
+    )
+
+    assert state["payment_state"]["periods"]["2026-10"]["members"]["member-001"]["status"] == "paid"
+    assert state["payment_state"]["periods"]["2026-11"]["members"]["member-001"]["status"] == "unpaid"
+    persisted = load_json(str(tmp_path / "payment_state.json"), {})
+    assert persisted["periods"]["2026-10"]["members"]["member-001"]["status"] == "paid"
+    assert persisted["periods"]["2026-11"]["members"]["member-001"]["status"] == "unpaid"
 
 
 def test_unpaid_recipients_filter_status_activity_preferences_and_duplicates():

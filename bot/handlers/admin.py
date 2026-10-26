@@ -41,7 +41,9 @@ from core.notification_preferences import (
 from core.membership_payments import (
     build_member,
     can_manage_payments,
+    current_billing_period,
     next_member_id,
+    save_multi_period_payment_state,
     save_members,
     save_payment_state,
 )
@@ -273,14 +275,48 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
     )
 
 
-def format_payment_review(payment_state, members):
-    """Format the current payment period for an authorized administrator."""
-    period = escape(str(payment_state.get("period", "Sin periodo")))
-    records = payment_state.get("members", {})
+def _payment_periods(payment_state):
+    """Return payment periods from either the new or legacy state shape."""
+    periods = payment_state.get("periods") if isinstance(payment_state, dict) else None
+    if isinstance(periods, dict):
+        return periods
+
+    if isinstance(payment_state, dict) and payment_state.get("period"):
+        return {str(payment_state["period"]): payment_state}
+    return {}
+
+
+def _selected_payment_period(payment_state, period=None):
+    """Choose a valid payment period, preferring the current period."""
+    periods = _payment_periods(payment_state)
+    if not periods:
+        return None
+    if period is not None and str(period) in periods:
+        return str(period)
+
+    current_period = current_billing_period()
+    if current_period in periods:
+        return current_period
+    return sorted(periods)[-1]
+
+
+def _payment_period_state(payment_state, period=None):
+    """Return the selected period record and its normalized period key."""
+    selected_period = _selected_payment_period(payment_state, period)
+    if selected_period is None:
+        return {}, None
+    return _payment_periods(payment_state).get(selected_period, {}), selected_period
+
+
+def format_payment_review(payment_state, members, period=None):
+    """Format one payment period for an authorized administrator."""
+    period_state, selected_period = _payment_period_state(payment_state, period)
+    period_text = escape(str(selected_period or "Sin periodo"))
+    records = period_state.get("members", {})
     if not isinstance(records, dict):
         records = {}
 
-    lines = [f"<b>Pagos de membresía: {period}</b>"]
+    lines = [f"<b>Pagos de membresía: {period_text}</b>"]
     paid_lines = []
     unpaid_lines = []
     for member_id, record in sorted(records.items()):
@@ -299,13 +335,26 @@ def format_payment_review(payment_state, members):
     return "".join(lines)
 
 
-def payment_review_keyboard(payment_state, members):
-    """Build status-toggle buttons for the current payment records."""
-    records = payment_state.get("members", {})
-    if not isinstance(records, dict):
-        return None
-
+def payment_review_keyboard(payment_state, members, period=None):
+    """Build period-selector and status-toggle buttons for payment review."""
+    period_state, selected_period = _payment_period_state(payment_state, period)
     buttons = []
+    periods = sorted(_payment_periods(payment_state))
+    if periods:
+        buttons.extend([
+            [
+                InlineKeyboardButton(
+                    f"{'✅ ' if item == selected_period else ''}{item}",
+                    callback_data=f"payment_period:{item}",
+                )
+            ]
+            for item in periods
+        ])
+
+    records = period_state.get("members", {})
+    if not isinstance(records, dict):
+        records = {}
+
     for member_id, record in sorted(records.items()):
         member = members.get(member_id, {})
         name = str(member.get("name", member_id))
@@ -314,7 +363,7 @@ def payment_review_keyboard(payment_state, members):
         buttons.append([
             InlineKeyboardButton(
                 label,
-                callback_data=f"payment_toggle_{member_id}",
+                callback_data=f"payment_toggle:{selected_period}:{member_id}",
             )
         ])
     return InlineKeyboardMarkup(buttons) if buttons else None
@@ -382,6 +431,45 @@ async def handle_payment_review(
     )
 
 
+async def handle_payment_period(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    primary_admin_id,
+    payment_admin_id,
+    state,
+):
+    """Switch the payment review to a selected billing period."""
+    query = update.callback_query
+    if not can_manage_payments(
+        query.from_user.id,
+        primary_admin_id,
+        payment_admin_id,
+    ):
+        await query.answer("No tienes permisos para revisar pagos.", show_alert=True)
+        return
+
+    period = query.data.removeprefix("payment_period:")
+    payment_state = state.get("payment_state", {})
+    if period not in _payment_periods(payment_state):
+        await query.answer("Ese periodo de pagos no está disponible.", show_alert=True)
+        return
+
+    await query.answer()
+    await query.edit_message_text(
+        format_payment_review(
+            payment_state,
+            state.get("members", {}),
+            period,
+        ),
+        parse_mode=ParseMode.HTML,
+        reply_markup=payment_review_keyboard(
+            payment_state,
+            state.get("members", {}),
+            period,
+        ),
+    )
+
+
 async def handle_payment_status(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -400,12 +488,23 @@ async def handle_payment_status(
         await query.answer("No tienes permisos para modificar pagos.", show_alert=True)
         return
 
-    member_id = query.data.removeprefix("payment_toggle_")
+    toggle_data = query.data.removeprefix("payment_toggle:")
     payment_state = state.setdefault("payment_state", {})
-    records = payment_state.setdefault("members", {})
+    if ":" in toggle_data:
+        period, member_id = toggle_data.split(":", 1)
+    else:
+        period = payment_state.get("period")
+        member_id = toggle_data.removeprefix("payment_toggle_")
+
+    period_state, selected_period = _payment_period_state(payment_state, period)
+    if selected_period is None:
+        await query.answer("Ese periodo de pagos no está disponible.", show_alert=True)
+        return
+
+    records = period_state.setdefault("members", {})
     record = records.get(member_id)
     if not isinstance(record, dict):
-        await query.answer("Ese miembro no está en el periodo actual.", show_alert=True)
+        await query.answer("Ese miembro no está en el periodo seleccionado.", show_alert=True)
         return
 
     member = state.setdefault("members", {}).get(member_id, {})
@@ -419,14 +518,22 @@ async def handle_payment_status(
         record["paid_at"] = datetime.now(timezone.utc).isoformat()
         message = f"✅ {escape(name)} quedó marcado como pagado."
 
-    save_payment_state(config["PAYMENT_STATE_FILE"], payment_state)
+    if isinstance(payment_state.get("periods"), dict):
+        save_multi_period_payment_state(config["PAYMENT_STATE_FILE"], payment_state)
+    else:
+        save_payment_state(config["PAYMENT_STATE_FILE"], payment_state)
     await query.answer(message)
     await query.edit_message_text(
-        format_payment_review(payment_state, state.get("members", {})),
+        format_payment_review(
+            payment_state,
+            state.get("members", {}),
+            selected_period,
+        ),
         parse_mode=ParseMode.HTML,
         reply_markup=payment_review_keyboard(
             payment_state,
             state.get("members", {}),
+            selected_period,
         ),
     )
 
@@ -1465,7 +1572,10 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
     morning_lead_hours = config.get("EVENT_MORNING_REMINDER_LEAD_HOURS", 2)
     payment_hour = config.get("PAYMENT_REMINDER_HOUR", 9)
     payment_state = state.get("payment_state", {})
-    payment_period = payment_state.get("period", "Sin periodo")
+    payment_period = payment_state.get("period")
+    if not payment_period and isinstance(payment_state.get("periods"), dict):
+        payment_period = current_billing_period()
+    payment_period = payment_period or "Sin periodo"
     coworking_enabled = config.get("ENABLE_COWORKING_NOTIFICATIONS", True)
     coworking_weekday = config.get("COWORKING_WEEKDAY", 2)
     coworking_hour = config.get("COWORKING_HOUR", 10)
