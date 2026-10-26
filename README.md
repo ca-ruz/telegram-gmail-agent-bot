@@ -71,10 +71,11 @@ The membership payment workflow uses these additional variables:
 *   `MEMBERS_FILE`: Runtime JSON file containing the member roster (default `data/members.json`).
 *   `PAYMENT_STATE_FILE`: Runtime JSON file containing the current monthly payment state (default `data/payment_state.json`).
 *   `MEMBERS_GROUP_ID`: Telegram chat ID for the group that receives anonymous public payment reminders.
+*   `GROUP_NOTIFICATION_CATEGORIES_FILE`: Runtime JSON file for per-group notification categories (default `data/group_notification_categories.json`).
 *   `PAYMENT_REMINDER_HOUR`: Local reminder hour in `America/Mexico_City` (default `9`).
 *   `ENABLE_PAYMENT_REMINDERS`: Set to `false` to disable scheduled payment reminders while retaining the roster and payment state.
 
-The bot sends public reminders to `MEMBERS_GROUP_ID` and private reminders only to active unpaid members whose payment notifications are enabled. Payment state, member data, notification preferences, logs, `.env`, and service-account credentials are runtime data and must not be committed.
+The bot sends public payment reminders only to groups assigned to the `payments` category and private reminders only to active unpaid members whose payment notifications are enabled. Use `/groupnotifications` in the administrator chat to inspect or change group categories. Payment state, member data, notification preferences, logs, `.env`, and service-account credentials are runtime data and must not be committed.
 
 5.  **Google Calendar Credentials:**
     Place your Service Account JSON file in the root directory and name it `google_calendar.json`. Ensure the service account email has **"Make changes to events"** permissions on your calendar.
@@ -108,6 +109,7 @@ The bot must remain in configured groups so it can deliver scheduled event, paym
 For additional group privacy, open the bot's conversation with [@BotFather](https://t.me/botfather), run `/setprivacy`, select the bot, and choose **Enable**. Do not use `/setjoingroups`; the bot needs to remain able to join groups for scheduled delivery.
 
 ### Admin Commands
+*   `/groupnotifications`: List or change the notification categories assigned to groups.
 *   `/addevent [desc]`: Create a new event using natural language.
 *   `/editevent`: Interactively edit an existing event.
 *   `/deleteevent`: Interactively delete an event from the calendar.

@@ -65,7 +65,12 @@ def test_manual_event_reminder_delivers_to_enabled_dms_and_groups(tmp_path):
     now = datetime(2026, 10, 15, 11, 0, tzinfo=timezone.utc)
     state = {
         "subscribers": {101, 202},
-        "groups": {-100},
+        "groups": {-100, -200},
+        "group_notification_categories": {
+            "events": [-100],
+            "payments": [-200],
+            "coworking": [-100, -200],
+        },
         "sent_reminders": {},
         "notification_preferences": {
             "101": {"events": True, "coffee": False, "payments": False},

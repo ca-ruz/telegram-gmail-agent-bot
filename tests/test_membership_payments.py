@@ -69,6 +69,7 @@ def test_monthly_payment_state_contains_active_members_only():
                 "reminders_sent": [],
             }
         },
+        "public_reminder_groups_sent": {},
         "payment_admin_followups_sent": {},
     }
 
@@ -129,6 +130,72 @@ def test_payment_reminder_sends_once_and_persists_duplicate_key(tmp_path):
     bot.send_message.assert_awaited_once()
     assert bot.send_message.await_args.kwargs["chat_id"] == -100123
     assert "noviembre de 2026" in bot.send_message.await_args.kwargs["text"]
+    assert "2026-11:7d" in state["payment_state"]["public_reminders_sent"]
+
+
+def test_payment_reminder_uses_payment_groups_and_excludes_event_groups(tmp_path):
+    """Public payment reminders target payment groups without notifying event groups."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    state = {
+        "groups": {-100, -200},
+        "group_notification_categories": {
+            "events": [-200],
+            "payments": [-100],
+            "coworking": [-100, -200],
+        },
+        "payment_state": {"period": "2026-10", "members": {}},
+    }
+    config = {
+        "MEMBERS_GROUP_ID": -100,
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+
+    asyncio.run(
+        check_payment_reminders(
+            context,
+            config,
+            state,
+            now=datetime(2026, 10, 25, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+
+    assert [call.kwargs["chat_id"] for call in bot.send_message.await_args_list] == [-100]
+    assert state["payment_state"]["public_reminder_groups_sent"]["2026-11:7d"] == [-100]
+
+
+def test_payment_reminder_retries_only_failed_payment_groups(tmp_path):
+    """A failed payment-group delivery retries without duplicating successful groups."""
+    bot = SimpleNamespace(
+        send_message=AsyncMock(
+            side_effect=[None, RuntimeError("network"), None]
+        )
+    )
+    context = SimpleNamespace(bot=bot)
+    state = {
+        "group_notification_categories": {
+            "events": [],
+            "payments": [-100, -200],
+            "coworking": [],
+        },
+        "payment_state": {"period": "2026-10", "members": {}},
+    }
+    config = {
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+    now = datetime(2026, 10, 25, 10, 0, tzinfo=PAYMENT_TIMEZONE)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(check_payment_reminders(context, config, state, now=now))
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+
+    assert [call.kwargs["chat_id"] for call in bot.send_message.await_args_list] == [
+        -200,
+        -100,
+        -100,
+    ]
     assert "2026-11:7d" in state["payment_state"]["public_reminders_sent"]
 
 

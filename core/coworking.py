@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from zoneinfo import ZoneInfo
 
+from core.group_notification_routing import get_group_targets
 from tools.local.data_manager import load_json, save_json
 
 
@@ -108,16 +109,7 @@ def format_coworking_invitation(config=None):
 
 def _get_coworking_group_targets(state):
     """Return configured broadcast-group IDs without subscriber filtering."""
-    raw_groups = state.get("groups", set())
-    if isinstance(raw_groups, dict):
-        raw_groups = raw_groups.keys()
-    if isinstance(raw_groups, (str, bytes)) or not raw_groups:
-        return []
-
-    return sorted(
-        {group_id for group_id in raw_groups if group_id not in (None, "")},
-        key=str,
-    )
+    return sorted(get_group_targets(state, "coworking"), key=str)
 
 
 async def check_coworking_notifications(context, config, state, now=None):

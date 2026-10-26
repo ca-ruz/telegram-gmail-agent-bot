@@ -47,3 +47,51 @@ def test_primary_admin_group_management_remains_available(tmp_path):
 
     assert state["groups"] == set()
     assert group_id not in load_json(config["GROUPS_FILE"], [])
+
+
+def test_group_management_updates_event_and_coworking_categories(tmp_path):
+    """Adding and removing a group keeps category routing aligned with group management."""
+    group_id = -100123
+    config = {
+        "GROUPS_FILE": str(tmp_path / "groups.json"),
+        "GROUP_NOTIFICATION_CATEGORIES_FILE": str(
+            tmp_path / "group_notification_categories.json"
+        ),
+        "TELEGRAM_METADATA_FILE": str(tmp_path / "telegram_metadata.json"),
+    }
+    state = {
+        "groups": set(),
+        "group_notification_categories": {
+            "events": [],
+            "payments": [],
+            "coworking": [],
+        },
+        "telegram_metadata": {"users": {}, "groups": {}},
+    }
+    context = SimpleNamespace()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        effective_chat=SimpleNamespace(
+            id=group_id,
+            type="supergroup",
+            title="Community group",
+            username="community_group",
+        ),
+        message=SimpleNamespace(reply_text=AsyncMock()),
+    )
+
+    asyncio.run(add_group(update, context, admin_id=42, state=state, config=config))
+
+    assert state["group_notification_categories"] == {
+        "events": [group_id],
+        "payments": [],
+        "coworking": [group_id],
+    }
+
+    asyncio.run(remove_group(update, context, admin_id=42, state=state, config=config))
+
+    assert state["group_notification_categories"] == {
+        "events": [],
+        "payments": [],
+        "coworking": [],
+    }

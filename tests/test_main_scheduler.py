@@ -127,6 +127,7 @@ def test_main_configures_public_and_admin_command_scopes():
     assert "events" not in admin_names
     assert "website" not in admin_names
     assert "manualpromo" in admin_names
+    assert "groupnotifications" in admin_names
     assert command_calls[1].kwargs["scope"].chat_id == 42
 
 

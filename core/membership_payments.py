@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from core.group_notification_routing import get_group_targets
 from core.notification_preferences import is_notification_enabled
 from tools.local.data_manager import load_json, save_json
 
@@ -120,6 +121,7 @@ def build_monthly_payment_state(members, period=None):
             for member_id, member in members.items()
             if isinstance(member, dict) and member.get("active", True)
         },
+        "public_reminder_groups_sent": {},
         "payment_admin_followups_sent": {},
     }
 
@@ -160,6 +162,12 @@ def synchronize_payment_state(payment_state, members, period=None):
         else {},
         "personal_reminders_sent": payment_state.get("personal_reminders_sent", {})
         if isinstance(payment_state.get("personal_reminders_sent", {}), dict)
+        else {},
+        "public_reminder_groups_sent": payment_state.get(
+            "public_reminder_groups_sent",
+            {},
+        )
+        if isinstance(payment_state.get("public_reminder_groups_sent", {}), dict)
         else {},
         "payment_admin_followups_sent": payment_state.get(
             "payment_admin_followups_sent",
@@ -393,22 +401,54 @@ async def check_payment_reminders(context, config, state, now=None):
     state_changed = False
     public_error = None
 
-    group_id = config.get("MEMBERS_GROUP_ID", 0)
-    public_reminders = payment_state.setdefault("public_reminders_sent", {})
-    public_key = f"{period}:{stage}"
-    if group_id and public_key not in public_reminders:
+    configured_group_id = config.get("MEMBERS_GROUP_ID", 0)
+    if "group_notification_categories" in state:
+        payment_group_ids = get_group_targets(state, "payments")
+    else:
         try:
-            await context.bot.send_message(
-                chat_id=group_id,
-                text=format_payment_reminder(period, stage),
-            )
+            payment_group_ids = {int(configured_group_id)} if configured_group_id else set()
+        except (TypeError, ValueError):
+            payment_group_ids = set()
+
+    public_reminders = payment_state.setdefault("public_reminders_sent", {})
+    public_group_reminders = payment_state.setdefault(
+        "public_reminder_groups_sent",
+        {},
+    )
+    if not isinstance(public_group_reminders, dict):
+        public_group_reminders = {}
+        payment_state["public_reminder_groups_sent"] = public_group_reminders
+    public_key = f"{period}:{stage}"
+    if payment_group_ids and public_key not in public_reminders:
+        sent_group_ids = {
+            group_id
+            for group_id in public_group_reminders.get(public_key, [])
+            if group_id in payment_group_ids
+        }
+        for group_id in sorted(payment_group_ids):
+            if group_id in sent_group_ids:
+                continue
+            try:
+                await context.bot.send_message(
+                    chat_id=group_id,
+                    text=format_payment_reminder(period, stage),
+                )
+                sent_group_ids.add(group_id)
+                state_changed = True
+            except Exception as error:
+                public_error = error
+                logger.exception(
+                    "Failed to send public payment reminder to group %s for %s.",
+                    group_id,
+                    period,
+                )
+
+        public_group_reminders[public_key] = sorted(sent_group_ids)
+        if sent_group_ids == payment_group_ids:
             public_reminders[public_key] = current_time.astimezone(
                 timezone.utc
             ).isoformat()
             state_changed = True
-        except Exception as error:
-            public_error = error
-            logger.exception("Failed to send public payment reminder for %s.", period)
 
     if stage in {"first_day", "overdue_5d"}:
         personal_reminders = payment_state.setdefault("personal_reminders_sent", {})

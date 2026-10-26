@@ -23,6 +23,7 @@ data/imported_events.json
 data/payment_state.json
 data/coworking_state.json
 data/telegram_metadata.json
+data/group_notification_categories.json
 subscribers.json
 sent_reminders.json
 *.tmp

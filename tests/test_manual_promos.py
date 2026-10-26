@@ -330,7 +330,12 @@ def test_manual_promo_immediate_delivery_reaches_subscribers_and_groups(tmp_path
     """Immediate delivery reaches both DMs and configured broadcast groups."""
     state = {
         "subscribers": {101},
-        "groups": {-100},
+        "groups": {-100, -200},
+        "group_notification_categories": {
+            "events": [-100],
+            "payments": [-200],
+            "coworking": [-100, -200],
+        },
         "manual_promos": {"manual-001": build_active_promo()},
     }
     state["manual_promos"]["manual-001"]["status"] = "pending"
