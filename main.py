@@ -37,10 +37,12 @@ from core.notification_preferences import load_notification_preferences
 from core.telegram_metadata import load_telegram_metadata
 from core.membership_payments import (
     check_payment_reminders,
+    current_billing_period,
     load_members,
-    load_payment_state,
-    save_payment_state,
-    synchronize_payment_state,
+    load_multi_period_payment_state,
+    next_billing_period,
+    save_multi_period_payment_state,
+    synchronize_multi_period_payment_state,
 )
 from tools.local.data_manager import load_json, load_reminder_rules
 from services.openai_service import OpenAIService
@@ -189,11 +191,12 @@ if isinstance(raw_notified, list):
     raw_notified = notified_dict
 
 members = load_members(CONFIG['MEMBERS_FILE'])
-payment_state = synchronize_payment_state(
-    load_payment_state(CONFIG['PAYMENT_STATE_FILE']),
+payment_state = synchronize_multi_period_payment_state(
+    load_multi_period_payment_state(CONFIG['PAYMENT_STATE_FILE']),
     members,
+    [current_billing_period(), next_billing_period()],
 )
-save_payment_state(CONFIG['PAYMENT_STATE_FILE'], payment_state)
+save_multi_period_payment_state(CONFIG['PAYMENT_STATE_FILE'], payment_state)
 broadcast_groups = set(load_json(CONFIG['GROUPS_FILE'], []))
 group_notification_categories = load_group_notification_categories(
     CONFIG['GROUP_NOTIFICATION_CATEGORIES_FILE'],

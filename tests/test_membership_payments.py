@@ -23,6 +23,7 @@ from core.membership_payments import (
     load_multi_period_payment_state,
     load_payment_state,
     migrate_payment_state,
+    next_billing_period,
     next_member_id,
     PAYMENT_TIMEZONE,
     save_members,
@@ -30,7 +31,9 @@ from core.membership_payments import (
     save_payment_state,
     send_payment_admin_followup,
     send_personal_payment_reminders,
+    synchronize_multi_period_payment_state,
 )
+from tools.local.data_manager import load_json
 
 
 def test_payment_roles_distinguish_primary_and_payment_administrators():
@@ -84,6 +87,7 @@ def test_billing_period_uses_utc_month():
     timestamp = datetime(2026, 11, 1, 0, 15, tzinfo=timezone.utc)
 
     assert current_billing_period(timestamp) == "2026-11"
+    assert next_billing_period("2026-12") == "2027-01"
 
 
 def test_legacy_payment_state_migrates_without_losing_period_history():
@@ -127,6 +131,37 @@ def test_ensure_payment_period_adds_new_period_without_replacing_old_period():
     assert set(state["periods"]) == {"2026-10", "2026-11"}
     assert state["periods"]["2026-10"]["members"]["member-001"]["status"] == "unpaid"
     assert state["periods"]["2026-11"]["members"]["member-001"]["status"] == "unpaid"
+
+
+def test_synchronize_multi_period_state_preserves_paid_status_and_adds_new_members():
+    """Startup synchronization preserves each period while adding new active members."""
+    state = {
+        "periods": {
+            "2026-10": {
+                "members": {
+                    "member-001": {"status": "paid", "paid_at": "paid-at"},
+                },
+            },
+        },
+    }
+    members = {
+        "member-001": build_member("Ada", 101),
+        "member-002": build_member("Lin", 202),
+    }
+
+    synchronized = synchronize_multi_period_payment_state(
+        state,
+        members,
+        ["2026-10", "2026-11"],
+    )
+
+    october = synchronized["periods"]["2026-10"]["members"]
+    assert october["member-001"]["status"] == "paid"
+    assert october["member-002"]["status"] == "unpaid"
+    assert set(synchronized["periods"]["2026-11"]["members"]) == {
+        "member-001",
+        "member-002",
+    }
 
 
 def test_multi_period_payment_state_round_trip(tmp_path):
@@ -193,6 +228,59 @@ def test_payment_reminder_sends_once_and_persists_duplicate_key(tmp_path):
     assert bot.send_message.await_args.kwargs["chat_id"] == -100123
     assert "noviembre de 2026" in bot.send_message.await_args.kwargs["text"]
     assert "2026-11:7d" in state["payment_state"]["public_reminders_sent"]
+
+
+def test_payment_reminder_writes_to_due_period_without_overwriting_previous_period(tmp_path):
+    """A November reminder updates November while preserving October payment history."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    state = {
+        "groups": {-100123},
+        "group_notification_categories": {
+            "events": [],
+            "payments": [-100123],
+            "coworking": [],
+        },
+        "payment_state": {
+            "version": 2,
+            "periods": {
+                "2026-10": {
+                    "members": {
+                        "member-001": {"status": "unpaid"},
+                    },
+                },
+                "2026-11": {
+                    "members": {
+                        "member-001": {"status": "unpaid"},
+                    },
+                },
+            },
+        },
+        "members": {"member-001": build_member("Ada", 101)},
+    }
+    config = {
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+
+    asyncio.run(
+        check_payment_reminders(
+            context,
+            config,
+            state,
+            now=datetime(2026, 10, 25, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+
+    assert "2026-11:7d" in state["payment_state"]["periods"]["2026-11"][
+        "public_reminders_sent"
+    ]
+    assert state["payment_state"]["periods"]["2026-10"][
+        "public_reminders_sent"
+    ] == {}
+    assert "2026-11:7d" in load_json(str(tmp_path / "payment_state.json"), {})[
+        "periods"
+    ]["2026-11"]["public_reminders_sent"]
 
 
 def test_payment_reminder_uses_payment_groups_and_excludes_event_groups(tmp_path):
