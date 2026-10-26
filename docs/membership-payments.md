@@ -25,6 +25,9 @@ same as the general broadcast-group list.
 The reminder hour uses `America/Mexico_City`. The payment and member JSON files
 are runtime data and must remain outside Git.
 
+This cadence does not require any new `.env` variables. The five-day grace
+period and public reminder frequency are built into the scheduler.
+
 After each successful public reminder, the bot waits the configured number of
 hours before privately notifying `PAYMENT_ADMIN_ID`. The follow-up includes a
 `Revisar pagos` button that opens the authorized review screen for the same
@@ -77,31 +80,42 @@ them eligible for a later due stage.
 
 ## Reminder Schedule
 
-Public reminders are sent to `MEMBERS_GROUP_ID` at the configured local hour:
+All reminders are evaluated at the configured local hour in
+`America/Mexico_City`:
 
-- 7 days before the first day of the billing month.
-- 2 days before the first day.
-- 1 day before the first day.
-- On the first day of the month.
-- Five days after the first day for overdue payments.
+- On the first day of the month, send a private reminder to each unpaid member
+  and an anonymous reminder to the configured payment groups.
+- From the second through the fifth day, send a private reminder each day to
+  members who are still unpaid. No public reminder is sent during this grace
+  period.
+- On day six, send one public reminder for the first week.
+- During the second week, send public reminders on days eight and eleven.
+- During the third week, send public reminders on days fifteen, seventeen, and
+  nineteen.
+- During the final week, send public reminders on days twenty-two, twenty-four,
+  twenty-six, and twenty-eight.
+
+Private reminders continue daily for active unpaid members after the grace
+period. A member who is marked paid is excluded from later reminders for that
+period.
 
 Public messages do not include member names or payment details. The bot stores
-each successful public stage in `payment_state.json` so scheduler restarts do
-not resend it.
+each successful public reminder in `payment_state.json` so scheduler restarts
+do not resend it. Daily private reminders are also tracked by date, so a
+reminder is sent at most once per member per day.
 
 The payment administrator follow-up is sent only after the corresponding
 public reminder succeeds. Each public stage produces at most one follow-up;
 failed deliveries remain eligible for a later scheduler retry. Follow-ups are
 private and never sent to the membership group or regular subscribers.
 
-Private reminders begin on the first day and may be sent again at the overdue
-stage. They are sent only when all of these conditions are true:
+Private reminders are sent only when all of these conditions are true:
 
 - The member is active.
 - The member is unpaid for the current period.
 - The member has a valid Telegram ID.
 - The member's `payments` notification preference is enabled.
-- That member and reminder stage have not already been delivered.
+- That member has not already received the reminder for the current date.
 
 Failed deliveries are not marked as complete and can be retried by the next
 scheduler run.
@@ -130,6 +144,8 @@ sudo journalctl -u btcgdl-message-bot -n 50 --no-pager
 
 Do not overwrite `.env`, `data/members.json`, or `data/payment_state.json` while
 updating. Back up runtime data before intentionally changing the deployment.
+The bot migrates legacy single-period payment state automatically and keeps the
+current and next billing periods available after startup.
 
 ## Troubleshooting
 
