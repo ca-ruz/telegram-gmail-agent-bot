@@ -128,6 +128,41 @@ def test_coworking_delivery_sends_to_all_groups_not_subscribers(tmp_path):
     )
 
 
+def test_coworking_delivery_skips_groups_without_coworking_category(tmp_path):
+    """Coworking announcements exclude event-only and payment-only groups."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot, bot_data={"current_events": []})
+    state = {
+        "groups": {-100123, -100456, -100789},
+        "group_notification_categories": {
+            "events": [-100123],
+            "payments": [-100456],
+            "coworking": [-100789],
+        },
+        "subscribers": {101},
+        "manual_promos": {},
+        "coworking": {},
+    }
+    config = {
+        "ENABLE_COWORKING_NOTIFICATIONS": True,
+        "COWORKING_WEEKDAY": 2,
+        "COWORKING_HOUR": 10,
+        "COWORKING_QUIET_WINDOW_HOURS": 24,
+        "COWORKING_STATE_FILE": str(tmp_path / "coworking_state.json"),
+    }
+
+    asyncio.run(
+        check_coworking_notifications(
+            context,
+            config,
+            state,
+            now=datetime(2026, 10, 21, 10, 0, tzinfo=COWORKING_TIMEZONE),
+        )
+    )
+
+    assert [call.kwargs["chat_id"] for call in bot.send_message.await_args_list] == [-100789]
+
+
 def test_coworking_without_groups_does_not_consume_weekly_slot(tmp_path):
     """A missing group configuration leaves the weekly invitation retryable."""
     bot = SimpleNamespace(send_message=AsyncMock())
