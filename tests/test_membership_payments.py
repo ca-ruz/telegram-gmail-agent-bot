@@ -21,6 +21,7 @@ from core.membership_payments import (
     build_multi_period_payment_state,
     ensure_payment_period,
     get_payment_admin_role,
+    get_overlapping_payment_reminder_schedule,
     get_payment_reminder_schedule,
     get_payment_reminder_stage,
     get_unpaid_member_recipients,
@@ -31,6 +32,7 @@ from core.membership_payments import (
     next_billing_period,
     next_member_id,
     PAYMENT_TIMEZONE,
+    previous_billing_period,
     save_members,
     save_multi_period_payment_state,
     save_payment_state,
@@ -255,6 +257,160 @@ def test_payment_reminder_schedule_has_expected_monthly_cadence(
         "personal_stage": personal_stage,
         "public_stage": public_stage,
     }
+
+
+def test_overlapping_schedule_covers_advance_and_rollover_periods():
+    """The overlapping scheduler identifies upcoming and previous periods."""
+    assert get_overlapping_payment_reminder_schedule(
+        datetime(2026, 10, 28, 8, 59, tzinfo=PAYMENT_TIMEZONE),
+    ) == []
+    assert get_overlapping_payment_reminder_schedule(
+        datetime(2026, 10, 29, 9, 0, tzinfo=PAYMENT_TIMEZONE),
+    ) == [
+        {
+            "period": "2026-10",
+            "personal_stage": "daily",
+            "public_stage": None,
+        },
+        {
+            "period": "2026-11",
+            "personal_stage": "advance",
+            "public_stage": "advance",
+        },
+    ]
+    assert get_overlapping_payment_reminder_schedule(
+        datetime(2026, 11, 1, 9, 0, tzinfo=PAYMENT_TIMEZONE),
+    ) == [
+        {
+            "period": "2026-11",
+            "personal_stage": "first_day",
+            "public_stage": "first_day",
+        },
+        {
+            "period": "2026-10",
+            "personal_stage": "overdue_daily",
+            "public_stage": "overdue_rollover",
+        },
+    ]
+    assert previous_billing_period("2027-01") == "2026-12"
+
+
+def test_advance_reminder_combines_current_and_upcoming_periods(tmp_path):
+    """The advance reminder reaches both DMs and payment groups once."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    member = build_member("Ada", 101)
+    state = {
+        "members": {"member-001": member},
+        "notification_preferences": {"101": {"payments": True}},
+        "payment_state": build_multi_period_payment_state(
+            {"member-001": member},
+            ["2026-10", "2026-11"],
+        ),
+    }
+    config = {
+        "MEMBERS_GROUP_ID": -100123,
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_ADVANCE_REMINDER_DAYS": 3,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+    now = datetime(2026, 10, 29, 10, 0, tzinfo=PAYMENT_TIMEZONE)
+
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+
+    assert [call.kwargs["chat_id"] for call in bot.send_message.await_args_list] == [
+        -100123,
+        101,
+    ]
+    assert "noviembre de 2026" in bot.send_message.await_args_list[0].kwargs["text"]
+    personal_text = bot.send_message.await_args_list[1].kwargs["text"]
+    assert "octubre de 2026" in personal_text
+    assert "noviembre de 2026" in personal_text
+    periods = state["payment_state"]["periods"]
+    assert "2026-11:advance" in periods["2026-11"]["public_reminders_sent"]
+    assert "2026-10:daily:2026-10-29:member-001" in periods["2026-10"][
+        "personal_reminders_sent"
+    ]
+    assert "2026-11:advance:member-001" in periods["2026-11"][
+        "personal_reminders_sent"
+    ]
+
+
+def test_first_day_combines_current_and_previous_period_reminders(tmp_path):
+    """The first day reminds about both the new and previous unpaid periods."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    member = build_member("Ada", 101)
+    state = {
+        "members": {"member-001": member},
+        "notification_preferences": {"101": {"payments": True}},
+        "payment_state": build_multi_period_payment_state(
+            {"member-001": member},
+            ["2026-10", "2026-11"],
+        ),
+    }
+    config = {
+        "MEMBERS_GROUP_ID": -100123,
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+    now = datetime(2026, 11, 1, 10, 0, tzinfo=PAYMENT_TIMEZONE)
+
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+    asyncio.run(check_payment_reminders(context, config, state, now=now))
+
+    assert [call.kwargs["chat_id"] for call in bot.send_message.await_args_list] == [
+        -100123,
+        101,
+    ]
+    group_text = bot.send_message.await_args_list[0].kwargs["text"]
+    personal_text = bot.send_message.await_args_list[1].kwargs["text"]
+    for text in (group_text, personal_text):
+        assert "octubre de 2026" in text
+        assert "noviembre de 2026" in text
+    periods = state["payment_state"]["periods"]
+    assert "2026-10:overdue_rollover" in periods["2026-10"][
+        "public_reminders_sent"
+    ]
+    assert "2026-11:first_day" in periods["2026-11"]["public_reminders_sent"]
+
+
+def test_paid_previous_period_is_excluded_from_combined_private_reminder(tmp_path):
+    """A paid previous period does not generate another private reminder."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    member = build_member("Ada", 101)
+    state = {
+        "members": {"member-001": member},
+        "notification_preferences": {"101": {"payments": True}},
+        "payment_state": build_multi_period_payment_state(
+            {"member-001": member},
+            ["2026-10", "2026-11"],
+        ),
+    }
+    state["payment_state"]["periods"]["2026-10"]["members"]["member-001"][
+        "status"
+    ] = "paid"
+    config = {
+        "MEMBERS_GROUP_ID": -100123,
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+
+    asyncio.run(
+        check_payment_reminders(
+            context,
+            config,
+            state,
+            now=datetime(2026, 11, 1, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+
+    assert bot.send_message.await_args_list[1].kwargs["chat_id"] == 101
+    personal_text = bot.send_message.await_args_list[1].kwargs["text"]
+    assert "noviembre de 2026" in personal_text
+    assert "octubre de 2026" not in personal_text
 
 
 def test_daily_payment_dms_are_deduplicated_per_day(tmp_path):
