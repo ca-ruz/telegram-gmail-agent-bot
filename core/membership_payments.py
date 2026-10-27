@@ -499,7 +499,13 @@ def format_payment_period(period):
 def format_payment_reminder(period, stage):
     """Build an anonymous public reminder for a billing stage."""
     month_label = format_payment_period(period)
-    if stage == "overdue_5d" or str(stage).startswith("week_"):
+    if stage == "advance":
+        return (
+            f"💳 El periodo de membresía de {month_label} comienza en tres días.\n"
+            "Por favor prepara tu pago. Si ya pagaste, ignora este mensaje."
+        )
+    if stage in {"overdue_5d", "overdue_rollover", "overdue_daily"} \
+            or str(stage).startswith("week_"):
         return (
             f"💳 Recordatorio: hay pagos de membresía pendientes de {month_label}.\n"
             "Si todavía no has pagado, por favor ponte al corriente."
@@ -536,12 +542,56 @@ def format_personal_payment_reminder(member_name, period, stage):
     )
 
 
+def format_combined_payment_reminder(periods):
+    """Build one anonymous public reminder for several billing periods."""
+    lines = ["💳 Recordatorio de pagos de membresía:"]
+    for period, stage in periods:
+        month_label = format_payment_period(period)
+        if stage == "advance":
+            detail = "comienza en tres días"
+        elif stage == "first_day":
+            detail = "comienza hoy"
+        else:
+            detail = "tiene pagos pendientes"
+        lines.append(f"• {month_label}: {detail}")
+    lines.append("Si ya pagaste, ignora este mensaje.")
+    return "\n".join(lines)
+
+
+def format_combined_personal_payment_reminder(member_name, periods):
+    """Build one private reminder for several unpaid billing periods."""
+    lines = [
+        f"Hola, {member_name}.",
+        "",
+        "💳 Estos pagos de membresía aparecen pendientes:",
+    ]
+    for period, stage in periods:
+        month_label = format_payment_period(period)
+        if stage == "advance":
+            detail = "comienza en tres días"
+        elif stage == "first_day":
+            detail = "comienza hoy"
+        else:
+            detail = "sigue pendiente"
+        lines.append(f"• {month_label}: {detail}")
+    lines.append("Por favor realiza tu pago cuando te sea posible.")
+    return "\n".join(lines)
+
+
 def format_payment_admin_followup(period, stage):
     """Build a private payment-review follow-up for the payment administrator."""
     month_label = format_payment_period(period)
+    if stage == "advance":
+        stage_label = "recordatorio anticipado"
+    elif stage == "first_day":
+        stage_label = "primer día del periodo"
+    elif stage == "overdue_rollover":
+        stage_label = "periodo anterior pendiente"
+    else:
+        stage_label = "recordatorio de pagos pendientes"
     return (
         "🔔 Revisión de pagos de membresía\n\n"
-        f"El recordatorio de {month_label} ({stage}) ya fue enviado.\n"
+        f"El {stage_label} de {month_label} ya fue enviado.\n"
         "¿Puedes revisar quién ya pagó y actualizar el estado de cada miembro?\n"
         "Usa /payments para abrir la revisión."
     )
@@ -668,6 +718,213 @@ async def send_personal_payment_reminders(
     return result
 
 
+def _personal_reminder_key(period, stage, local_date, member_id):
+    """Build a duplicate-protection key for one personal reminder."""
+    if stage in {"daily", "overdue_daily"}:
+        stage = f"{stage}:{local_date}"
+    return f"{period}:{stage}:{member_id}"
+
+
+def _payment_group_ids(config, state):
+    """Return configured groups that receive payment reminders."""
+    configured_group_id = config.get("MEMBERS_GROUP_ID", 0)
+    if "group_notification_categories" in state:
+        return get_group_targets(state, "payments")
+    try:
+        return {int(configured_group_id)} if configured_group_id else set()
+    except (TypeError, ValueError):
+        return set()
+
+
+async def _check_multi_period_payment_reminders(context, config, state, now):
+    """Deliver due reminders for upcoming, current, and rollover periods."""
+    schedules = get_overlapping_payment_reminder_schedule(
+        now,
+        config.get("PAYMENT_REMINDER_HOUR", 9),
+        config.get("PAYMENT_ADVANCE_REMINDER_DAYS", 3),
+    )
+    payment_state = state.setdefault("payment_state", {})
+    if not schedules:
+        schedules = []
+
+    period_states = {}
+    for schedule in schedules:
+        payment_state = ensure_payment_period(
+            payment_state,
+            state.get("members", {}),
+            schedule["period"],
+        )
+        period_states[schedule["period"]] = payment_state["periods"][
+            schedule["period"]
+        ]
+    state["payment_state"] = payment_state
+
+    state_changed = False
+    public_error = None
+    payment_group_ids = _payment_group_ids(config, state)
+    public_entries = []
+    for schedule in schedules:
+        public_stage = schedule.get("public_stage")
+        if not public_stage:
+            continue
+        period = schedule["period"]
+        period_state = period_states[period]
+        public_reminders = period_state.setdefault("public_reminders_sent", {})
+        public_group_reminders = period_state.setdefault(
+            "public_reminder_groups_sent",
+            {},
+        )
+        public_key = f"{period}:{public_stage}"
+        if public_key in public_reminders:
+            continue
+        public_entries.append({
+            "period": period,
+            "stage": public_stage,
+            "key": public_key,
+            "period_state": period_state,
+            "group_reminders": public_group_reminders,
+        })
+
+    if payment_group_ids and public_entries:
+        for group_id in sorted(payment_group_ids):
+            pending_entries = []
+            for entry in public_entries:
+                sent_group_ids = entry["group_reminders"].get(entry["key"], [])
+                if not isinstance(sent_group_ids, list):
+                    sent_group_ids = []
+                if group_id not in sent_group_ids:
+                    pending_entries.append(entry)
+            if not pending_entries:
+                continue
+
+            try:
+                await context.bot.send_message(
+                    chat_id=group_id,
+                    text=format_combined_payment_reminder([
+                        (entry["period"], entry["stage"])
+                        for entry in pending_entries
+                    ]),
+                )
+            except Exception as error:
+                public_error = error
+                logger.exception(
+                    "Failed to send combined payment reminder to group %s.",
+                    group_id,
+                )
+                continue
+
+            for entry in pending_entries:
+                sent_group_ids = entry["group_reminders"].setdefault(
+                    entry["key"],
+                    [],
+                )
+                if group_id not in sent_group_ids:
+                    sent_group_ids.append(group_id)
+                state_changed = True
+
+        for entry in public_entries:
+            sent_group_ids = set(entry["group_reminders"].get(entry["key"], []))
+            if sent_group_ids == payment_group_ids:
+                entry["period_state"]["public_reminders_sent"][entry["key"]] = (
+                    now.astimezone(timezone.utc).isoformat()
+                )
+                state_changed = True
+
+    personal_deliveries = {}
+    local_date = now.astimezone(PAYMENT_TIMEZONE).date()
+    members = state.get("members", {})
+    notification_preferences = state.get("notification_preferences")
+    for schedule in schedules:
+        personal_stage = schedule.get("personal_stage")
+        if not personal_stage:
+            continue
+        period = schedule["period"]
+        period_state = period_states[period]
+        personal_reminders = period_state.setdefault(
+            "personal_reminders_sent",
+            {},
+        )
+        for member_id, telegram_id in get_unpaid_member_recipients(
+            period_state,
+            members,
+            notification_preferences,
+        ):
+            reminder_key = _personal_reminder_key(
+                period,
+                personal_stage,
+                local_date,
+                member_id,
+            )
+            if reminder_key in personal_reminders:
+                continue
+            personal_deliveries.setdefault(telegram_id, []).append({
+                "member_id": member_id,
+                "period": period,
+                "stage": personal_stage,
+                "key": reminder_key,
+                "period_state": period_state,
+            })
+
+    for telegram_id, entries in personal_deliveries.items():
+        first_member = members.get(entries[0]["member_id"], {})
+        member_name = str(first_member.get("name", ""))
+        try:
+            await context.bot.send_message(
+                chat_id=telegram_id,
+                text=format_combined_personal_payment_reminder(
+                    member_name,
+                    [(entry["period"], entry["stage"]) for entry in entries],
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send combined personal payment reminder to %s.",
+                telegram_id,
+            )
+            continue
+
+        for entry in entries:
+            entry["period_state"]["personal_reminders_sent"][entry["key"]] = (
+                now.astimezone(timezone.utc).isoformat()
+            )
+            state_changed = True
+
+    payment_admin_id = _normalize_user_id(config.get("PAYMENT_ADMIN_ID"))
+    if payment_admin_id is not None:
+        delay_hours = config.get("PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS", 2)
+        try:
+            delay_hours = int(delay_hours)
+        except (TypeError, ValueError):
+            delay_hours = 2
+        for period, period_state in payment_state.get("periods", {}).items():
+            followups = period_state.setdefault("payment_admin_followups_sent", {})
+            if not isinstance(followups, dict):
+                followups = {}
+                period_state["payment_admin_followups_sent"] = followups
+            for reminder_key, followup_period, followup_stage in (
+                _payment_admin_followups_due(period_state, now, delay_hours)
+            ):
+                sent = await send_payment_admin_followup(
+                    context,
+                    payment_admin_id,
+                    followup_period,
+                    followup_stage,
+                )
+                if sent:
+                    followups[reminder_key] = now.astimezone(
+                        timezone.utc
+                    ).isoformat()
+                    state_changed = True
+
+    if state_changed:
+        save_multi_period_payment_state(
+            config["PAYMENT_STATE_FILE"],
+            payment_state,
+        )
+    if public_error:
+        raise public_error
+
+
 async def check_payment_reminders(context, config, state, now=None):
     """Send due public and private payment reminders with duplicate protection."""
     if not config.get("ENABLE_PAYMENT_REMINDERS", True):
@@ -678,37 +935,29 @@ async def check_payment_reminders(context, config, state, now=None):
         current_time = current_time.replace(tzinfo=PAYMENT_TIMEZONE)
     payment_state = state.setdefault("payment_state", {})
     multi_period_state = isinstance(payment_state.get("periods"), dict)
-    reminder_hour = config.get("PAYMENT_REMINDER_HOUR", 9)
     if multi_period_state:
-        schedule = get_payment_reminder_schedule(current_time, reminder_hour)
-        if not schedule:
-            return
-        period = schedule["period"]
-        public_stage = schedule["public_stage"]
-        personal_stage = schedule["personal_stage"]
-    else:
-        stage_info = get_payment_reminder_stage(current_time, reminder_hour)
-        if not stage_info:
-            return
-        period, public_stage = stage_info
-        personal_stage = public_stage if public_stage in {
-            "first_day",
-            "overdue_5d",
-        } else None
+        await _check_multi_period_payment_reminders(
+            context,
+            config,
+            state,
+            current_time,
+        )
+        return
+
+    reminder_hour = config.get("PAYMENT_REMINDER_HOUR", 9)
+    stage_info = get_payment_reminder_stage(current_time, reminder_hour)
+    if not stage_info:
+        return
+    period, public_stage = stage_info
+    personal_stage = public_stage if public_stage in {
+        "first_day",
+        "overdue_5d",
+    } else None
 
     state_changed = False
     public_error = None
 
-    if multi_period_state:
-        payment_state = ensure_payment_period(
-            payment_state,
-            state.get("members", {}),
-            period,
-        )
-        state["payment_state"] = payment_state
-        period_state = payment_state["periods"][period]
-    else:
-        period_state = payment_state
+    period_state = payment_state
 
     configured_group_id = config.get("MEMBERS_GROUP_ID", 0)
     if "group_notification_categories" in state:
