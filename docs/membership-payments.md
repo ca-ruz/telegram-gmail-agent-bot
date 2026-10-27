@@ -13,6 +13,7 @@ MEMBERS_FILE=data/members.json
 PAYMENT_STATE_FILE=data/payment_state.json
 MEMBERS_GROUP_ID=-1001234567890
 PAYMENT_REMINDER_HOUR=9
+PAYMENT_ADVANCE_REMINDER_DAYS=3
 PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS=2
 ENABLE_PAYMENT_REMINDERS=true
 ```
@@ -25,8 +26,10 @@ same as the general broadcast-group list.
 The reminder hour uses `America/Mexico_City`. The payment and member JSON files
 are runtime data and must remain outside Git.
 
-This cadence does not require any new `.env` variables. The five-day grace
-period and public reminder frequency are built into the scheduler.
+The advance reminder lead time defaults to three days. No `.env` change is
+required when using that default; set `PAYMENT_ADVANCE_REMINDER_DAYS` only if
+the lead time needs to be different. The five-day grace period and public
+reminder frequency are built into the scheduler.
 
 After each successful public reminder, the bot waits the configured number of
 hours before privately notifying `PAYMENT_ADMIN_ID`. The follow-up includes a
@@ -83,11 +86,15 @@ them eligible for a later due stage.
 All reminders are evaluated at the configured local hour in
 `America/Mexico_City`:
 
-- On the first day of the month, send a private reminder to each unpaid member
-  and an anonymous reminder to the configured payment groups.
-- From the second through the fifth day, send a private reminder each day to
-  members who are still unpaid. No public reminder is sent during this grace
-  period.
+- Three days before the first day of a billing period, send one private
+  reminder to each unpaid member and one anonymous reminder to the configured
+  payment groups.
+- On the first day of the month, send a private reminder for the new period and
+  an anonymous reminder to the configured payment groups. If the previous
+  period is still unpaid, include it in the same combined reminder.
+- From the second through the fifth day, send a private reminder each day for
+  unpaid current and previous periods. No additional public reminder is sent
+  during this grace period.
 - On day six, send one public reminder for the first week.
 - During the second week, send public reminders on days eight and eleven.
 - During the third week, send public reminders on days fifteen, seventeen, and
@@ -97,22 +104,28 @@ All reminders are evaluated at the configured local hour in
 
 Private reminders continue daily for active unpaid members after the grace
 period. A member who is marked paid is excluded from later reminders for that
-period.
+period. If the same member has more than one unpaid period, the bot combines
+those periods into one private message.
 
 Public messages do not include member names or payment details. The bot stores
 each successful public reminder in `payment_state.json` so scheduler restarts
 do not resend it. Daily private reminders are also tracked by date, so a
-reminder is sent at most once per member per day.
+reminder is sent at most once per member and period per day. When several
+public period reminders are due at the same scheduler run, the bot combines
+them into one anonymous group message while preserving separate period state.
 
 The payment administrator follow-up is sent only after the corresponding
 public reminder succeeds. Each public stage produces at most one follow-up;
 failed deliveries remain eligible for a later scheduler retry. Follow-ups are
 private and never sent to the membership group or regular subscribers.
 
-Private reminders are sent only when all of these conditions are true:
+Private reminders for each period are sent only when all of these conditions
+are true:
 
 - The member is active.
 - The member is unpaid for the current period.
+- The period is current, upcoming within the advance window, or a previous
+  period with an unpaid balance.
 - The member has a valid Telegram ID.
 - The member's `payments` notification preference is enabled.
 - That member has not already received the reminder for the current date.
@@ -155,5 +168,7 @@ current and next billing periods available after startup.
   `PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS`, and that the public reminder was
   delivered successfully.
 - Repeated reminder after a restart: inspect `data/payment_state.json` and confirm the service user can write to the `data/` directory.
-- Wrong time: check the device timezone and `PAYMENT_REMINDER_HOUR`; the schedule is evaluated in `America/Mexico_City`.
+- Wrong time: check the device timezone, `PAYMENT_REMINDER_HOUR`, and
+  `PAYMENT_ADVANCE_REMINDER_DAYS`; the schedule is evaluated in
+  `America/Mexico_City`.
 - Check logs with `journalctl`; never paste `.env` or runtime JSON contents into public issues.

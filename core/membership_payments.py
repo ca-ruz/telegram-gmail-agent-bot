@@ -447,6 +447,7 @@ def get_overlapping_payment_reminder_schedule(
     now=None,
     reminder_hour=9,
     advance_days=3,
+    available_periods=None,
 ):
     """Return upcoming, current, and rollover payment reminders due today.
 
@@ -477,11 +478,18 @@ def get_overlapping_payment_reminder_schedule(
             "public_stage": "advance",
         })
 
+    previous_period = previous_billing_period(current_period)
     if local_time.day == 1:
         schedules.append({
-            "period": previous_billing_period(current_period),
+            "period": previous_period,
             "personal_stage": "overdue_daily",
             "public_stage": "overdue_rollover",
+        })
+    elif previous_period in {str(period) for period in (available_periods or [])}:
+        schedules.append({
+            "period": previous_period,
+            "personal_stage": "overdue_daily",
+            "public_stage": None,
         })
 
     return schedules
@@ -738,12 +746,14 @@ def _payment_group_ids(config, state):
 
 async def _check_multi_period_payment_reminders(context, config, state, now):
     """Deliver due reminders for upcoming, current, and rollover periods."""
+    payment_state = state.setdefault("payment_state", {})
+    available_periods = payment_state.get("periods", {})
     schedules = get_overlapping_payment_reminder_schedule(
         now,
         config.get("PAYMENT_REMINDER_HOUR", 9),
         config.get("PAYMENT_ADVANCE_REMINDER_DAYS", 3),
+        available_periods=available_periods,
     )
-    payment_state = state.setdefault("payment_state", {})
     if not schedules:
         schedules = []
 

@@ -292,6 +292,21 @@ def test_overlapping_schedule_covers_advance_and_rollover_periods():
             "public_stage": "overdue_rollover",
         },
     ]
+    assert get_overlapping_payment_reminder_schedule(
+        datetime(2026, 11, 2, 9, 0, tzinfo=PAYMENT_TIMEZONE),
+        available_periods=["2026-10", "2026-11"],
+    ) == [
+        {
+            "period": "2026-11",
+            "personal_stage": "daily",
+            "public_stage": None,
+        },
+        {
+            "period": "2026-10",
+            "personal_stage": "overdue_daily",
+            "public_stage": None,
+        },
+    ]
     assert previous_billing_period("2027-01") == "2026-12"
 
 
@@ -411,6 +426,40 @@ def test_paid_previous_period_is_excluded_from_combined_private_reminder(tmp_pat
     personal_text = bot.send_message.await_args_list[1].kwargs["text"]
     assert "noviembre de 2026" in personal_text
     assert "octubre de 2026" not in personal_text
+
+
+def test_previous_period_private_reminder_continues_after_rollover(tmp_path):
+    """Previous-period private reminders continue after the first day."""
+    bot = SimpleNamespace(send_message=AsyncMock())
+    context = SimpleNamespace(bot=bot)
+    member = build_member("Ada", 101)
+    state = {
+        "members": {"member-001": member},
+        "notification_preferences": {"101": {"payments": True}},
+        "payment_state": build_multi_period_payment_state(
+            {"member-001": member},
+            ["2026-10", "2026-11"],
+        ),
+    }
+    config = {
+        "PAYMENT_REMINDER_HOUR": 9,
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+
+    asyncio.run(
+        check_payment_reminders(
+            context,
+            config,
+            state,
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+
+    assert bot.send_message.await_count == 1
+    assert bot.send_message.await_args.kwargs["chat_id"] == 101
+    text = bot.send_message.await_args.kwargs["text"]
+    assert "octubre de 2026" in text
+    assert "noviembre de 2026" in text
 
 
 def test_daily_payment_dms_are_deduplicated_per_day(tmp_path):
