@@ -133,6 +133,16 @@ def next_billing_period(period=None):
     return next_month.strftime("%Y-%m")
 
 
+def previous_billing_period(period=None):
+    """Return the billing period immediately before the supplied period."""
+    period_key = _normalize_period_key(period) if period else current_billing_period()
+    if period_key is None:
+        period_key = current_billing_period()
+    current_date = datetime.strptime(period_key, "%Y-%m")
+    previous_month = current_date.replace(day=1) - timedelta(days=1)
+    return previous_month.strftime("%Y-%m")
+
+
 def _normalize_period_key(period):
     """Return a valid ``YYYY-MM`` period key or ``None``."""
     try:
@@ -431,6 +441,50 @@ def get_payment_reminder_schedule(now=None, reminder_hour=9):
         "personal_stage": "daily",
         "public_stage": PAYMENT_PUBLIC_REMINDER_DAYS.get(day),
     }
+
+
+def get_overlapping_payment_reminder_schedule(
+    now=None,
+    reminder_hour=9,
+    advance_days=3,
+):
+    """Return upcoming, current, and rollover payment reminders due today.
+
+    The upcoming period receives one advance reminder on the configured lead
+    day. On the first day of a new period, the previous period receives one
+    rollover reminder so its unpaid balance can be handled alongside the new
+    period. Delivery and duplicate handling are applied by the scheduler.
+    """
+    current_time = now or datetime.now(PAYMENT_TIMEZONE)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=PAYMENT_TIMEZONE)
+    local_time = current_time.astimezone(PAYMENT_TIMEZONE)
+    if local_time.hour < reminder_hour:
+        return []
+
+    schedules = []
+    current_schedule = get_payment_reminder_schedule(local_time, reminder_hour)
+    if current_schedule:
+        schedules.append(current_schedule)
+
+    current_period = local_time.strftime("%Y-%m")
+    next_period = next_billing_period(current_period)
+    next_period_start = datetime.strptime(next_period, "%Y-%m").date()
+    if local_time.date() == next_period_start - timedelta(days=max(0, advance_days)):
+        schedules.append({
+            "period": next_period,
+            "personal_stage": "advance",
+            "public_stage": "advance",
+        })
+
+    if local_time.day == 1:
+        schedules.append({
+            "period": previous_billing_period(current_period),
+            "personal_stage": "overdue_daily",
+            "public_stage": "overdue_rollover",
+        })
+
+    return schedules
 
 
 def format_payment_period(period):

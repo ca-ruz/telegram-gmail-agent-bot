@@ -155,6 +155,9 @@ CONFIG = {
     'PAYMENT_STATE_FILE': os.getenv("PAYMENT_STATE_FILE", "data/payment_state.json"),
     'MEMBERS_GROUP_ID': parse_env_int('MEMBERS_GROUP_ID', 0),
     'PAYMENT_REMINDER_HOUR': parse_env_int('PAYMENT_REMINDER_HOUR', 9),
+    'PAYMENT_ADVANCE_REMINDER_DAYS': parse_env_int(
+        'PAYMENT_ADVANCE_REMINDER_DAYS', 3
+    ),
     'PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS': parse_env_int(
         'PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS', 2
     ),
