@@ -42,10 +42,12 @@ from core.membership_payments import (
     build_member,
     can_manage_payments,
     current_billing_period,
+    next_billing_period,
     next_member_id,
     save_multi_period_payment_state,
     save_members,
     save_payment_state,
+    synchronize_multi_period_payment_state,
 )
 from core.imported_events import (
     assign_imported_event_flyer,
@@ -621,6 +623,17 @@ async def manage_members(
         member_id = next_member_id(members)
         members[member_id] = build_member(name, telegram_id)
         save_members(config["MEMBERS_FILE"], members)
+        payment_state = state.get("payment_state", {})
+        if isinstance(payment_state.get("periods"), dict):
+            state["payment_state"] = synchronize_multi_period_payment_state(
+                payment_state,
+                members,
+                [current_billing_period(), next_billing_period()],
+            )
+            save_multi_period_payment_state(
+                config["PAYMENT_STATE_FILE"],
+                state["payment_state"],
+            )
         await update.message.reply_text(
             f"✅ Miembro agregado: <code>{escape(member_id)}</code> - {escape(name)}",
             parse_mode=ParseMode.HTML,

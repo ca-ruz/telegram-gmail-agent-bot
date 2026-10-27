@@ -5,9 +5,11 @@ from unittest.mock import AsyncMock
 from bot.handlers.admin import (
     format_imported_event_label,
     format_prompt_history_entry,
+    manage_members,
     save_prompt_history,
     status,
 )
+from core.membership_payments import build_member, current_billing_period, next_billing_period
 from tools.local.data_manager import load_json, save_json
 
 
@@ -35,6 +37,64 @@ def test_status_reports_disabled_services_and_placeholder_openai_key():
     assert "Coffee reminders:</b> ✅ Enabled" in message
     assert "Manual promo reminders:</b> ⛔ Disabled" in message
     assert "Check Interval:</b> 30 min" in message
+
+
+def test_adding_member_synchronizes_current_and_next_payment_periods(tmp_path):
+    """Adding a member makes them immediately available for payment review."""
+    reply_text = AsyncMock()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        message=SimpleNamespace(
+            text="/members add | David R | 549905746",
+            reply_text=reply_text,
+        ),
+    )
+    current_period = current_billing_period()
+    next_period = next_billing_period()
+    state = {
+        "members": {"member-001": build_member("Ada", 101)},
+        "payment_state": {
+            "version": 2,
+            "periods": {
+                current_period: {
+                    "members": {
+                        "member-001": {
+                            "status": "paid",
+                            "paid_at": "2026-10-05T15:00:00+00:00",
+                            "reminders_sent": ["2026-10:first_day:member-001"],
+                        }
+                    }
+                }
+            },
+        },
+    }
+    config = {
+        "MEMBERS_FILE": str(tmp_path / "members.json"),
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+
+    asyncio.run(
+        manage_members(
+            update,
+            SimpleNamespace(),
+            primary_admin_id=42,
+            payment_admin_id=0,
+            state=state,
+            config=config,
+        )
+    )
+
+    assert "member-002" in state["members"]
+    current_members = state["payment_state"]["periods"][current_period]["members"]
+    assert current_members["member-001"]["status"] == "paid"
+    assert current_members["member-001"]["paid_at"] == "2026-10-05T15:00:00+00:00"
+    assert current_members["member-002"]["status"] == "unpaid"
+    assert set(state["payment_state"]["periods"][next_period]["members"]) == {
+        "member-001",
+        "member-002",
+    }
+    persisted = load_json(str(tmp_path / "payment_state.json"), {})
+    assert "member-002" in persisted["periods"][current_period]["members"]
 
 
 def test_imported_event_label_includes_day_and_month():
