@@ -73,6 +73,7 @@ The membership payment workflow uses these additional variables:
 *   `MEMBERS_GROUP_ID`: Telegram chat ID for the group that receives anonymous public payment reminders.
 *   `GROUP_NOTIFICATION_CATEGORIES_FILE`: Runtime JSON file for per-group notification categories (default `data/group_notification_categories.json`).
 *   `PAYMENT_REMINDER_HOUR`: Local reminder hour in `America/Mexico_City` (default `9`).
+*   `PAYMENT_ADVANCE_REMINDER_DAYS`: Days before a billing period for the advance reminder (default `3`).
 *   `ENABLE_PAYMENT_REMINDERS`: Set to `false` to disable scheduled payment reminders while retaining the roster and payment state.
 
 The bot sends public payment reminders only to groups assigned to the `payments` category and private reminders only to active unpaid members whose payment notifications are enabled. Use `/groupnotifications` in the administrator chat to inspect or change group categories. Payment state, member data, notification preferences, logs, `.env`, and service-account credentials are runtime data and must not be committed.
