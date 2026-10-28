@@ -43,6 +43,15 @@ Use these commands in the private administrator chat:
 available, and numeric ID. `/users` shows known users, their usernames and IDs,
 and whether each user is currently subscribed to event notifications.
 
+`/status` now includes overview counts for known users, subscribers, members,
+coffee hosts, and broadcast groups. Its buttons open read-only detail views for
+members, coffee hosts, groups, and notification subscriptions. Subscription
+details include each user's Telegram ID, username when available, member or
+coffee-host status, and enabled notification categories.
+
+These status details are available only to the primary administrator and do not
+include payment amounts, credentials, or other secrets.
+
 Older group entries that only have a numeric ID remain usable and are shown as
 `Grupo sin nombre` until the bot receives metadata for them again. Likewise,
 users already present in the subscriber list remain visible even if they have

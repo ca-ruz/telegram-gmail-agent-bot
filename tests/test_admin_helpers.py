@@ -3,12 +3,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bot.handlers.admin import (
+    format_status_detail,
     format_imported_event_label,
     format_prompt_history_entry,
+    handle_status_detail,
     manage_members,
     save_prompt_history,
+    status_overview_keyboard,
     status,
 )
+from core.admin_status import build_admin_status_snapshot
 from core.membership_payments import build_member, current_billing_period, next_billing_period
 from tools.local.data_manager import load_json, save_json
 
@@ -37,6 +41,119 @@ def test_status_reports_disabled_services_and_placeholder_openai_key():
     assert "Coffee reminders:</b> ✅ Enabled" in message
     assert "Manual promo reminders:</b> ⛔ Disabled" in message
     assert "Check Interval:</b> 30 min" in message
+
+
+def test_admin_status_snapshot_aggregates_identity_roles_and_preferences():
+    """Status data links metadata, members, hosts, subscribers, and categories."""
+    state = {
+        "subscribers": {101},
+        "members": {
+            "member-001": {"name": "Ada", "telegram_id": 101, "active": True},
+            "member-002": {"name": "Inactive", "telegram_id": 202, "active": False},
+        },
+        "coffee_hosts": {
+            "host-001": {"name": "Ada", "telegram_id": 101, "active": True},
+        },
+        "groups": {-100123},
+        "group_notification_categories": {
+            "events": [-100123],
+            "payments": [],
+            "coworking": [-100123],
+        },
+        "telegram_metadata": {
+            "users": {
+                "101": {"display_name": "Ada Lovelace", "username": "ada"},
+            },
+            "groups": {
+                "-100123": {"display_name": "Community", "username": "community"},
+            },
+        },
+        "notification_preferences": {
+            "101": {"events": True, "coffee": False, "payments": True, "coworking": False},
+        },
+    }
+
+    snapshot = build_admin_status_snapshot(state)
+
+    assert snapshot["counts"] == {
+        "known_users": 2,
+        "subscribers": 1,
+        "members": 2,
+        "active_members": 1,
+        "coffee_hosts": 1,
+        "active_coffee_hosts": 1,
+        "broadcast_groups": 1,
+    }
+    ada = next(user for user in snapshot["users"] if user["telegram_id"] == 101)
+    assert ada["display_name"] == "Ada Lovelace"
+    assert ada["username"] == "ada"
+    assert ada["member_ids"] == ["member-001"]
+    assert ada["coffee_host_ids"] == ["host-001"]
+    assert ada["notification_preferences"]["coffee"] is False
+    assert snapshot["groups"][0]["categories"] == ["events", "coworking"]
+
+
+def test_status_overview_includes_detail_buttons():
+    """The status overview exposes navigation for each read-only detail view."""
+    callbacks = [
+        button.callback_data
+        for row in status_overview_keyboard().inline_keyboard
+        for button in row
+    ]
+
+    assert callbacks == [
+        "status_detail:members",
+        "status_detail:coffee_hosts",
+        "status_detail:groups",
+        "status_detail:subscriptions",
+    ]
+
+
+def test_status_detail_callback_is_admin_only_and_renders_subscription_data():
+    """Status detail callbacks protect data and render notification categories."""
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=42),
+        data="status_detail:subscriptions",
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    update = SimpleNamespace(callback_query=query)
+    state = {
+        "subscribers": {101},
+        "telegram_metadata": {
+            "users": {"101": {"display_name": "Ada", "username": "ada"}}
+        },
+        "notification_preferences": {
+            "101": {"events": True, "coffee": False, "payments": True, "coworking": False}
+        },
+    }
+
+    asyncio.run(handle_status_detail(update, SimpleNamespace(), 42, state, {}))
+
+    rendered = query.edit_message_text.await_args.args[0]
+    assert "Ada (@ada)" in rendered
+    assert "101" in rendered
+    assert "events, payments" in rendered
+    query.answer.assert_awaited_once_with()
+
+    unauthorized_query = SimpleNamespace(
+        from_user=SimpleNamespace(id=99),
+        data="status_detail:subscriptions",
+        answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    asyncio.run(
+        handle_status_detail(
+            SimpleNamespace(callback_query=unauthorized_query),
+            SimpleNamespace(),
+            42,
+            state,
+            {},
+        )
+    )
+
+    unauthorized_query.answer.assert_awaited_once()
+    unauthorized_query.edit_message_text.assert_not_awaited()
 
 
 def test_adding_member_synchronizes_current_and_next_payment_periods(tmp_path):
