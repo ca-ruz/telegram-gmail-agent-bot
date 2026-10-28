@@ -13,7 +13,9 @@ from core.coffee_hosts import (
     COFFEE_TIMEZONE,
     build_coffee_assignment,
     build_coffee_host,
+    find_coffee_host_ids,
     next_coffee_host_id,
+    resolve_coffee_host_id,
     save_coffee_hosts,
     send_immediate_coffee_host_reminder,
     upcoming_saturdays,
@@ -269,7 +271,7 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "/checkprompts - Show the last 5 image prompts\n"
         "/coffeehost - View or manage Saturday coffee hosts\n"
         "/coffeehost add | Name | Telegram ID\n"
-        "/coffeehost remove | host-id\n"
+        "/coffeehost remove | Name or host-id\n"
         "/payments - Revisar el estado de pagos de membresía\n"
         "/broadcast - Send a manual message to all subscribers\n\n"
         "💡 <i>Tip: Puedes responder a un borrador o a un evento seleccionado para editarlo con AI.</i>",
@@ -1401,8 +1403,8 @@ def format_coffee_host_schedule(schedule, hosts, reference_date):
     lines.extend(inactive_hosts or ["Ninguno"])
     lines.append(
         "\nUso: <code>/coffeehost add | Nombre | Telegram ID</code>"
-        "\n<code>/coffeehost remove | host-id</code>"
-        "\n<code>/coffeehost AAAA-MM-DD host-001,host-002 | Lugar | 11:00 | Notas</code>"
+        "\n<code>/coffeehost remove | Nombre o host-id</code>"
+        "\n<code>/coffeehost AAAA-MM-DD Nombre 1,Nombre 2 | Lugar | 11:00 | Notas</code>"
     )
     lines.append("Para borrar una asignación: <code>/coffeehost AAAA-MM-DD clear</code>")
     return "".join(lines)
@@ -1463,28 +1465,45 @@ async def coffee_host(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_
 
     if action == "remove":
         if len(command_parts) != 2 or not command_parts[1]:
-            await update.message.reply_text("Uso: /coffeehost remove | host-id")
+            await update.message.reply_text("Uso: /coffeehost remove | Nombre o host-id")
             return
 
-        host_id = command_parts[1]
-        host = hosts.get(host_id)
-        if not isinstance(host, dict):
-            await update.message.reply_text(f"❌ Anfitrión no encontrado: {host_id}")
+        host_reference = command_parts[1]
+        try:
+            host_id = resolve_coffee_host_id(hosts, host_reference, active_only=False)
+        except LookupError:
+            await update.message.reply_text(
+                f"❌ Anfitrión no encontrado: {escape(host_reference)}",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        except ValueError:
+            matches = find_coffee_host_ids(hosts, host_reference, active_only=False)
+            match_text = ", ".join(matches)
+            await update.message.reply_text(
+                f"❌ Referencia ambigua: {escape(host_reference)} ({escape(match_text)})",
+                parse_mode=ParseMode.HTML,
+            )
             return
 
+        host = hosts[host_id]
         if not host.get("active", True):
-            await update.message.reply_text(f"ℹ️ El anfitrión ya estaba inactivo: {host_id}")
+            host_name = escape(host.get("name", host_id))
+            await update.message.reply_text(f"ℹ️ El anfitrión ya estaba inactivo: {host_name}")
             return
 
         host["active"] = False
         save_coffee_hosts(config["COFFEE_HOSTS_FILE"], hosts)
-        await update.message.reply_text(f"✅ Anfitrión desactivado: {host_id}")
+        await update.message.reply_text(
+            f"✅ Anfitrión desactivado: {escape(host.get('name', host_id))} ({escape(host_id)})",
+            parse_mode=ParseMode.HTML,
+        )
         return
 
     assignment_parts = command_parts[0].split()
     if len(assignment_parts) < 2:
         await update.message.reply_text(
-            "Uso: /coffeehost AAAA-MM-DD host-001,host-002 | Lugar | 11:00 | Notas"
+            "Uso: /coffeehost AAAA-MM-DD Nombre 1,Nombre 2 | Lugar | 11:00 | Notas"
         )
         return
 
@@ -1499,21 +1518,45 @@ async def coffee_host(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_
         await update.message.reply_text("❌ La fecha debe ser un sábado.")
         return
 
-    host_ids = [host_id.strip() for host_id in assignment_parts[1].split(",") if host_id.strip()]
-    if len(host_ids) == 1 and host_ids[0].lower() == "clear":
+    host_references = [
+        reference.strip()
+        for reference in " ".join(assignment_parts[1:]).split(",")
+        if reference.strip()
+    ]
+    if len(host_references) == 1 and host_references[0].lower() == "clear":
         if date_key in schedule:
             del schedule[date_key]
             save_json(config["COFFEE_HOST_SCHEDULE_FILE"], schedule)
         await update.message.reply_text(f"✅ Asignación eliminada para {date_key}.")
         return
 
-    missing_hosts = [
-        host_id for host_id in host_ids
-        if host_id not in hosts or not hosts[host_id].get("active", True)
-    ]
-    if missing_hosts:
-        missing = ", ".join(missing_hosts)
-        await update.message.reply_text(f"❌ Anfitriones no disponibles: {missing}")
+    if not host_references:
+        await update.message.reply_text("❌ Debes indicar al menos un anfitrión.")
+        return
+
+    host_ids = []
+    missing_hosts = []
+    ambiguous_hosts = []
+    for reference in host_references:
+        try:
+            host_id = resolve_coffee_host_id(hosts, reference)
+        except LookupError:
+            missing_hosts.append(reference)
+            continue
+        except ValueError:
+            matches = find_coffee_host_ids(hosts, reference)
+            ambiguous_hosts.append(f"{reference} ({', '.join(matches)})")
+            continue
+        if host_id not in host_ids:
+            host_ids.append(host_id)
+
+    if missing_hosts or ambiguous_hosts:
+        unavailable = [*missing_hosts, *ambiguous_hosts]
+        await update.message.reply_text(
+            "❌ Anfitriones no disponibles o ambiguos: "
+            + ", ".join(escape(reference) for reference in unavailable),
+            parse_mode=ParseMode.HTML,
+        )
         return
 
     venue = command_parts[1] if len(command_parts) > 1 and command_parts[1] else config["COFFEE_DEFAULT_VENUE"]
@@ -1553,7 +1596,8 @@ async def coffee_host(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_
     elif immediate_result["skipped"]:
         delivery_note = "\nℹ️ El recordatorio inmediato no se envió a los anfitriones omitidos."
     await update.message.reply_text(
-        f"✅ Anfitriones asignados para {date_key}: {', '.join(host_ids)}\n"
+        f"✅ Anfitriones asignados para {date_key}: "
+        f"{', '.join(escape(hosts[host_id].get('name', host_id)) for host_id in host_ids)}\n"
         f"📍 {escape(venue)} · ⏰ {escape(start_time)}{warning}{delivery_note}",
         parse_mode=ParseMode.HTML,
     )
