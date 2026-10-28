@@ -158,3 +158,143 @@ credentials and runtime JSON contents out of screenshots and support requests.
 - Do not expose bot tokens, user IDs, group IDs, private URLs, or logs publicly.
 - Keep the operating system and Python dependencies updated through a planned
   maintenance process.
+
+## Safe Update Procedure
+
+Run updates as the service user and keep private runtime files in place:
+
+```bash
+cd /opt/community-bot
+sudo -u botuser git status --short
+sudo -u botuser git pull --ff-only origin main
+sudo -u botuser /opt/community-bot/.venv/bin/pip install \
+  -r /opt/community-bot/requirements.txt
+sudo -u botuser /opt/community-bot/.venv/bin/python -m compileall \
+  /opt/community-bot
+sudo systemctl restart community-bot.service
+sudo systemctl status community-bot.service --no-pager
+```
+
+Do not use a hard reset or overwrite `.env`, `google_calendar.json`, or the
+`data/` directory during an update. If `git status` reports tracked local
+changes, stop and review them before pulling.
+
+Before a significant update, create a protected backup of the private runtime
+files using a destination outside the repository:
+
+```bash
+sudo install -d -m 700 /var/backups/community-bot
+sudo tar -czf /var/backups/community-bot/runtime-$(date +%Y%m%d-%H%M%S).tar.gz \
+  -C /opt/community-bot .env google_calendar.json data
+sudo chmod 600 /var/backups/community-bot/*.tar.gz
+```
+
+Backups contain secrets and user data. Restrict access and never upload them to
+GitHub, chat, or an issue tracker.
+
+## Configuration Checks Without Revealing Values
+
+Check that required keys exist without printing their values:
+
+```bash
+cd /opt/community-bot
+for key in TELEGRAM_BOT_TOKEN TELEGRAM_ADMIN_ID; do
+  if sudo grep -q "^${key}=" .env; then
+    echo "${key}: present"
+  else
+    echo "${key}: missing"
+  fi
+done
+```
+
+Check optional runtime files without dumping their contents:
+
+```bash
+sudo -u botuser test -r /opt/community-bot/.env && echo ".env: readable"
+sudo -u botuser test -r /opt/community-bot/google_calendar.json \
+  && echo "calendar credentials: readable"
+sudo -u botuser test -d /opt/community-bot/data && echo "data directory: present"
+```
+
+## Service Operations
+
+Useful commands for routine operation:
+
+```bash
+sudo systemctl status community-bot.service --no-pager
+sudo systemctl restart community-bot.service
+sudo systemctl stop community-bot.service
+sudo systemctl start community-bot.service
+sudo journalctl -u community-bot.service -n 80 --no-pager
+sudo journalctl -u community-bot.service -f
+```
+
+Use `Ctrl+C` to stop following the live log. Do not copy full logs into public
+reports until they have been reviewed for tokens, IDs, URLs, and user data.
+
+## Troubleshooting
+
+### The service repeatedly restarts
+
+Check the current state and the first traceback:
+
+```bash
+sudo systemctl status community-bot.service --no-pager
+sudo journalctl -u community-bot.service -n 120 --no-pager
+```
+
+Common causes include a missing dependency, an unreadable `.env`, an invalid
+environment value, missing Google credentials, or a Python path that does not
+match the virtual environment. Confirm that `ExecStart`, `WorkingDirectory`,
+and `EnvironmentFile` use the same application directory.
+
+### A Python module is missing
+
+Install dependencies into the virtual environment used by systemd, not into a
+different global Python installation:
+
+```bash
+sudo -u botuser /opt/community-bot/.venv/bin/pip install \
+  -r /opt/community-bot/requirements.txt
+sudo systemctl restart community-bot.service
+```
+
+### The bot cannot reach Telegram or an external provider
+
+Check network connectivity, DNS, the system clock, and Tailscale state when it
+is part of the deployment:
+
+```bash
+timedatectl status
+getent hosts api.telegram.org
+tailscale status
+```
+
+Do not place tokens or private endpoint details in diagnostic output.
+
+### The bot cannot read a file
+
+Inspect ownership and permissions without exposing file contents:
+
+```bash
+sudo namei -l /opt/community-bot/.env
+sudo namei -l /opt/community-bot/google_calendar.json
+sudo -u botuser test -r /opt/community-bot/.env && echo "environment readable"
+```
+
+The service user must be able to traverse the application directory and read
+the files required by the configured features.
+
+### Updates report local changes
+
+Do not discard changes automatically. Inspect the paths first:
+
+```bash
+cd /opt/community-bot
+sudo -u botuser git status --short
+sudo -u botuser git diff --name-only
+```
+
+Runtime files should be ignored by Git. If a tracked source or documentation
+file was changed locally, preserve or review it before continuing with the
+update.
