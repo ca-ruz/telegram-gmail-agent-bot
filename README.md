@@ -83,6 +83,9 @@ The bot sends public payment reminders only to groups assigned to the `payments`
 
 ## Usage
 
+For a generic Orange Pi deployment with systemd and optional private network
+access, see [the deployment guide](docs/orange-pi-deployment.md).
+
 ### Running the Bot
 Ensure you are inside your virtual environment, then run:
 ```bash
@@ -99,7 +102,7 @@ python test_calendar.py
 *   `/menu`: Open the public bot menu.
 *   `/suscripciones`: Choose which notification categories to receive or disable all notifications.
 
-The subscription categories are currently events, coffee-host reminders, and membership/payment notices. New subscriptions enable all available categories by default; users can change them or disable all notifications from this menu.
+The subscription categories are currently events, coffee-host reminders, membership/payment notices, and coworking invitations. New subscriptions enable all available categories by default; users can change them or disable all notifications from this menu.
 
 ### Telegram Group Behavior
 
@@ -121,7 +124,7 @@ For additional group privacy, open the bot's conversation with [@BotFather](http
     The preview includes **🧪 Enviar prueba**, which sends the flyer only to the administrator's DM without changing reminder state.
 *   `/remind test | event | event-id`: Send a calendar event reminder test only to the administrator's DM. Test delivery does not notify subscribers or groups and does not consume the real reminder state.
 *   `/pendingpromo`: View and publish the currently staged draft.
-*   `/status`: Check bot health and configurations.
+*   `/status`: Check bot health, runtime counts, and read-only detail views.
 *   `/checkprompt`: Show the most recent image prompt.
 *   `/checkprompts`: Show the last 5 image prompts.
 *   `/helpadmin`: Show all available admin tools.
