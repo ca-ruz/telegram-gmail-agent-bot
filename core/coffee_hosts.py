@@ -90,6 +90,61 @@ def next_coffee_host_id(hosts):
     return f"host-{next_number:03d}"
 
 
+def normalize_coffee_host_reference(reference):
+    """Normalize a host ID, name, or username for case-insensitive matching."""
+    normalized = " ".join(str(reference or "").strip().casefold().split())
+    return normalized.removeprefix("@")
+
+
+def coffee_host_reference_matches(host, reference):
+    """Return whether a host record matches an ID, name, username, or Telegram ID."""
+    normalized_reference = normalize_coffee_host_reference(reference)
+    if not normalized_reference or not isinstance(host, dict):
+        return False
+
+    reference_values = (
+        host.get("id"),
+        host.get("name"),
+        host.get("username"),
+        host.get("telegram_username"),
+        host.get("telegram_id"),
+    )
+    return any(
+        normalize_coffee_host_reference(value) == normalized_reference
+        for value in reference_values
+        if value is not None
+    )
+
+
+def find_coffee_host_ids(hosts, reference, active_only=True):
+    """Return active host IDs matching a supplied ID, name, username, or Telegram ID."""
+    normalized_reference = normalize_coffee_host_reference(reference)
+    if not normalized_reference or not isinstance(hosts, dict):
+        return []
+
+    matches = []
+    for host_id, host in hosts.items():
+        if not isinstance(host, dict):
+            continue
+        if active_only and not host.get("active", True):
+            continue
+        if coffee_host_reference_matches({"id": host_id, **host}, normalized_reference):
+            matches.append(str(host_id))
+    return matches
+
+
+def resolve_coffee_host_id(hosts, reference, active_only=True):
+    """Resolve one host reference or raise for unknown and ambiguous references."""
+    matches = find_coffee_host_ids(hosts, reference, active_only=active_only)
+    if not matches:
+        raise LookupError(f"Unknown coffee host reference: {reference}")
+    if len(matches) > 1:
+        raise ValueError(
+            f"Ambiguous coffee host reference: {reference} ({', '.join(matches)})"
+        )
+    return matches[0]
+
+
 def parse_reminder_rules(raw_rules):
     """Parse configured coffee reminder stages and discard unsupported values."""
     configured = [rule.strip() for rule in raw_rules.split(",") if rule.strip()]
