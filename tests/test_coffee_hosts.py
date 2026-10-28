@@ -3,6 +3,8 @@ from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from core import coffee_hosts
 
 
@@ -33,6 +35,38 @@ def test_coffee_schedule_access_matches_admin_and_active_hosts():
     assert coffee_hosts.can_view_coffee_schedule(123, 42, hosts)
     assert not coffee_hosts.can_view_coffee_schedule(456, 42, hosts)
     assert not coffee_hosts.can_view_coffee_schedule(789, 42, hosts)
+
+
+def test_coffee_host_reference_resolution_accepts_name_username_id_and_telegram_id():
+    """Host references resolve case-insensitively across supported identifiers."""
+    hosts = {
+        "host-001": {
+            "name": "Laura Gómez",
+            "username": "@laubtc",
+            "telegram_id": 123,
+            "active": True,
+        }
+    }
+
+    assert coffee_hosts.resolve_coffee_host_id(hosts, " laura GÓMEZ ") == "host-001"
+    assert coffee_hosts.resolve_coffee_host_id(hosts, "@LAUBTC") == "host-001"
+    assert coffee_hosts.resolve_coffee_host_id(hosts, "123") == "host-001"
+    assert coffee_hosts.resolve_coffee_host_id(hosts, "HOST-001") == "host-001"
+
+
+def test_coffee_host_reference_resolution_rejects_unknown_and_ambiguous_references():
+    """Unknown and duplicate-name references fail instead of choosing arbitrarily."""
+    hosts = {
+        "host-001": {"name": "Alex", "active": True},
+        "host-002": {"name": " alex ", "active": True},
+        "host-003": {"name": "Inactive Alex", "active": False},
+    }
+
+    assert coffee_hosts.find_coffee_host_ids(hosts, "inactive alex") == []
+    with pytest.raises(LookupError):
+        coffee_hosts.resolve_coffee_host_id(hosts, "Unknown")
+    with pytest.raises(ValueError, match="host-001.*host-002"):
+        coffee_hosts.resolve_coffee_host_id(hosts, "Alex")
 
 
 def test_private_coffee_schedule_filters_assignments_for_host():
