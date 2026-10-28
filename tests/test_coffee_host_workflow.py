@@ -86,6 +86,25 @@ def test_coffee_host_remove_deactivates_and_persists_host(tmp_path):
     assert "desactivado" in update.message.reply_text.await_args.args[0]
 
 
+def test_coffee_host_remove_accepts_name(tmp_path):
+    """The admin can deactivate a host by the readable name."""
+    config = make_config(tmp_path)
+    state = {
+        "coffee_hosts": {
+            "host-001": {"name": "Laura", "telegram_id": 111, "active": True}
+        },
+        "coffee_host_schedule": {},
+    }
+    update = make_update("/coffeehost remove | laura")
+
+    asyncio.run(coffee_host(update, SimpleNamespace(), 42, state, config))
+
+    assert state["coffee_hosts"]["host-001"]["active"] is False
+    message = update.message.reply_text.await_args.args[0]
+    assert "Laura" in message
+    assert "host-001" in message
+
+
 def test_coffee_host_view_lists_active_and_inactive_hosts(tmp_path):
     """The roster view includes both active and inactive hosts."""
     state = {
@@ -132,6 +151,49 @@ def test_coffee_host_assigns_and_persists_active_hosts(tmp_path):
     assert load_json(make_config(tmp_path)["COFFEE_HOST_SCHEDULE_FILE"], {}) == state[
         "coffee_host_schedule"
     ]
+
+
+def test_coffee_host_assigns_by_readable_names(tmp_path):
+    """The admin can assign multiple hosts by name while storing stable IDs."""
+    state = {
+        "coffee_hosts": {
+            "host-001": {"name": "Host One", "active": True},
+            "host-002": {"name": "Host Two", "active": True},
+        },
+        "coffee_host_schedule": {},
+    }
+    update = make_update(
+        "/coffeehost 2026-10-17 Host One,Host Two | Café Central | 11:00"
+    )
+
+    asyncio.run(coffee_host(update, SimpleNamespace(), 42, state, make_config(tmp_path)))
+
+    assert state["coffee_host_schedule"]["2026-10-17"]["hosts"] == [
+        "host-001",
+        "host-002",
+    ]
+    message = update.message.reply_text.await_args.args[0]
+    assert "Host One, Host Two" in message
+
+
+def test_coffee_host_rejects_ambiguous_name_assignment(tmp_path):
+    """Duplicate names must be disambiguated with a stable host ID."""
+    state = {
+        "coffee_hosts": {
+            "host-001": {"name": "Alex", "active": True},
+            "host-002": {"name": "alex", "active": True},
+        },
+        "coffee_host_schedule": {},
+    }
+    update = make_update("/coffeehost 2026-10-17 Alex | Café Central | 11:00")
+
+    asyncio.run(coffee_host(update, SimpleNamespace(), 42, state, make_config(tmp_path)))
+
+    assert state["coffee_host_schedule"] == {}
+    message = update.message.reply_text.await_args.args[0]
+    assert "ambiguous" in message.lower() or "ambiguos" in message.lower()
+    assert "host-001" in message
+    assert "host-002" in message
 
 
 def test_coffee_host_assignment_warns_when_notifications_are_disabled(tmp_path):
