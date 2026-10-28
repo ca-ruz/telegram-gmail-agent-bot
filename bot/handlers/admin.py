@@ -21,6 +21,7 @@ from core.coffee_hosts import (
     upcoming_saturdays,
     send_manual_coffee_host_reminder,
 )
+from core.admin_status import build_admin_status_snapshot
 from core.manual_promos import (
     MANUAL_PROMO_TIMEZONE,
     build_manual_promo,
@@ -1630,6 +1631,8 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
     Admin-only command to show the bot's current status and configuration.
     """
     if update.effective_user.id != admin_id: return
+    status_snapshot = build_admin_status_snapshot(state)
+    status_counts = status_snapshot["counts"]
     calendar_enabled = config.get("ENABLE_CALENDAR_POLLING", True)
     coffee_enabled = config.get("ENABLE_COFFEE_HOST_REMINDERS", True)
     manual_promos_enabled = config.get("ENABLE_MANUAL_PROMO_REMINDERS", True)
@@ -1651,8 +1654,9 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
     coworking_last_sent = coworking_state.get("last_sent_week", "Nunca")
     msg = (
         f"📊 <b>BTC GDL Bot Status</b>\n\n"
-        f"👥 <b>Subscribers:</b> {len(state['subscribers'])}\n"
-        f"📢 <b>Broadcast Groups:</b> {len(state['groups'])}\n"
+        f"👤 <b>Known users:</b> {status_counts['known_users']}\n"
+        f"👥 <b>Subscribers:</b> {status_counts['subscribers']}\n"
+        f"📢 <b>Broadcast Groups:</b> {status_counts['broadcast_groups']}\n"
         f"📝 <b>Pending Promos:</b> {len(state['pending_promos'])}\n\n"
         f"🤖 <b>OpenAI:</b> {'✅ Configured' if _has_configured_openai_key(config.get('OPENAI_API_KEY')) else '❌ Missing or placeholder key'}\n"
         f"📅 <b>Calendar polling:</b> {'✅ Enabled' if calendar_enabled else '⛔ Disabled'}\n"
@@ -1660,7 +1664,9 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
         f"📰 <b>Manual promo reminders:</b> {'✅ Enabled' if manual_promos_enabled else '⛔ Disabled'}\n"
         f"💳 <b>Payment reminders:</b> {'✅ Enabled' if payment_enabled else '⛔ Disabled'}\n"
         f"🏠 <b>Payment group:</b> {'✅ Configured' if payment_group_configured else '❌ Missing'}\n"
-        f"👤 <b>Payment members:</b> {len(state.get('members', {}))}\n"
+        f"👥 <b>Members:</b> {status_counts['active_members']}/{status_counts['members']} active\n"
+        f"☕ <b>Coffee hosts:</b> {status_counts['active_coffee_hosts']}/{status_counts['coffee_hosts']} active\n"
+        f"💳 <b>Payment members:</b> {status_counts['members']}\n"
         f"📆 <b>Payment period:</b> {escape(str(payment_period))}\n"
         f"🕘 <b>Payment reminder hour:</b> {payment_hour:02d}:00\n"
         f"🏠 <b>Coworking invitations:</b> {'✅ Enabled' if coworking_enabled else '⛔ Disabled'}\n"
