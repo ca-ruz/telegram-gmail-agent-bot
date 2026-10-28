@@ -1626,11 +1626,29 @@ def _has_configured_openai_key(value):
     )
 
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config, status_msg=None):
-    """
-    Admin-only command to show the bot's current status and configuration.
-    """
-    if update.effective_user.id != admin_id: return
+def status_overview_keyboard():
+    """Build read-only navigation buttons for the administrator status view."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("👥 Members", callback_data="status_detail:members"),
+            InlineKeyboardButton("☕ Coffee hosts", callback_data="status_detail:coffee_hosts"),
+        ],
+        [
+            InlineKeyboardButton("📢 Groups", callback_data="status_detail:groups"),
+            InlineKeyboardButton("🔔 Subscriptions", callback_data="status_detail:subscriptions"),
+        ],
+    ])
+
+
+def status_detail_keyboard():
+    """Build the navigation button used by status detail views."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("↩ Back to status", callback_data="status_overview")]
+    ])
+
+
+def format_status_overview(state, config):
+    """Format the read-only administrator status overview."""
     status_snapshot = build_admin_status_snapshot(state)
     status_counts = status_snapshot["counts"]
     calendar_enabled = config.get("ENABLE_CALENDAR_POLLING", True)
@@ -1677,10 +1695,138 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, s
         f"🌅 <b>Morning-event fallback:</b> {morning_lead_hours} hours before\n"
         f"⏱ <b>Check Interval:</b> {config.get('CHECK_INTERVAL_MINUTES')} min"
     )
+    return msg
+
+
+def _status_user_label(record):
+    """Format one status user identity with safe HTML escaping."""
+    display_name = escape(str(record.get("display_name") or "Usuario sin nombre"))
+    username = str(record.get("username", "") or "")
+    if username:
+        display_name += f" (@{escape(username.lstrip('@'))})"
+    return display_name
+
+
+def format_status_detail(snapshot, detail):
+    """Format one structured administrator status detail view."""
+    if detail == "members":
+        lines = ["👥 <b>Members</b>", ""]
+        for member in snapshot["members"]:
+            status_text = "active" if member["active"] else "inactive"
+            telegram_id = member["telegram_id"] or "unknown"
+            lines.append(
+                f"• <b>{escape(member['name'] or 'Unnamed member')}</b> "
+                f"(<code>{escape(member['member_id'])}</code>)\n"
+                f"  ID: <code>{escape(str(telegram_id))}</code> · {status_text}"
+            )
+        return "\n".join(lines) if len(lines) > 2 else "👥 <b>Members</b>\n\nNone configured."
+
+    if detail == "coffee_hosts":
+        lines = ["☕ <b>Coffee hosts</b>", ""]
+        for host in snapshot["coffee_hosts"]:
+            status_text = "active" if host["active"] else "inactive"
+            telegram_id = host["telegram_id"] or "unknown"
+            lines.append(
+                f"• <b>{escape(host['name'] or 'Unnamed host')}</b> "
+                f"(<code>{escape(host['host_id'])}</code>)\n"
+                f"  ID: <code>{escape(str(telegram_id))}</code> · {status_text}"
+            )
+        return "\n".join(lines) if len(lines) > 2 else "☕ <b>Coffee hosts</b>\n\nNone configured."
+
+    if detail == "groups":
+        category_labels = {
+            "events": "events",
+            "payments": "payments",
+            "coworking": "coworking",
+        }
+        lines = ["📢 <b>Broadcast groups</b>", ""]
+        for group in snapshot["groups"]:
+            username = str(group.get("username", "") or "")
+            label = escape(group["display_name"])
+            if username:
+                label += f" (@{escape(username.lstrip('@'))})"
+            categories = ", ".join(
+                category_labels.get(category, category)
+                for category in group["categories"]
+            ) or "none"
+            lines.append(
+                f"• <b>{label}</b>\n"
+                f"  ID: <code>{escape(str(group['group_id']))}</code> · {categories}"
+            )
+        return "\n".join(lines) if len(lines) > 2 else "📢 <b>Broadcast groups</b>\n\nNone configured."
+
+    if detail == "subscriptions":
+        lines = ["🔔 <b>User subscriptions</b>", ""]
+        for user in snapshot["users"]:
+            enabled = [
+                category
+                for category, is_enabled in user["notification_preferences"].items()
+                if is_enabled
+            ]
+            categories = ", ".join(enabled) or "none"
+            subscription = "subscribed" if user["subscribed"] else "not subscribed"
+            member_status = "member" if user["active_member"] else "not an active member"
+            host_status = "coffee host" if user["active_coffee_host"] else "not a coffee host"
+            lines.append(
+                f"• <b>{_status_user_label(user)}</b>\n"
+                f"  ID: <code>{user['telegram_id']}</code> · {subscription}\n"
+                f"  {member_status} · {host_status}\n"
+                f"  Notifications: {escape(categories)}"
+            )
+        return "\n".join(lines) if len(lines) > 2 else "🔔 <b>User subscriptions</b>\n\nNone recorded."
+
+    return "❌ Unknown status section."
+
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config, status_msg=None):
+    """Admin-only command to show the bot's current status and configuration."""
+    if update.effective_user.id != admin_id:
+        return
+
+    msg = format_status_overview(state, config)
+    keyboard = status_overview_keyboard()
     if status_msg:
-        await status_msg.edit_text(msg, parse_mode=ParseMode.HTML)
+        await status_msg.edit_text(
+            msg,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
     else:
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(
+            msg,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+
+
+async def handle_status_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state, config):
+    """Display or restore a read-only status detail view for the primary administrator."""
+    query = update.callback_query
+    if query.from_user.id != admin_id:
+        await query.answer("No tienes permisos para ver este estado.", show_alert=True)
+        return
+
+    callback_data = getattr(query, "data", "")
+    if callback_data == "status_overview":
+        text = format_status_overview(state, config)
+        keyboard = status_overview_keyboard()
+    elif callback_data.startswith("status_detail:"):
+        detail = callback_data.removeprefix("status_detail:")
+        if detail not in {"members", "coffee_hosts", "groups", "subscriptions"}:
+            await query.answer("Sección de estado no disponible.", show_alert=True)
+            return
+        text = format_status_detail(build_admin_status_snapshot(state), detail)
+        keyboard = status_detail_keyboard()
+    else:
+        await query.answer("Acción de estado no disponible.", show_alert=True)
+        return
+
+    await query.answer()
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard,
+    )
 
 async def pending_promo(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id, state):
     """

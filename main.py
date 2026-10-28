@@ -14,6 +14,7 @@ from bot.handlers.admin import (
     coffee_host, remind, manual_promo, linked_promo, linked_promo_done,
     linked_promo_cancel, handle_admin_photo, monthly_calendar, payments,
     handle_payment_review, handle_payment_period, handle_payment_status,
+    handle_status_detail,
     manage_members,
     flyers, handle_imported_flyer_selection,
     handle_manual_promo_send_now, handle_manual_promo_test,
@@ -534,6 +535,14 @@ def main():
             config=CONFIG,
         ),
         pattern="^payment_toggle"))
+    app.add_handler(CallbackQueryHandler(
+        partial(
+            handle_status_detail,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        ),
+        pattern="^status_(detail:|overview$)"))
     app.add_handler(CallbackQueryHandler(
         partial(handle_add_confirm, admin_id=CONFIG['ADMIN_ID'], config=CONFIG),
         pattern="^(confirm_add|cancel_add)$"))
