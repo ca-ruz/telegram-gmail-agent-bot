@@ -54,6 +54,7 @@ def test_coworking_invitation_renders_configured_details_and_links():
         "COWORKING_VISIT_URL": "https://example.com/visit?a=1&b=2",
         "COWORKING_DAY_PASS_URL": "https://example.com/day-pass",
         "COWORKING_MEMBERSHIP_URL": "",
+        "COMMUNITY_GROUP_URL": "https://t.me/community?a=1&b=2",
     })
 
     assert "<b>Espacio &lt;central&gt;</b>" in message
@@ -62,6 +63,19 @@ def test_coworking_invitation_renders_configured_details_and_links():
     assert 'href="https://example.com/visit?a=1&amp;b=2"' in message
     assert "Pase por día" in message
     assert "Membresías" not in message
+    assert "Únete al grupo de la comunidad" in message
+    assert 'href="https://t.me/community?a=1&amp;b=2"' in message
+
+
+def test_coworking_invitation_omits_community_link_when_unconfigured():
+    """Coworking invitations omit the community CTA without a configured URL."""
+    message = format_coworking_invitation({
+        "COWORKING_SPACE_NAME": "Espacio comunitario",
+        "COMMUNITY_GROUP_URL": "",
+    })
+
+    assert "confirmar horarios y disponibilidad" in message
+    assert "Únete al grupo de la comunidad" not in message
 
 
 def test_coworking_delivery_targets_groups_and_deduplicates(tmp_path):

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from zoneinfo import ZoneInfo
 
+from core.community import format_community_group_cta
 from core.group_notification_routing import get_group_targets
 from tools.local.data_manager import load_json, save_json
 
@@ -104,6 +105,9 @@ def format_coworking_invitation(config=None):
             message.append(f'\n<a href="{escape(url, quote=True)}">{label}</a>')
 
     message.extend(("", "¿Te interesa conocer el espacio? Escríbenos en el grupo para confirmar horarios y disponibilidad. ⚡"))
+    community_cta = format_community_group_cta(config.get("COMMUNITY_GROUP_URL", ""))
+    if community_cta:
+        message.extend(("", community_cta))
     return "\n".join(message)
 
 
