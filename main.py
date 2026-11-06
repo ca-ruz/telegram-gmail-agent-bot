@@ -36,6 +36,7 @@ from core.group_notification_routing import load_group_notification_categories
 from core.imported_events import load_imported_events
 from core.notification_preferences import load_notification_preferences
 from core.telegram_metadata import load_telegram_metadata
+from core.membership_pricing import load_membership_plans
 from core.membership_payments import (
     check_payment_invoice_status,
     check_payment_reminders,
@@ -154,6 +155,9 @@ CONFIG = {
     'COFFEE_DEFAULT_START_TIME': os.getenv("COFFEE_DEFAULT_START_TIME", "11:00"),
     'COFFEE_DEFAULT_VENUE': os.getenv("COFFEE_DEFAULT_VENUE", ""),
     'MEMBERS_FILE': os.getenv("MEMBERS_FILE", "data/members.json"),
+    'MEMBERSHIP_PLANS_FILE': os.getenv(
+        "MEMBERSHIP_PLANS_FILE", "data/membership_plans.json"
+    ),
     'PAYMENT_STATE_FILE': os.getenv("PAYMENT_STATE_FILE", "data/payment_state.json"),
     'MEMBERS_GROUP_ID': parse_env_int('MEMBERS_GROUP_ID', 0),
     'PAYMENT_REMINDER_HOUR': parse_env_int('PAYMENT_REMINDER_HOUR', 9),
@@ -209,6 +213,7 @@ if isinstance(raw_notified, list):
     raw_notified = notified_dict
 
 members = load_members(CONFIG['MEMBERS_FILE'])
+membership_plans = load_membership_plans(CONFIG['MEMBERSHIP_PLANS_FILE'])
 payment_state = synchronize_multi_period_payment_state(
     load_multi_period_payment_state(CONFIG['PAYMENT_STATE_FILE']),
     members,
@@ -245,6 +250,7 @@ STATE = {
     'coffee_hosts': load_coffee_hosts(CONFIG['COFFEE_HOSTS_FILE']),
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
     'members': members,
+    'membership_plans': membership_plans,
     'payment_state': payment_state,
     'coworking': load_coworking_state(CONFIG['COWORKING_STATE_FILE']),
 }

@@ -11,6 +11,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from core.group_notification_routing import get_group_targets
 from core.nwc_client import NwcInvoiceClient
 from core.notification_preferences import is_notification_enabled
+from core.membership_pricing import normalize_membership_plan, normalize_membership_quantity
 from tools.local.data_manager import load_json, save_json
 
 
@@ -1601,12 +1602,18 @@ async def check_payment_reminders(context, config, state, now=None):
         raise public_error
 
 
-def build_member(name, telegram_id):
-    """Build a normalized active member record."""
+def build_member(name, telegram_id, membership_plan="", membership_quantity=1):
+    """Build a normalized active member record with optional pricing metadata."""
+    try:
+        normalized_quantity = normalize_membership_quantity(membership_quantity)
+    except ValueError:
+        normalized_quantity = 1
     return {
         "name": name,
         "telegram_id": telegram_id,
         "active": True,
+        "membership_plan": normalize_membership_plan(membership_plan),
+        "membership_quantity": normalized_quantity,
     }
 
 

@@ -32,6 +32,11 @@ from core.manual_promos import (
     save_manual_promos,
     set_first_notification_schedule,
 )
+from core.membership_pricing import (
+    format_membership_plan,
+    normalize_membership_plan,
+    normalize_membership_quantity,
+)
 from core.monthly_calendar import (
     build_monthly_calendar,
     parse_calendar_month,
@@ -557,7 +562,7 @@ async def handle_payment_status(
     )
 
 
-def format_members(members):
+def format_members(members, membership_plans=None):
     """Format active and inactive members for an authorized administrator."""
     lines = ["<b>Miembros</b>"]
     for status, active in (("Activos", True), ("Inactivos", False)):
@@ -573,7 +578,11 @@ def format_members(members):
         for member_id, member in sorted(matching_members):
             name = escape(str(member.get("name", "Sin nombre")))
             telegram_id = escape(str(member.get("telegram_id", "sin ID")))
-            lines.append(f"\n<code>{escape(member_id)}</code> - {name} ({telegram_id})")
+            plan = escape(format_membership_plan(member, membership_plans or {}))
+            lines.append(
+                f"\n<code>{escape(member_id)}</code> - {name} ({telegram_id})"
+                f"\n  Plan: {plan}"
+            )
     return "".join(lines)
 
 
@@ -602,13 +611,16 @@ async def manage_members(
     action = parts[0].lower() if parts else "list"
 
     if action == "list":
-        await update.message.reply_text(format_members(members), parse_mode=ParseMode.HTML)
+        await update.message.reply_text(
+            format_members(members, state.get("membership_plans", {})),
+            parse_mode=ParseMode.HTML,
+        )
         return
 
     if action == "add":
-        if len(parts) != 3 or not parts[1] or not parts[2]:
+        if len(parts) not in {3, 5} or not parts[1] or not parts[2]:
             await update.message.reply_text(
-                "Uso: /members add | Nombre | Telegram ID"
+                "Uso: /members add | Nombre | Telegram ID | Plan | Cantidad"
             )
             return
         name = parts[1]
@@ -627,8 +639,26 @@ async def manage_members(
             await update.message.reply_text("❌ Ese Telegram ID ya está registrado.")
             return
 
+        membership_plan = ""
+        membership_quantity = 1
+        if len(parts) == 5:
+            membership_plan = normalize_membership_plan(parts[3])
+            if not membership_plan or membership_plan not in state.get("membership_plans", {}):
+                await update.message.reply_text("❌ Ese plan de membresía no existe.")
+                return
+            try:
+                membership_quantity = normalize_membership_quantity(parts[4])
+            except ValueError:
+                await update.message.reply_text("❌ La cantidad debe ser un número positivo.")
+                return
+
         member_id = next_member_id(members)
-        members[member_id] = build_member(name, telegram_id)
+        members[member_id] = build_member(
+            name,
+            telegram_id,
+            membership_plan,
+            membership_quantity,
+        )
         save_members(config["MEMBERS_FILE"], members)
         payment_state = state.get("payment_state", {})
         if isinstance(payment_state.get("periods"), dict):
@@ -648,9 +678,9 @@ async def manage_members(
         return
 
     if action == "update":
-        if len(parts) != 4 or not parts[1] or not parts[2] or not parts[3]:
+        if len(parts) not in {4, 6} or not parts[1] or not parts[2] or not parts[3]:
             await update.message.reply_text(
-                "Uso: /members update | member-id | Nombre | Telegram ID"
+                "Uso: /members update | member-id | Nombre | Telegram ID | Plan | Cantidad"
             )
             return
         member_id, name = parts[1], parts[2]
@@ -674,7 +704,22 @@ async def manage_members(
             await update.message.reply_text("❌ Ese Telegram ID ya está registrado.")
             return
 
-        members[member_id].update({"name": name, "telegram_id": telegram_id})
+        updates = {"name": name, "telegram_id": telegram_id}
+        if len(parts) == 6:
+            membership_plan = normalize_membership_plan(parts[4])
+            if not membership_plan or membership_plan not in state.get("membership_plans", {}):
+                await update.message.reply_text("❌ Ese plan de membresía no existe.")
+                return
+            try:
+                membership_quantity = normalize_membership_quantity(parts[5])
+            except ValueError:
+                await update.message.reply_text("❌ La cantidad debe ser un número positivo.")
+                return
+            updates.update({
+                "membership_plan": membership_plan,
+                "membership_quantity": membership_quantity,
+            })
+        members[member_id].update(updates)
         save_members(config["MEMBERS_FILE"], members)
         await update.message.reply_text(
             f"✅ Miembro actualizado: <code>{escape(member_id)}</code>",
@@ -702,8 +747,8 @@ async def manage_members(
     await update.message.reply_text(
         "Uso:\n"
         "/members list\n"
-        "/members add | Nombre | Telegram ID\n"
-        "/members update | member-id | Nombre | Telegram ID\n"
+        "/members add | Nombre | Telegram ID | Plan | Cantidad\n"
+        "/members update | member-id | Nombre | Telegram ID | Plan | Cantidad\n"
         "/members deactivate | member-id"
     )
 
