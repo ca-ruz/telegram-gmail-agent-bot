@@ -341,7 +341,7 @@ def format_payment_review(payment_state, members, period=None):
 
 
 def payment_review_keyboard(payment_state, members, period=None):
-    """Build period-selector and status-toggle buttons for payment review."""
+    """Build period-selector and explicit status-action buttons for payment review."""
     period_state, selected_period = _payment_period_state(payment_state, period)
     buttons = []
     periods = sorted(_payment_periods(payment_state))
@@ -349,7 +349,7 @@ def payment_review_keyboard(payment_state, members, period=None):
         buttons.extend([
             [
                 InlineKeyboardButton(
-                    f"{'✅ ' if item == selected_period else ''}{item}",
+                    f"{'📅 ' if item == selected_period else ''}{item}",
                     callback_data=f"payment_period:{item}",
                 )
             ]
@@ -364,7 +364,11 @@ def payment_review_keyboard(payment_state, members, period=None):
         member = members.get(member_id, {})
         name = str(member.get("name", member_id))
         is_paid = isinstance(record, dict) and record.get("status") == "paid"
-        label = f"↩ {name}: pendiente" if is_paid else f"✅ {name}: pagado"
+        label = (
+            f"↩ Marcar pendiente: {name}"
+            if is_paid
+            else f"✅ Marcar pagado: {name}"
+        )
         buttons.append([
             InlineKeyboardButton(
                 label,
