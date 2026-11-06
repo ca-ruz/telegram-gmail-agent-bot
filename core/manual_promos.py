@@ -142,6 +142,37 @@ def _split_manual_promo_links(text):
     return text_without_links, links
 
 
+def _adjust_same_day_reminder_text(text, reminder_stage):
+    """Replace relative next-day wording only in same-day reminder copies."""
+    if reminder_stage != "same_day":
+        return text
+
+    replacements = (
+        (r"\bmañana\b", "más tarde hoy"),
+        (r"\btomorrow\b", "later today"),
+    )
+
+    def replace(match):
+        replacement = next(
+            value
+            for pattern, value in replacements
+            if re.fullmatch(pattern, match.group(0), flags=re.IGNORECASE)
+        )
+        if match.group(0)[0].isupper():
+            replacement = replacement.capitalize()
+        return replacement
+
+    adjusted_text = text
+    for pattern, _replacement in replacements:
+        adjusted_text = re.sub(
+            pattern,
+            replace,
+            adjusted_text,
+            flags=re.IGNORECASE,
+        )
+    return adjusted_text
+
+
 def _format_linked_event_section(event):
     """Format one linked event with its structured publication details."""
     date_text, time_text = _format_manual_promo_datetime(event["event_start"])
@@ -169,10 +200,14 @@ def format_manual_promo_caption(
     promo,
     community_group_url="",
     reminder_event=None,
+    reminder_stage=None,
 ):
     """Build the final HTML caption for a manually staged event promo."""
     publication_text, links = _split_manual_promo_links(
-        str(promo.get("text", "")).strip()
+        _adjust_same_day_reminder_text(
+            str(promo.get("text", "")).strip(),
+            reminder_stage,
+        )
     )
 
     linked_events = promo.get("linked_events") or []
@@ -358,6 +393,7 @@ async def deliver_manual_promo(
         promo,
         community_group_url,
         reminder_event=reminder_event,
+        reminder_stage=stage,
     )
 
     for subscriber_id in subscribers:
@@ -451,6 +487,7 @@ async def deliver_registered_manual_promo(
         promo,
         community_group_url,
         reminder_event=reminder_event,
+        reminder_stage="same_day" if stage == "registered_1h" else stage,
     )
 
     for user_id in registered_users:
