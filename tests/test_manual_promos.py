@@ -190,6 +190,39 @@ def test_manual_promo_caption_does_not_duplicate_existing_details():
     assert caption.count("📍 Community Space") == 1
 
 
+def test_same_day_reminder_rewrites_relative_next_day_wording():
+    """Same-day reminder captions use event-day wording without changing the promo."""
+    promo = {
+        "event_start": "2026-10-31T11:00:00-06:00",
+        "text": "Mañana hay Coffee + Bitcoin! Tomorrow is the event.",
+    }
+
+    caption = manual_promos.format_manual_promo_caption(
+        promo,
+        reminder_stage="same_day",
+    )
+
+    assert "Más tarde hoy hay Coffee + Bitcoin! Later today is the event." in caption
+    assert "Mañana" not in caption
+    assert "Tomorrow" not in caption
+    assert promo["text"] == "Mañana hay Coffee + Bitcoin! Tomorrow is the event."
+
+
+def test_non_same_day_caption_preserves_original_relative_wording():
+    """Initial and next-day publications retain their authored wording."""
+    promo = {
+        "event_start": "2026-10-31T11:00:00-06:00",
+        "text": "Mañana hay Coffee + Bitcoin!",
+    }
+
+    caption = manual_promos.format_manual_promo_caption(
+        promo,
+        reminder_stage="24h",
+    )
+
+    assert "Mañana hay Coffee + Bitcoin!" in caption
+
+
 def test_manual_promo_caption_places_links_after_event_details():
     """A publication link appears after the formatted event details."""
     caption = manual_promos.format_manual_promo_caption({
