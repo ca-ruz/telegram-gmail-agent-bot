@@ -16,6 +16,11 @@ PAYMENT_REMINDER_HOUR=9
 PAYMENT_ADVANCE_REMINDER_DAYS=3
 PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS=2
 ENABLE_PAYMENT_REMINDERS=true
+PAYMENT_VERIFICATION_ENABLED=false
+PAYMENT_NWC_URI=
+PAYMENT_INVOICE_AMOUNT_MSAT=0
+PAYMENT_INVOICE_EXPIRY_SECONDS=604800
+PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS=300
 ```
 
 `TELEGRAM_ADMIN_ID` is the primary administrator. That account and
@@ -119,6 +124,16 @@ public reminder succeeds. Each public stage produces at most one follow-up;
 failed deliveries remain eligible for a later scheduler retry. Follow-ups are
 private and never sent to the membership group or regular subscribers.
 
+Automated invoice verification is disabled by default. To enable it, set
+`PAYMENT_VERIFICATION_ENABLED=true`, provide the dedicated `PAYMENT_NWC_URI`,
+and set a positive `PAYMENT_INVOICE_AMOUNT_MSAT`. The bot creates or reuses one
+invoice per unpaid member and billing period in private reminders. A separate
+verification job checks pending invoices using
+`PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS`; it marks the matching period as
+paid only after NWC reports that exact invoice as settled. Wallet errors,
+expired invoices, and hash mismatches do not mark a member paid, and the manual
+`/payments` workflow remains available.
+
 Private reminders for each period are sent only when all of these conditions
 are true:
 
@@ -173,12 +188,11 @@ current and next billing periods available after startup.
   `America/Mexico_City`.
 - Check logs with `journalctl`; never paste `.env` or runtime JSON contents into public issues.
 
-## Future Payment Automation
+## Automated Payment Verification
 
-Issue #16 is reserved for optional payment automation after the manual workflow
-has been tested in production. The recommended first implementation is a
-receive-only Nostr Wallet Connect (NWC) connection to a Core Lightning node,
-using the [Daywalker cln-nip47 plugin](https://github.com/daywalker90/cln-nip47).
+Issue #16 implements optional payment automation through a receive-only Nostr
+Wallet Connect (NWC) connection to a Core Lightning node, using the
+[Daywalker cln-nip47 plugin](https://github.com/daywalker90/cln-nip47).
 
 ### Payment administrator setup
 
@@ -218,6 +232,13 @@ The node operator should:
 7. Keep the connection dedicated to this bot. The plugin notes that NWC
    notifications are delivered to all NWC connections, so unrelated clients
    should not share this connection.
+
+After configuring the `.env` values above, restart the service and verify the
+configuration with `/status`. Start with a small test amount and confirm that
+the private reminder contains an invoice, the invoice is paid from another
+Lightning wallet, and the matching member-period changes to paid after the next
+verification poll. Keep the feature disabled until the node operator and
+primary administrator approve the test.
 
 The bot will use the connection for invoice creation and invoice lookup. It
 does not need the node's IP address, CLN RPC port, port forwarding, or direct

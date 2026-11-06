@@ -562,6 +562,20 @@ def _payment_invoice_settings(config):
     return connection_uri, amount_msat, expiry_seconds
 
 
+def _replace_payment_member_record(payment_state, normalized_state, period, member_id):
+    """Apply one normalized member record without invalidating live state references."""
+    period_key = _normalize_period_key(period)
+    current_member = payment_state["periods"][period_key]["members"][
+        str(member_id)
+    ]
+    normalized_member = normalized_state["periods"][period_key]["members"][
+        str(member_id)
+    ]
+    current_member.clear()
+    current_member.update(normalized_member)
+    return current_member
+
+
 async def get_or_create_payment_invoice(
     payment_state,
     period,
@@ -600,16 +614,128 @@ async def get_or_create_payment_invoice(
         )
         return None, False
 
-    period_key = _normalize_period_key(period)
-    current_member = payment_state["periods"][period_key]["members"][
-        str(member_id)
-    ]
-    normalized_member = normalized_state["periods"][period_key]["members"][
-        str(member_id)
-    ]
-    current_member.clear()
-    current_member.update(normalized_member)
+    _replace_payment_member_record(
+        payment_state,
+        normalized_state,
+        period,
+        member_id,
+    )
     return get_active_payment_invoice(payment_state, period, member_id), True
+
+
+def _invoice_status_timestamp(value, fallback=None):
+    """Convert an NWC Unix timestamp to the persisted UTC timestamp format."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(value, timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError):
+            pass
+    return _timestamp_string(fallback)
+
+
+def _normalized_invoice_status(status):
+    """Map an NWC status to the persisted invoice-state vocabulary."""
+    state = str(getattr(status, "state", "unmatched")).lower()
+    return state if state in PAYMENT_INVOICE_STATES else "unmatched"
+
+
+async def check_payment_invoice_status(config, state, now=None):
+    """Poll pending invoices and mark member periods paid after settlement."""
+    settings = _payment_invoice_settings(config)
+    if settings is None:
+        return {"checked": 0, "settled": 0, "failed": 0}
+
+    payment_state = state.setdefault("payment_state", {})
+    if not isinstance(payment_state.get("periods"), dict):
+        return {"checked": 0, "settled": 0, "failed": 0}
+
+    connection_uri, _amount_msat, _expiry_seconds = settings
+    client = NwcInvoiceClient(connection_uri)
+    checked_at = now or datetime.now(timezone.utc)
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+    checked_at = checked_at.astimezone(timezone.utc)
+    result = {"checked": 0, "settled": 0, "failed": 0}
+    state_changed = False
+
+    for period, period_state in payment_state.get("periods", {}).items():
+        members = period_state.get("members", {})
+        if not isinstance(members, dict):
+            continue
+        for member_id, member_record in members.items():
+            if not isinstance(member_record, dict):
+                continue
+            invoices = _normalize_payment_invoices(
+                member_record.get("payment_invoices")
+            )
+            pending_hashes = [
+                payment_hash
+                for payment_hash, invoice in invoices.items()
+                if invoice.get("state") == "pending"
+            ]
+            for payment_hash in pending_hashes:
+                result["checked"] += 1
+                try:
+                    status = await client.lookup_invoice(
+                        payment_hash=payment_hash,
+                    )
+                except Exception:
+                    result["failed"] += 1
+                    logger.warning(
+                        "Could not check membership invoice for %s in %s.",
+                        member_id,
+                        period,
+                    )
+                    continue
+
+                status_state = _normalized_invoice_status(status)
+                if str(getattr(status, "payment_hash", "")) != payment_hash:
+                    status_state = "unmatched"
+
+                settled_at = None
+                if status_state == "settled":
+                    settled_at = _invoice_status_timestamp(
+                        getattr(status, "settled_at", None),
+                        checked_at,
+                    )
+                try:
+                    normalized_state = update_payment_invoice(
+                        payment_state,
+                        period,
+                        member_id,
+                        payment_hash,
+                        state=status_state,
+                        settled_at=settled_at,
+                        last_checked_at=checked_at,
+                    )
+                except (KeyError, ValueError):
+                    result["failed"] += 1
+                    logger.warning(
+                        "Could not update membership invoice for %s in %s.",
+                        member_id,
+                        period,
+                    )
+                    continue
+
+                member_record = _replace_payment_member_record(
+                    payment_state,
+                    normalized_state,
+                    period,
+                    member_id,
+                )
+                state_changed = True
+                if status_state == "settled":
+                    if member_record.get("status") != "paid":
+                        member_record["status"] = "paid"
+                        member_record["paid_at"] = settled_at
+                    result["settled"] += 1
+
+    if state_changed:
+        save_multi_period_payment_state(
+            config["PAYMENT_STATE_FILE"],
+            payment_state,
+        )
+    return result
 
 
 def build_monthly_payment_state(members, period=None):
