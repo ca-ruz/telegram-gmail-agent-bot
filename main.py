@@ -158,6 +158,20 @@ CONFIG = {
     'MEMBERSHIP_PLANS_FILE': os.getenv(
         "MEMBERSHIP_PLANS_FILE", "data/membership_plans.json"
     ),
+    'PAYMENT_EXCHANGE_RATE_URL': os.getenv(
+        'PAYMENT_EXCHANGE_RATE_URL',
+        'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=mxn',
+    ).strip(),
+    'PAYMENT_EXCHANGE_RATE_CACHE_FILE': os.getenv(
+        'PAYMENT_EXCHANGE_RATE_CACHE_FILE',
+        'data/payment_exchange_rate.json',
+    ),
+    'PAYMENT_EXCHANGE_RATE_MAX_AGE_SECONDS': parse_env_int(
+        'PAYMENT_EXCHANGE_RATE_MAX_AGE_SECONDS', 900
+    ),
+    'PAYMENT_EXCHANGE_RATE_TIMEOUT_SECONDS': parse_env_int(
+        'PAYMENT_EXCHANGE_RATE_TIMEOUT_SECONDS', 10
+    ),
     'PAYMENT_STATE_FILE': os.getenv("PAYMENT_STATE_FILE", "data/payment_state.json"),
     'MEMBERS_GROUP_ID': parse_env_int('MEMBERS_GROUP_ID', 0),
     'PAYMENT_REMINDER_HOUR': parse_env_int('PAYMENT_REMINDER_HOUR', 9),
