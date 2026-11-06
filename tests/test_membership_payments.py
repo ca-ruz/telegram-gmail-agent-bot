@@ -26,6 +26,8 @@ from core.membership_payments import (
     get_payment_reminder_schedule,
     get_payment_reminder_stage,
     get_unpaid_member_recipients,
+    format_combined_personal_payment_reminder,
+    format_personal_payment_reminder,
     load_members,
     load_multi_period_payment_state,
     load_payment_state,
@@ -1015,6 +1017,39 @@ def test_payment_review_buttons_describe_actions_without_reusing_paid_marker():
         "✅ Marcar pagado: Ada",
         "↩ Marcar pendiente: Lin",
     ]
+
+
+def test_personal_payment_reminder_uses_concise_pending_copy():
+    """Single-period private reminders avoid repeated pending-language."""
+    text = format_personal_payment_reminder(
+        "Ada",
+        "2026-11",
+        "daily",
+    )
+
+    assert text == (
+        "Hola, Ada.\n\n"
+        "💳 Pago de membresía de noviembre de 2026: pendiente.\n"
+        "Realiza tu pago cuando puedas."
+    )
+    assert "todavía aparece" not in text
+
+
+def test_combined_payment_reminder_uses_one_clear_status_line_per_period():
+    """Combined reminders keep period details without a redundant heading."""
+    text = format_combined_personal_payment_reminder(
+        "Ada",
+        [("2026-10", "overdue_rollover"), ("2026-11", "first_day")],
+    )
+
+    assert text == (
+        "Hola, Ada.\n\n"
+        "💳 Pagos de membresía:\n"
+        "• octubre de 2026: pendiente\n"
+        "• noviembre de 2026: comienza hoy\n"
+        "Realiza los pagos indicados cuando puedas."
+    )
+    assert "aparecen pendientes" not in text
 
 
 def test_payment_status_toggle_updates_only_selected_period(tmp_path):

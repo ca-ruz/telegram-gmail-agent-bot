@@ -1014,13 +1014,13 @@ def format_personal_payment_reminder(member_name, period, stage, invoice=None):
     greeting = f"Hola, {member_name}.\n\n"
     if stage == "overdue_5d":
         message = (
-            f"{greeting}💳 Tu pago de membresía de {month_label} todavía aparece "
-            "como pendiente. Por favor ponte al corriente cuando puedas."
+            f"{greeting}💳 Pago de membresía de {month_label}: sigue pendiente.\n"
+            "Ponte al corriente cuando puedas."
         )
     elif stage == "daily":
         message = (
-            f"{greeting}💳 Tu pago de membresía de {month_label} todavía aparece "
-            "como pendiente. Por favor realiza tu pago cuando te sea posible."
+            f"{greeting}💳 Pago de membresía de {month_label}: pendiente.\n"
+            "Realiza tu pago cuando puedas."
         )
     else:
         message = (
@@ -1057,7 +1057,7 @@ def format_combined_personal_payment_reminder(
     lines = [
         f"Hola, {member_name}.",
         "",
-        "💳 Estos pagos de membresía aparecen pendientes:",
+        "💳 Pagos de membresía:",
     ]
     for period, stage in periods:
         month_label = format_payment_period(period)
@@ -1066,7 +1066,7 @@ def format_combined_personal_payment_reminder(
         elif stage == "first_day":
             detail = "comienza hoy"
         else:
-            detail = "sigue pendiente"
+            detail = "pendiente"
         lines.append(f"• {month_label}: {detail}")
     for period, _stage in periods:
         invoice = invoices.get(period)
@@ -1077,7 +1077,7 @@ def format_combined_personal_payment_reminder(
                 f"⚡ Factura Lightning para {format_payment_period(period)}:",
                 str(invoice_value),
             ])
-    lines.append("Por favor realiza tu pago cuando te sea posible.")
+    lines.append("Realiza los pagos indicados cuando puedas.")
     return "\n".join(lines)
 
 
