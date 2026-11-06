@@ -185,9 +185,6 @@ CONFIG = {
         'PAYMENT_VERIFICATION_ENABLED', False
     ),
     'PAYMENT_NWC_URI': os.getenv('PAYMENT_NWC_URI', '').strip(),
-    'PAYMENT_INVOICE_AMOUNT_MSAT': parse_env_int(
-        'PAYMENT_INVOICE_AMOUNT_MSAT', 0
-    ),
     'PAYMENT_INVOICE_EXPIRY_SECONDS': parse_env_int(
         'PAYMENT_INVOICE_EXPIRY_SECONDS', 259200
     ),
