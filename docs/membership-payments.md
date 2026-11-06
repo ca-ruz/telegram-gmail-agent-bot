@@ -172,3 +172,117 @@ current and next billing periods available after startup.
   `PAYMENT_ADVANCE_REMINDER_DAYS`; the schedule is evaluated in
   `America/Mexico_City`.
 - Check logs with `journalctl`; never paste `.env` or runtime JSON contents into public issues.
+
+## Future Payment Automation
+
+Issue #16 is reserved for optional payment automation after the manual workflow
+has been tested in production. The recommended first implementation is a
+receive-only Nostr Wallet Connect (NWC) connection to a Core Lightning node,
+using the [Daywalker cln-nip47 plugin](https://github.com/daywalker90/cln-nip47).
+
+### Payment administrator setup
+
+The payment administrator does not need to install Alby Hub for this design.
+Alby's NWC relay is a relay service that can carry NIP-47 messages between the
+Core Lightning plugin and the bot. The current public relay endpoint is
+`wss://relay.getalby.com/v1`. Alby documents that the relay is intended for
+NWC wallet services and does not require relay authentication. See the
+[Alby NWC Relay guide](https://guides.getalby.com/developer-guide/developer-guide/nostr-wallet-connect-api/building-nwc-wallet-services/alby-nwc-relay).
+
+The node operator should:
+
+1. Confirm that the node is running Core Lightning on the intended network and
+   has enough inbound liquidity to receive the membership payments. See the
+   [Core Lightning receiving-payments FAQ](https://docs.corelightning.org/docs/faq).
+2. Install a release of `cln-nip47` that matches the node's architecture. The
+   plugin publishes binaries for common Linux architectures and can also be
+   built from source.
+3. Configure the plugin's `nip47-relays` option with
+   `wss://relay.getalby.com/v1`, or use another compatible relay if the
+   deployment later requires a private one.
+4. Start the plugin through Core Lightning and confirm it is active with the
+   Core Lightning `plugin list` command. See the [Core Lightning plugin
+   reference](https://docs.corelightning.org/reference/plugin).
+5. Create a dedicated connection for the bot with a descriptive label and a
+   zero spending budget:
+
+   ```text
+   lightning-cli nip47-create membership-bot 0
+   ```
+
+   Do not set an interval when creating a receive-only connection. The plugin
+   documents `budget_msat=0` as disabling outgoing payments for that connection.
+6. Transfer the generated NWC connection URI to the bot operator through a
+   secure channel. Treat it like a wallet credential: never paste it into an
+   issue, chat, log, screenshot, or committed file.
+7. Keep the connection dedicated to this bot. The plugin notes that NWC
+   notifications are delivered to all NWC connections, so unrelated clients
+   should not share this connection.
+
+The bot will use the connection for invoice creation and invoice lookup. It
+does not need the node's IP address, CLN RPC port, port forwarding, or direct
+RPC credentials. Both the node and bot connect to the relay, while the plugin
+uses the local CLN RPC interface on the node.
+
+The Daywalker plugin documents budget control and supported methods, but does
+not document a per-connection method allowlist in `nip47-create`. Therefore,
+`budget_msat=0` is the required spending safeguard; the bot must only call the
+receive-side methods it needs and the connection URI must remain secret. If a
+strict method allowlist is required later, that should be evaluated separately
+or enforced by a dedicated proxy.
+
+The public Alby relay is suitable for initial testing, but it is rate-limited
+and operated by a third party. A private relay can be introduced later for
+stronger operational independence. The relay transports encrypted NWC
+messages, but the bot must still reconcile invoice status with `lookup_invoice`
+after restarts or missed notifications.
+
+### Recommended flow
+
+1. Create one unique invoice for each active member and billing period.
+2. Send the invoice to the member by private message.
+3. Persist the invoice identifier, payment hash, member ID, billing period,
+   amount, creation time, expiration time, and current status.
+4. Detect settlement through the NWC `payment_received` notification when
+   available, then confirm the invoice with `lookup_invoice`.
+5. Mark the matching member and period as paid only after the node confirms the
+   invoice is settled.
+6. Reconcile unpaid and pending invoices after restarts so a missed
+   notification cannot leave a paid member marked as pending.
+
+The NWC connection should be scoped to `make_invoice` and `lookup_invoice`,
+with `get_info` and payment notifications enabled only if needed. It must not
+grant payment or other spending methods. A receive-only connection with
+`budget_msat=0` is the preferred setup. The NWC URI is a wallet credential and
+must remain only in the private `.env`; it must never be committed, logged, or
+included in tests.
+
+The [NIP-47 specification](https://github.com/nostr-protocol/nips/blob/master/47.md)
+defines the scoped wallet methods and invoice lookup states. Core Lightning's
+[`listinvoices` RPC](https://docs.corelightning.org/reference/listinvoices)
+also exposes invoice status, payment hash, expiration, and settlement data for
+reconciliation.
+
+### BOLT12 and zap receipts
+
+BOLT12 offers are reusable payment requests, but they are not required for the
+first automated membership workflow. They should be considered later, after the
+unique-invoice flow is stable and the desired recurring-payment behavior is
+clear. See the [BOLT12 specification](https://github.com/lightning/bolts/blob/master/12-offer-encoding.md).
+
+NIP-57 zap receipts are a separate integration. A generic invoice created by
+NWC does not automatically produce a zap receipt; zap receipts require the
+LNURL/NIP-57 flow and a signed zap request embedded in the invoice metadata.
+See the [NIP-57 specification](https://github.com/nostr-protocol/nips/blob/master/57.md).
+
+### Security and rollout requirements
+
+- Use a dedicated receive-only NWC connection and, where practical, a private
+  relay. The plugin documents that notifications are delivered to all NWC
+  connections, so unrelated connections should not be used for this workflow.
+- Keep manual payment controls available as a fallback during rollout.
+- Test unpaid, settled, expired, duplicate, late, wrong-amount, unmatched, and
+  restart-reconciliation cases with mocked NWC responses.
+- Perform a small real test payment before enabling automated membership billing.
+- Never mark an invoice paid from a screenshot, user-provided preimage, or
+  other unverified client input.
