@@ -5,3 +5,4 @@ google-auth-httplib2
 google-auth
 python-dotenv
 icalendar
+nostrwalletconnect==0.2.1

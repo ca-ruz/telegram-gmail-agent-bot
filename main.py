@@ -37,6 +37,7 @@ from core.imported_events import load_imported_events
 from core.notification_preferences import load_notification_preferences
 from core.telegram_metadata import load_telegram_metadata
 from core.membership_payments import (
+    check_payment_invoice_status,
     check_payment_reminders,
     current_billing_period,
     load_members,
@@ -161,6 +162,19 @@ CONFIG = {
     ),
     'PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS': parse_env_int(
         'PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS', 2
+    ),
+    'PAYMENT_VERIFICATION_ENABLED': parse_env_bool(
+        'PAYMENT_VERIFICATION_ENABLED', False
+    ),
+    'PAYMENT_NWC_URI': os.getenv('PAYMENT_NWC_URI', '').strip(),
+    'PAYMENT_INVOICE_AMOUNT_MSAT': parse_env_int(
+        'PAYMENT_INVOICE_AMOUNT_MSAT', 0
+    ),
+    'PAYMENT_INVOICE_EXPIRY_SECONDS': parse_env_int(
+        'PAYMENT_INVOICE_EXPIRY_SECONDS', 604800
+    ),
+    'PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS': parse_env_int(
+        'PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS', 300
     ),
     'ENABLE_COWORKING_NOTIFICATIONS': parse_env_bool(
         'ENABLE_COWORKING_NOTIFICATIONS', True
@@ -329,6 +343,9 @@ def main():
     async def payment_reminder_job(context):
         await check_payment_reminders(context, config=CONFIG, state=STATE)
 
+    async def payment_verification_job(context):
+        await check_payment_invoice_status(config=CONFIG, state=STATE)
+
     async def coworking_job(context):
         await check_coworking_notifications(context, config=CONFIG, state=STATE)
 
@@ -342,6 +359,16 @@ def main():
         job_queue.run_repeating(manual_promo_job, interval=interval_seconds, first=30)
     if CONFIG.get('ENABLE_PAYMENT_REMINDERS', True):
         job_queue.run_repeating(payment_reminder_job, interval=interval_seconds, first=40)
+    if CONFIG.get('PAYMENT_VERIFICATION_ENABLED', False):
+        verification_interval = max(
+            30,
+            CONFIG.get('PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS', 300),
+        )
+        job_queue.run_repeating(
+            payment_verification_job,
+            interval=verification_interval,
+            first=60,
+        )
     if CONFIG.get('ENABLE_COWORKING_NOTIFICATIONS', True):
         job_queue.run_repeating(coworking_job, interval=interval_seconds, first=50)
 

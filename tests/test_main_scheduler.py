@@ -104,6 +104,32 @@ def test_main_registers_only_enabled_notification_jobs():
     ]
 
 
+def test_main_registers_payment_verification_job_when_enabled():
+    """Invoice verification uses its own configured polling interval."""
+    application = FakeApplication()
+    builder = FakeApplicationBuilder(application)
+
+    with patch.object(main, "ApplicationBuilder", return_value=builder), patch.dict(
+        main.CONFIG,
+        {
+            "BOT_TOKEN": "test-token",
+            "CHECK_INTERVAL_MINUTES": 30,
+            "PAYMENT_VERIFICATION_ENABLED": True,
+            "PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS": 45,
+        },
+    ):
+        main.main()
+
+    assert application.job_queue.jobs[-2:] == [
+        {
+            "name": "payment_verification_job",
+            "interval": 45,
+            "first": 60,
+        },
+        {"name": "coworking_job", "interval": 1800, "first": 50},
+    ]
+
+
 def test_main_configures_public_and_admin_command_scopes():
     """Startup configures localized public commands and a private admin scope."""
     application = FakeApplication()
