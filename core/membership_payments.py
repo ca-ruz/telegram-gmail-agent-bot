@@ -599,6 +599,11 @@ async def get_or_create_payment_invoice(
             description=f"Pago de membresía {period}",
             expiry_seconds=expiry_seconds,
         )
+        returned_amount = _invoice_field(invoice, "amount_msat")
+        if returned_amount is None:
+            returned_amount = _invoice_field(invoice, "amount")
+        if _normalize_invoice_integer(returned_amount) != amount_msat:
+            raise ValueError("NWC returned an invoice with an unexpected amount.")
         normalized_state = record_payment_invoice(
             payment_state,
             period,
@@ -675,6 +680,36 @@ async def check_payment_invoice_status(config, state, now=None):
             ]
             for payment_hash in pending_hashes:
                 result["checked"] += 1
+                invoice = invoices[payment_hash]
+                expires_at = invoice.get("expires_at")
+                if (
+                    expires_at is not None
+                    and expires_at <= int(checked_at.timestamp())
+                ):
+                    try:
+                        normalized_state = update_payment_invoice(
+                            payment_state,
+                            period,
+                            member_id,
+                            payment_hash,
+                            state="expired",
+                            last_checked_at=checked_at,
+                        )
+                        _replace_payment_member_record(
+                            payment_state,
+                            normalized_state,
+                            period,
+                            member_id,
+                        )
+                        state_changed = True
+                    except (KeyError, ValueError):
+                        result["failed"] += 1
+                        logger.warning(
+                            "Could not expire membership invoice for %s in %s.",
+                            member_id,
+                            period,
+                        )
+                    continue
                 try:
                     status = await client.lookup_invoice(
                         payment_hash=payment_hash,
@@ -690,6 +725,13 @@ async def check_payment_invoice_status(config, state, now=None):
 
                 status_state = _normalized_invoice_status(status)
                 if str(getattr(status, "payment_hash", "")) != payment_hash:
+                    status_state = "unmatched"
+                status_amount = getattr(status, "amount_msat", None)
+                if (
+                    status_amount is not None
+                    and _normalize_invoice_integer(status_amount)
+                    != invoice.get("amount_msat")
+                ):
                     status_state = "unmatched"
 
                 settled_at = None

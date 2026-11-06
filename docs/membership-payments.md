@@ -133,6 +133,9 @@ verification job checks pending invoices using
 paid only after NWC reports that exact invoice as settled. Wallet errors,
 expired invoices, and hash mismatches do not mark a member paid, and the manual
 `/payments` workflow remains available.
+The amount returned by NWC must match `PAYMENT_INVOICE_AMOUNT_MSAT`; NWC
+amounts are handled in millisatoshis. Persisted expiry timestamps are enforced
+locally so stale invoices are closed without being treated as paid.
 
 Private reminders for each period are sent only when all of these conditions
 are true:
