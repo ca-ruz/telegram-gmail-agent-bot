@@ -9,6 +9,7 @@ from bot.handlers.admin import (
     handle_payment_period,
     handle_payment_review,
     handle_payment_status,
+    payment_review_keyboard,
 )
 from core.membership_payments import (
     PAYMENT_ADMIN_ROLE,
@@ -985,6 +986,35 @@ def test_payment_period_selector_switches_between_periods():
     buttons = query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard
     assert buttons[0][0].callback_data == "payment_period:2026-10"
     assert buttons[1][0].callback_data == "payment_period:2026-11"
+
+
+def test_payment_review_buttons_describe_actions_without_reusing_paid_marker():
+    """Review buttons distinguish selected periods from payment status actions."""
+    payment_state = {
+        "version": 2,
+        "periods": {
+            "2026-10": {
+                "members": {
+                    "member-001": {"status": "unpaid"},
+                    "member-002": {"status": "paid"},
+                }
+            },
+            "2026-11": {"members": {}},
+        },
+    }
+    members = {
+        "member-001": {"name": "Ada"},
+        "member-002": {"name": "Lin"},
+    }
+
+    keyboard = payment_review_keyboard(payment_state, members, "2026-10")
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+
+    assert labels[:2] == ["📅 2026-10", "2026-11"]
+    assert labels[2:] == [
+        "✅ Marcar pagado: Ada",
+        "↩ Marcar pendiente: Lin",
+    ]
 
 
 def test_payment_status_toggle_updates_only_selected_period(tmp_path):
