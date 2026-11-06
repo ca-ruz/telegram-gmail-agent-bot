@@ -28,11 +28,30 @@ def _config(tmp_path):
         "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
         "PAYMENT_VERIFICATION_ENABLED": True,
         "PAYMENT_NWC_URI": NWC_URI,
-        "PAYMENT_INVOICE_AMOUNT_MSAT": 25_000,
-        "PAYMENT_INVOICE_EXPIRY_SECONDS": 604_800,
+        "PAYMENT_INVOICE_EXPIRY_SECONDS": 259_200,
+        "PAYMENT_EXCHANGE_RATE_URL": "https://example.test/rate",
+        "PAYMENT_EXCHANGE_RATE_CACHE_FILE": str(tmp_path / "rate.json"),
+        "PAYMENT_EXCHANGE_RATE_MAX_AGE_SECONDS": 900,
+        "PAYMENT_EXCHANGE_RATE_TIMEOUT_SECONDS": 10,
         "PAYMENT_REMINDER_HOUR": 9,
         "PAYMENT_ADVANCE_REMINDER_DAYS": 3,
     }
+
+
+MEMBERSHIP_PLANS = {
+    "coworking": {"name": "Coworking space", "price_mxn": 1100},
+}
+
+
+class FakeMxnBtcRateProvider:
+    """Return a deterministic exchange rate without making an HTTP request."""
+
+    def __init__(self, *args, **kwargs):
+        """Accept production provider settings for the test double."""
+
+    def get_rate(self, now=None):
+        """Return the configured test rate in MXN per BTC."""
+        return 1_600_000
 
 
 class FakeNwcInvoiceClient:
@@ -63,7 +82,12 @@ def test_invoice_creation_is_reused_for_the_same_member_period(monkeypatch, tmp_
         "NwcInvoiceClient",
         FakeNwcInvoiceClient,
     )
-    member = build_member("Ada", 101)
+    monkeypatch.setattr(
+        membership_payments,
+        "MxnBtcRateProvider",
+        FakeMxnBtcRateProvider,
+    )
+    member = build_member("Ada", 101, "coworking")
     state = build_multi_period_payment_state(
         {"member-001": member},
         ["2026-11"],
@@ -78,6 +102,8 @@ def test_invoice_creation_is_reused_for_the_same_member_period(monkeypatch, tmp_
             "member-001",
             config,
             now=now,
+            member=member,
+            membership_plans=MEMBERSHIP_PLANS,
         )
     )
     second, second_created = asyncio.run(
@@ -87,6 +113,8 @@ def test_invoice_creation_is_reused_for_the_same_member_period(monkeypatch, tmp_
             "member-001",
             config,
             now=now,
+            member=member,
+            membership_plans=MEMBERSHIP_PLANS,
         )
     )
 
@@ -94,6 +122,14 @@ def test_invoice_creation_is_reused_for_the_same_member_period(monkeypatch, tmp_
     assert first_created is True
     assert second_created is False
     assert len(FakeNwcInvoiceClient.calls) == 1
+    assert FakeNwcInvoiceClient.calls[0][0] == 68_750_000
+    assert FakeNwcInvoiceClient.calls[0][1] == "Ada - membresía noviembre de 2026"
+    assert first["pricing_snapshot"] == {
+        "plan": "coworking",
+        "quantity": 1,
+        "amount_mxn": "1100",
+        "mxn_per_btc": "1600000",
+    }
 
 
 def test_due_private_reminder_includes_created_invoice(monkeypatch, tmp_path):
@@ -104,11 +140,17 @@ def test_due_private_reminder_includes_created_invoice(monkeypatch, tmp_path):
         "NwcInvoiceClient",
         FakeNwcInvoiceClient,
     )
+    monkeypatch.setattr(
+        membership_payments,
+        "MxnBtcRateProvider",
+        FakeMxnBtcRateProvider,
+    )
     bot = SimpleNamespace(send_message=AsyncMock())
     context = SimpleNamespace(bot=bot)
-    member = build_member("Ada", 101)
+    member = build_member("Ada", 101, "coworking")
     state = {
         "members": {"member-001": member},
+        "membership_plans": MEMBERSHIP_PLANS,
         "notification_preferences": {"101": {"payments": True}},
         "payment_state": build_multi_period_payment_state(
             {"member-001": member},
@@ -157,11 +199,17 @@ def test_invoice_failure_does_not_block_normal_private_reminder(
         "NwcInvoiceClient",
         FailingNwcInvoiceClient,
     )
+    monkeypatch.setattr(
+        membership_payments,
+        "MxnBtcRateProvider",
+        FakeMxnBtcRateProvider,
+    )
     bot = SimpleNamespace(send_message=AsyncMock())
     context = SimpleNamespace(bot=bot)
-    member = build_member("Ada", 101)
+    member = build_member("Ada", 101, "coworking")
     state = {
         "members": {"member-001": member},
+        "membership_plans": MEMBERSHIP_PLANS,
         "notification_preferences": {"101": {"payments": True}},
         "payment_state": build_multi_period_payment_state(
             {"member-001": member},
@@ -185,3 +233,71 @@ def test_invoice_failure_does_not_block_normal_private_reminder(
         "member-001"
     ]
     assert "payment_invoices" not in member_state
+
+
+def test_expired_invoice_is_replaced_with_a_new_priced_invoice(monkeypatch, tmp_path):
+    """An expired invoice is closed and replaced without losing its history."""
+
+    class RotatingNwcInvoiceClient:
+        """Return a different invoice identity after expiry."""
+
+        calls = 0
+
+        def __init__(self, connection_uri):
+            """Accept the configured wallet connection."""
+
+        async def make_invoice(self, *, amount_msat, description, expiry_seconds):
+            """Create a short-lived deterministic invoice for the test."""
+            type(self).calls += 1
+            invoice_number = type(self).calls
+            return NwcInvoice(
+                invoice=f"lnbc-test-{invoice_number}",
+                payment_hash=f"hash-test-{invoice_number}",
+                amount_msat=amount_msat,
+                expires_at=1 if invoice_number == 1 else 1_800_000_000,
+            )
+
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        RotatingNwcInvoiceClient,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "MxnBtcRateProvider",
+        FakeMxnBtcRateProvider,
+    )
+    member = build_member("Ada", 101, "coworking")
+    state = build_multi_period_payment_state(
+        {"member-001": member},
+        ["2026-11"],
+    )
+    config = _config(tmp_path)
+    first, _ = asyncio.run(
+        get_or_create_payment_invoice(
+            state,
+            "2026-11",
+            "member-001",
+            config,
+            now=datetime(2026, 11, 1, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+            member=member,
+            membership_plans=MEMBERSHIP_PLANS,
+        )
+    )
+    second, created = asyncio.run(
+        get_or_create_payment_invoice(
+            state,
+            "2026-11",
+            "member-001",
+            config,
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+            member=member,
+            membership_plans=MEMBERSHIP_PLANS,
+        )
+    )
+
+    member_state = state["periods"]["2026-11"]["members"]["member-001"]
+    assert created is True
+    assert first["payment_hash"] == "hash-test-1"
+    assert second["payment_hash"] == "hash-test-2"
+    assert member_state["payment_invoices"]["hash-test-1"]["state"] == "expired"

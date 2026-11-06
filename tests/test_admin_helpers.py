@@ -14,6 +14,11 @@ from bot.handlers.admin import (
 )
 from core.admin_status import build_admin_status_snapshot
 from core.membership_payments import build_member, current_billing_period, next_billing_period
+from core.membership_pricing import (
+    format_membership_plan,
+    load_membership_plans,
+    normalize_membership_quantity,
+)
 from tools.local.data_manager import load_json, save_json
 
 
@@ -212,6 +217,56 @@ def test_adding_member_synchronizes_current_and_next_payment_periods(tmp_path):
     }
     persisted = load_json(str(tmp_path / "payment_state.json"), {})
     assert "member-002" in persisted["periods"][current_period]["members"]
+
+
+def test_membership_pricing_normalizes_fractional_quantities(tmp_path):
+    """Plan definitions support reusable names and fractional office quantities."""
+    plans = load_membership_plans(str(tmp_path / "missing-plans.json"))
+
+    assert plans["coworking"]["price_mxn"] == 1100
+    assert normalize_membership_quantity("1.5") == 1.5
+    assert format_membership_plan(
+        {"membership_plan": "private_office", "membership_quantity": 1.5},
+        plans,
+    ) == "Private office x1.5"
+
+
+def test_adding_member_accepts_membership_plan_and_quantity(tmp_path):
+    """Member management stores the selected plan and fractional quantity."""
+    reply_text = AsyncMock()
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        message=SimpleNamespace(
+            text="/members add | Office Member | 549905746 | private-office | 1.5",
+            reply_text=reply_text,
+        ),
+    )
+    state = {
+        "members": {},
+        "membership_plans": {
+            "coworking": {"name": "Coworking space", "price_mxn": 1100},
+            "private_office": {"name": "Private office", "price_mxn": 5500},
+        },
+        "payment_state": {"version": 2, "periods": {}},
+    }
+    config = {
+        "MEMBERS_FILE": str(tmp_path / "members.json"),
+        "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
+    }
+
+    asyncio.run(
+        manage_members(
+            update,
+            SimpleNamespace(),
+            primary_admin_id=42,
+            payment_admin_id=0,
+            state=state,
+            config=config,
+        )
+    )
+
+    assert state["members"]["member-001"]["membership_plan"] == "private_office"
+    assert state["members"]["member-001"]["membership_quantity"] == 1.5
 
 
 def test_imported_event_label_includes_day_and_month():

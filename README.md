@@ -69,9 +69,15 @@ The membership payment workflow uses these additional variables:
 
 *   `PAYMENT_ADMIN_ID`: Optional Telegram user ID for the administrator who manages membership payments. The primary administrator retains access.
 *   `MEMBERS_FILE`: Runtime JSON file containing the member roster (default `data/members.json`).
+*   `MEMBERSHIP_PLANS_FILE`: JSON file containing plan names and MXN prices (default `data/membership_plans.json`).
 *   `PAYMENT_STATE_FILE`: Runtime JSON file containing the current monthly payment state (default `data/payment_state.json`).
 *   `MEMBERS_GROUP_ID`: Telegram chat ID for the group that receives anonymous public payment reminders.
 *   `GROUP_NOTIFICATION_CATEGORIES_FILE`: Runtime JSON file for per-group notification categories (default `data/group_notification_categories.json`).
+*   `PAYMENT_EXCHANGE_RATE_URL`: JSON endpoint returning the current MXN-per-BTC rate.
+*   `PAYMENT_EXCHANGE_RATE_CACHE_FILE`: Runtime cache file for the fetched rate (default `data/payment_exchange_rate.json`).
+*   `PAYMENT_EXCHANGE_RATE_MAX_AGE_SECONDS`: Maximum cache age before invoice creation fails closed (default `900`).
+*   `PAYMENT_EXCHANGE_RATE_TIMEOUT_SECONDS`: HTTP timeout for exchange-rate requests (default `10`).
+*   `PAYMENT_INVOICE_EXPIRY_SECONDS`: Lifetime of generated invoices (default `259200`, three days).
 *   `PAYMENT_REMINDER_HOUR`: Local reminder hour in `America/Mexico_City` (default `9`).
 *   `PAYMENT_ADVANCE_REMINDER_DAYS`: Days before a billing period for the advance reminder (default `3`).
 *   `ENABLE_PAYMENT_REMINDERS`: Set to `false` to disable scheduled payment reminders while retaining the roster and payment state.

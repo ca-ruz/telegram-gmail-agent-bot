@@ -23,7 +23,7 @@ NWC_URI = (
 
 def _invoice_state():
     """Build payment state with one pending invoice."""
-    member = build_member("Ada", 101)
+    member = build_member("Ada", 101, "coworking")
     payment_state = build_multi_period_payment_state(
         {"member-001": member},
         ["2026-11"],
@@ -47,8 +47,7 @@ def _config(tmp_path):
         "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
         "PAYMENT_VERIFICATION_ENABLED": True,
         "PAYMENT_NWC_URI": NWC_URI,
-        "PAYMENT_INVOICE_AMOUNT_MSAT": 25_000,
-        "PAYMENT_INVOICE_EXPIRY_SECONDS": 604_800,
+        "PAYMENT_INVOICE_EXPIRY_SECONDS": 259_200,
     }
 
 
@@ -66,6 +65,17 @@ class FakeNwcInvoiceClient:
         """Return the configured status for the requested payment hash."""
         self.calls.append(payment_hash)
         return self.status
+
+
+class FakeMxnBtcRateProvider:
+    """Return the fixed rate used by invoice creation tests."""
+
+    def __init__(self, *args, **kwargs):
+        """Accept production provider settings for the test double."""
+
+    def get_rate(self, now=None):
+        """Return a deterministic MXN-per-BTC rate."""
+        return 1_600_000
 
 
 def test_settled_invoice_marks_matching_member_period_paid(monkeypatch, tmp_path):
@@ -189,7 +199,12 @@ def test_invoice_creation_rejects_unexpected_amount(monkeypatch, tmp_path):
         "NwcInvoiceClient",
         WrongAmountNwcClient,
     )
-    member = build_member("Ada", 101)
+    monkeypatch.setattr(
+        membership_payments,
+        "MxnBtcRateProvider",
+        FakeMxnBtcRateProvider,
+    )
+    member = build_member("Ada", 101, "coworking")
     state = build_multi_period_payment_state(
         {"member-001": member},
         ["2026-11"],
@@ -201,6 +216,8 @@ def test_invoice_creation_rejects_unexpected_amount(monkeypatch, tmp_path):
             "2026-11",
             "member-001",
             _config(tmp_path),
+            member=member,
+            membership_plans={"coworking": {"price_mxn": 1100}},
         )
     )
 

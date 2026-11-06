@@ -10,6 +10,7 @@ Set these values in the private `.env` file:
 ```dotenv
 PAYMENT_ADMIN_ID=telegram_user_id_for_the_payment_admin
 MEMBERS_FILE=data/members.json
+MEMBERSHIP_PLANS_FILE=data/membership_plans.json
 PAYMENT_STATE_FILE=data/payment_state.json
 MEMBERS_GROUP_ID=-1001234567890
 PAYMENT_REMINDER_HOUR=9
@@ -18,8 +19,11 @@ PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS=2
 ENABLE_PAYMENT_REMINDERS=true
 PAYMENT_VERIFICATION_ENABLED=false
 PAYMENT_NWC_URI=
-PAYMENT_INVOICE_AMOUNT_MSAT=0
-PAYMENT_INVOICE_EXPIRY_SECONDS=604800
+PAYMENT_EXCHANGE_RATE_URL=https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=mxn
+PAYMENT_EXCHANGE_RATE_CACHE_FILE=data/payment_exchange_rate.json
+PAYMENT_EXCHANGE_RATE_MAX_AGE_SECONDS=900
+PAYMENT_EXCHANGE_RATE_TIMEOUT_SECONDS=10
+PAYMENT_INVOICE_EXPIRY_SECONDS=259200
 PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS=300
 ```
 
@@ -30,6 +34,11 @@ same as the general broadcast-group list.
 
 The reminder hour uses `America/Mexico_City`. The payment and member JSON files
 are runtime data and must remain outside Git.
+
+The repository includes `data/membership_plans.json.example` as a template.
+Copy it to the configured runtime path and edit the plan names and MXN prices
+when the community uses different plans. The plan key is the value stored on
+each member record.
 
 The advance reminder lead time defaults to three days. No `.env` change is
 required when using that default; set `PAYMENT_ADVANCE_REMINDER_DAYS` only if
@@ -61,7 +70,9 @@ The primary administrator or payment administrator can use `/members`:
 ```text
 /members list
 /members add | Name | Telegram ID
+/members add | Name | Telegram ID | Plan | Quantity
 /members update | member-id | Name | Telegram ID
+/members update | member-id | Name | Telegram ID | Plan | Quantity
 /members deactivate | member-id
 ```
 
@@ -126,16 +137,24 @@ private and never sent to the membership group or regular subscribers.
 
 Automated invoice verification is disabled by default. To enable it, set
 `PAYMENT_VERIFICATION_ENABLED=true`, provide the dedicated `PAYMENT_NWC_URI`,
-and set a positive `PAYMENT_INVOICE_AMOUNT_MSAT`. The bot creates or reuses one
-invoice per unpaid member and billing period in private reminders. A separate
-verification job checks pending invoices using
+and give each member a configured plan and quantity. The bot calculates the
+MXN total, converts it to millisatoshis using the configured MXN-per-BTC
+provider, and creates or reuses one invoice per unpaid member and billing
+period in private reminders. A separate verification job checks pending invoices using
 `PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS`; it marks the matching period as
 paid only after NWC reports that exact invoice as settled. Wallet errors,
 expired invoices, and hash mismatches do not mark a member paid, and the manual
 `/payments` workflow remains available.
-The amount returned by NWC must match `PAYMENT_INVOICE_AMOUNT_MSAT`; NWC
-amounts are handled in millisatoshis. Persisted expiry timestamps are enforced
-locally so stale invoices are closed without being treated as paid.
+The amount returned by NWC must match the amount calculated for that member and
+period. NWC amounts are handled in millisatoshis. Each invoice stores a pricing
+snapshot containing the plan, quantity, MXN total, and exchange rate used.
+Persisted expiry timestamps are enforced locally so expired invoices are closed
+and replaced without being treated as paid. The default invoice lifetime is
+three days; set `PAYMENT_INVOICE_EXPIRY_SECONDS` to change it.
+
+The exchange-rate cache is refreshed after `PAYMENT_EXCHANGE_RATE_MAX_AGE_SECONDS`
+(15 minutes by default). If the provider is unavailable and the cached rate is
+too old, invoice creation is skipped rather than using an unsafe stale rate.
 
 Private reminders for each period are sent only when all of these conditions
 are true:

@@ -9,8 +9,14 @@ from zoneinfo import ZoneInfo
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from core.group_notification_routing import get_group_targets
+from core.membership_exchange import (
+    MxnBtcRateProvider,
+    membership_price_mxn,
+    mxn_to_msat,
+)
 from core.nwc_client import NwcInvoiceClient
 from core.notification_preferences import is_notification_enabled
+from core.membership_pricing import normalize_membership_plan, normalize_membership_quantity
 from tools.local.data_manager import load_json, save_json
 
 
@@ -95,6 +101,9 @@ def _normalize_payment_invoice(raw_invoice):
     last_checked_at = raw_invoice.get("last_checked_at")
     if not isinstance(last_checked_at, str) or not last_checked_at:
         last_checked_at = None
+    pricing_snapshot = raw_invoice.get("pricing_snapshot")
+    if not isinstance(pricing_snapshot, dict):
+        pricing_snapshot = None
 
     return {
         "invoice": str(invoice),
@@ -105,6 +114,7 @@ def _normalize_payment_invoice(raw_invoice):
         "state": state,
         "settled_at": settled_at,
         "last_checked_at": last_checked_at,
+        "pricing_snapshot": pricing_snapshot,
     }
 
 
@@ -416,7 +426,12 @@ def _timestamp_string(value=None):
     return datetime.now(timezone.utc).isoformat()
 
 
-def build_payment_invoice_record(invoice, created_at=None):
+def build_payment_invoice_record(
+    invoice,
+    created_at=None,
+    pricing_snapshot=None,
+    expiry_seconds=None,
+):
     """Build a normalized persisted record from an NWC invoice response."""
     invoice_value = _invoice_field(invoice, "invoice")
     payment_hash = _invoice_field(invoice, "payment_hash")
@@ -428,6 +443,14 @@ def build_payment_invoice_record(invoice, created_at=None):
         raise ValueError("Invoice must include an invoice, payment hash, and amount.")
 
     expires_at = _normalize_invoice_integer(_invoice_field(invoice, "expires_at"))
+    if expires_at is None and expiry_seconds:
+        created_timestamp = _timestamp_string(created_at)
+        try:
+            expires_at = int(
+                datetime.fromisoformat(created_timestamp).timestamp()
+            ) + int(expiry_seconds)
+        except (TypeError, ValueError, OverflowError, OSError):
+            expires_at = None
     return {
         "invoice": str(invoice_value),
         "payment_hash": str(payment_hash),
@@ -437,6 +460,9 @@ def build_payment_invoice_record(invoice, created_at=None):
         "state": "pending",
         "settled_at": None,
         "last_checked_at": None,
+        "pricing_snapshot": pricing_snapshot
+        if isinstance(pricing_snapshot, dict)
+        else None,
     }
 
 
@@ -457,7 +483,15 @@ def get_active_payment_invoice(payment_state, period, member_id):
     return invoices.get(str(payment_hash))
 
 
-def record_payment_invoice(payment_state, period, member_id, invoice, created_at=None):
+def record_payment_invoice(
+    payment_state,
+    period,
+    member_id,
+    invoice,
+    created_at=None,
+    pricing_snapshot=None,
+    expiry_seconds=None,
+):
     """Attach one invoice to a member-period while preventing active duplicates."""
     normalized_state = migrate_payment_state(payment_state)
     period_key = _normalize_period_key(period)
@@ -472,7 +506,12 @@ def record_payment_invoice(payment_state, period, member_id, invoice, created_at
     if not isinstance(member_record, dict):
         raise KeyError(f"Payment member does not exist: {member_key}")
 
-    invoice_record = build_payment_invoice_record(invoice, created_at)
+    invoice_record = build_payment_invoice_record(
+        invoice,
+        created_at,
+        pricing_snapshot=pricing_snapshot,
+        expiry_seconds=expiry_seconds,
+    )
     payment_hash = invoice_record["payment_hash"]
     invoices = _normalize_payment_invoices(member_record.get("payment_invoices"))
     if payment_hash in invoices:
@@ -553,13 +592,45 @@ def _payment_invoice_settings(config):
 
     connection_uri = str(config.get("PAYMENT_NWC_URI", "")).strip()
     try:
-        amount_msat = int(config.get("PAYMENT_INVOICE_AMOUNT_MSAT", 0))
         expiry_seconds = int(config.get("PAYMENT_INVOICE_EXPIRY_SECONDS", 0))
     except (TypeError, ValueError):
         return None
-    if not connection_uri or amount_msat <= 0 or expiry_seconds <= 0:
+    if not connection_uri or expiry_seconds <= 0:
         return None
-    return connection_uri, amount_msat, expiry_seconds
+    return connection_uri, expiry_seconds
+
+
+def _member_invoice_pricing(member, membership_plans, config, now=None):
+    """Calculate an invoice amount and retain the rate used for that invoice."""
+    amount_mxn = membership_price_mxn(member, membership_plans)
+    rate_provider = MxnBtcRateProvider(
+        config.get("PAYMENT_EXCHANGE_RATE_URL", ""),
+        config.get(
+            "PAYMENT_EXCHANGE_RATE_CACHE_FILE",
+            "data/payment_exchange_rate.json",
+        ),
+        max_age_seconds=config.get("PAYMENT_EXCHANGE_RATE_MAX_AGE_SECONDS", 900),
+        timeout_seconds=config.get("PAYMENT_EXCHANGE_RATE_TIMEOUT_SECONDS", 10),
+    )
+    rate = rate_provider.get_rate(now)
+    amount_msat = mxn_to_msat(amount_mxn, rate)
+    return amount_msat, {
+        "plan": str(member.get("membership_plan", "")),
+        "quantity": member.get("membership_quantity", 1),
+        "amount_mxn": str(amount_mxn),
+        "mxn_per_btc": str(rate),
+    }
+
+
+def _invoice_is_expired(invoice, now=None):
+    """Return whether an invoice has passed its persisted expiry timestamp."""
+    expires_at = _normalize_invoice_integer(_invoice_field(invoice, "expires_at"))
+    if expires_at is None:
+        return False
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    return expires_at <= int(current_time.astimezone(timezone.utc).timestamp())
 
 
 def _replace_payment_member_record(payment_state, normalized_state, period, member_id):
@@ -582,6 +653,8 @@ async def get_or_create_payment_invoice(
     member_id,
     config,
     now=None,
+    member=None,
+    membership_plans=None,
 ):
     """Return a reusable invoice, creating and persisting one when necessary."""
     settings = _payment_invoice_settings(config)
@@ -589,14 +662,56 @@ async def get_or_create_payment_invoice(
         return None, False
 
     active_invoice = get_active_payment_invoice(payment_state, period, member_id)
+    if active_invoice and active_invoice.get("state") == "pending" and _invoice_is_expired(
+        active_invoice,
+        now,
+    ):
+        try:
+            normalized_state = update_payment_invoice(
+                payment_state,
+                period,
+                member_id,
+                active_invoice["payment_hash"],
+                state="expired",
+                last_checked_at=now,
+            )
+            _replace_payment_member_record(
+                payment_state,
+                normalized_state,
+                period,
+                member_id,
+            )
+        except (KeyError, ValueError):
+            logger.warning(
+                "Could not expire the previous membership invoice for %s in %s.",
+                member_id,
+                period,
+            )
+        active_invoice = None
     if active_invoice and active_invoice.get("state") in {"pending", "settled"}:
         return active_invoice, False
 
-    connection_uri, amount_msat, expiry_seconds = settings
+    connection_uri, expiry_seconds = settings
+    if not isinstance(member, dict) or not isinstance(membership_plans, dict):
+        logger.warning(
+            "Could not price membership invoice for %s in %s: missing member pricing data.",
+            member_id,
+            period,
+        )
+        return None, False
     try:
+        amount_msat, pricing_snapshot = _member_invoice_pricing(
+            member,
+            membership_plans,
+            config,
+            now=now,
+        )
         invoice = await NwcInvoiceClient(connection_uri).make_invoice(
             amount_msat=amount_msat,
-            description=f"Pago de membresía {period}",
+            description=(
+                f"{str(member.get('name', 'Miembro')).strip()} - "
+                f"membresía {format_payment_period(period)}"
+            ),
             expiry_seconds=expiry_seconds,
         )
         returned_amount = _invoice_field(invoice, "amount_msat")
@@ -610,6 +725,8 @@ async def get_or_create_payment_invoice(
             member_id,
             invoice,
             created_at=now,
+            pricing_snapshot=pricing_snapshot,
+            expiry_seconds=expiry_seconds,
         )
     except Exception:
         logger.warning(
@@ -654,7 +771,7 @@ async def check_payment_invoice_status(config, state, now=None):
     if not isinstance(payment_state.get("periods"), dict):
         return {"checked": 0, "settled": 0, "failed": 0}
 
-    connection_uri, _amount_msat, _expiry_seconds = settings
+    connection_uri, _expiry_seconds = settings
     client = NwcInvoiceClient(connection_uri)
     checked_at = now or datetime.now(timezone.utc)
     if checked_at.tzinfo is None:
@@ -727,11 +844,7 @@ async def check_payment_invoice_status(config, state, now=None):
                 if str(getattr(status, "payment_hash", "")) != payment_hash:
                     status_state = "unmatched"
                 status_amount = getattr(status, "amount_msat", None)
-                if (
-                    status_amount is not None
-                    and _normalize_invoice_integer(status_amount)
-                    != invoice.get("amount_msat")
-                ):
+                if _normalize_invoice_integer(status_amount) != invoice.get("amount_msat"):
                     status_state = "unmatched"
 
                 settled_at = None
@@ -1381,6 +1494,8 @@ async def _check_multi_period_payment_reminders(context, config, state, now):
                 entry["member_id"],
                 config,
                 now=now,
+                member=members.get(entry["member_id"]),
+                membership_plans=state.get("membership_plans", {}),
             )
             if invoice_created:
                 state_changed = True
@@ -1601,12 +1716,18 @@ async def check_payment_reminders(context, config, state, now=None):
         raise public_error
 
 
-def build_member(name, telegram_id):
-    """Build a normalized active member record."""
+def build_member(name, telegram_id, membership_plan="", membership_quantity=1):
+    """Build a normalized active member record with optional pricing metadata."""
+    try:
+        normalized_quantity = normalize_membership_quantity(membership_quantity)
+    except ValueError:
+        normalized_quantity = 1
     return {
         "name": name,
         "telegram_id": telegram_id,
         "active": True,
+        "membership_plan": normalize_membership_plan(membership_plan),
+        "membership_quantity": normalized_quantity,
     }
 
 

@@ -1,0 +1,10 @@
+{
+  "coworking": {
+    "name": "Coworking space",
+    "price_mxn": 1100
+  },
+  "private_office": {
+    "name": "Private office",
+    "price_mxn": 5500
+  }
+}
