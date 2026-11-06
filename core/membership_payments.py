@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from core.group_notification_routing import get_group_targets
+from core.nwc_client import NwcInvoiceClient
 from core.notification_preferences import is_notification_enabled
 from tools.local.data_manager import load_json, save_json
 
@@ -545,6 +546,72 @@ def update_payment_invoice(
     return normalized_state
 
 
+def _payment_invoice_settings(config):
+    """Return validated invoice settings, or ``None`` when automation is off."""
+    if not config.get("PAYMENT_VERIFICATION_ENABLED", False):
+        return None
+
+    connection_uri = str(config.get("PAYMENT_NWC_URI", "")).strip()
+    try:
+        amount_msat = int(config.get("PAYMENT_INVOICE_AMOUNT_MSAT", 0))
+        expiry_seconds = int(config.get("PAYMENT_INVOICE_EXPIRY_SECONDS", 0))
+    except (TypeError, ValueError):
+        return None
+    if not connection_uri or amount_msat <= 0 or expiry_seconds <= 0:
+        return None
+    return connection_uri, amount_msat, expiry_seconds
+
+
+async def get_or_create_payment_invoice(
+    payment_state,
+    period,
+    member_id,
+    config,
+    now=None,
+):
+    """Return a reusable invoice, creating and persisting one when necessary."""
+    settings = _payment_invoice_settings(config)
+    if settings is None:
+        return None, False
+
+    active_invoice = get_active_payment_invoice(payment_state, period, member_id)
+    if active_invoice and active_invoice.get("state") in {"pending", "settled"}:
+        return active_invoice, False
+
+    connection_uri, amount_msat, expiry_seconds = settings
+    try:
+        invoice = await NwcInvoiceClient(connection_uri).make_invoice(
+            amount_msat=amount_msat,
+            description=f"Pago de membresía {period}",
+            expiry_seconds=expiry_seconds,
+        )
+        normalized_state = record_payment_invoice(
+            payment_state,
+            period,
+            member_id,
+            invoice,
+            created_at=now,
+        )
+    except Exception:
+        logger.warning(
+            "Could not create a membership payment invoice for %s in %s.",
+            member_id,
+            period,
+        )
+        return None, False
+
+    period_key = _normalize_period_key(period)
+    current_member = payment_state["periods"][period_key]["members"][
+        str(member_id)
+    ]
+    normalized_member = normalized_state["periods"][period_key]["members"][
+        str(member_id)
+    ]
+    current_member.clear()
+    current_member.update(normalized_member)
+    return get_active_payment_invoice(payment_state, period, member_id), True
+
+
 def build_monthly_payment_state(members, period=None):
     """Build an unpaid payment state for active members in one billing period."""
     billing_period = period or current_billing_period()
@@ -762,25 +829,38 @@ def format_payment_reminder(period, stage):
     )
 
 
-def format_personal_payment_reminder(member_name, period, stage):
+def _append_payment_invoice(message, period, invoice):
+    """Append a plain-text Lightning invoice to a private reminder."""
+    invoice_value = _invoice_field(invoice, "invoice") if invoice else None
+    if not invoice_value:
+        return message
+    return (
+        f"{message}\n\n⚡ Factura Lightning para {format_payment_period(period)}:\n"
+        f"{invoice_value}"
+    )
+
+
+def format_personal_payment_reminder(member_name, period, stage, invoice=None):
     """Build a private payment reminder for one unpaid member."""
     month_label = format_payment_period(period)
     greeting = f"Hola, {member_name}.\n\n"
     if stage == "overdue_5d":
-        return (
+        message = (
             f"{greeting}💳 Tu pago de membresía de {month_label} todavía aparece "
             "como pendiente. Por favor ponte al corriente cuando puedas."
         )
-    if stage == "daily":
-        return (
+    elif stage == "daily":
+        message = (
             f"{greeting}💳 Tu pago de membresía de {month_label} todavía aparece "
             "como pendiente. Por favor realiza tu pago cuando te sea posible."
         )
-    return (
-        f"{greeting}💳 El periodo de membresía de {month_label} comenzó hoy.\n"
-        "Por favor realiza tu pago cuando te sea posible. Si ya pagaste, puedes "
-        "ignorar este mensaje."
-    )
+    else:
+        message = (
+            f"{greeting}💳 El periodo de membresía de {month_label} comenzó hoy.\n"
+            "Por favor realiza tu pago cuando te sea posible. Si ya pagaste, puedes "
+            "ignorar este mensaje."
+        )
+    return _append_payment_invoice(message, period, invoice)
 
 
 def format_combined_payment_reminder(periods):
@@ -799,8 +879,13 @@ def format_combined_payment_reminder(periods):
     return "\n".join(lines)
 
 
-def format_combined_personal_payment_reminder(member_name, periods):
+def format_combined_personal_payment_reminder(
+    member_name,
+    periods,
+    invoices=None,
+):
     """Build one private reminder for several unpaid billing periods."""
+    invoices = invoices if isinstance(invoices, dict) else {}
     lines = [
         f"Hola, {member_name}.",
         "",
@@ -815,6 +900,15 @@ def format_combined_personal_payment_reminder(member_name, periods):
         else:
             detail = "sigue pendiente"
         lines.append(f"• {month_label}: {detail}")
+    for period, _stage in periods:
+        invoice = invoices.get(period)
+        invoice_value = _invoice_field(invoice, "invoice") if invoice else None
+        if invoice_value:
+            lines.extend([
+                "",
+                f"⚡ Factura Lightning para {format_payment_period(period)}:",
+                str(invoice_value),
+            ])
     lines.append("Por favor realiza tu pago cuando te sea posible.")
     return "\n".join(lines)
 
@@ -1111,12 +1205,26 @@ async def _check_multi_period_payment_reminders(context, config, state, now):
     for telegram_id, entries in personal_deliveries.items():
         first_member = members.get(entries[0]["member_id"], {})
         member_name = str(first_member.get("name", ""))
+        invoices = {}
+        for entry in entries:
+            invoice, invoice_created = await get_or_create_payment_invoice(
+                payment_state,
+                entry["period"],
+                entry["member_id"],
+                config,
+                now=now,
+            )
+            if invoice_created:
+                state_changed = True
+            if invoice is not None:
+                invoices[entry["period"]] = invoice
         try:
             await context.bot.send_message(
                 chat_id=telegram_id,
                 text=format_combined_personal_payment_reminder(
                     member_name,
                     [(entry["period"], entry["stage"]) for entry in entries],
+                    invoices=invoices,
                 ),
             )
         except Exception:
