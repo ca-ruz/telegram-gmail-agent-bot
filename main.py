@@ -340,6 +340,7 @@ def main():
             BotCommand("calendario", "Subir calendario mensual"),
             BotCommand("members", "Administrar miembros"),
             BotCommand("payments", "Revisar pagos"),
+            BotCommand("paymenttest", "Probar pagos NWC"),
         ]
         if CONFIG['ADMIN_ID']:
             await application.bot.set_my_commands(

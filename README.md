@@ -78,11 +78,19 @@ The membership payment workflow uses these additional variables:
 *   `PAYMENT_EXCHANGE_RATE_MAX_AGE_SECONDS`: Maximum cache age before invoice creation fails closed (default `900`).
 *   `PAYMENT_EXCHANGE_RATE_TIMEOUT_SECONDS`: HTTP timeout for exchange-rate requests (default `10`).
 *   `PAYMENT_INVOICE_EXPIRY_SECONDS`: Lifetime of generated invoices (default `259200`, three days).
+*   `PAYMENT_TEST_INVOICE_AMOUNT_SATS`: Low-value primary-administrator test amount, capped at `100` sats.
+*   `PAYMENT_TEST_STATE_FILE`: Separate runtime file for test invoices (default `data/payment_test_state.json`).
 *   `PAYMENT_REMINDER_HOUR`: Local reminder hour in `America/Mexico_City` (default `9`).
 *   `PAYMENT_ADVANCE_REMINDER_DAYS`: Days before a billing period for the advance reminder (default `3`).
 *   `ENABLE_PAYMENT_REMINDERS`: Set to `false` to disable scheduled payment reminders while retaining the roster and payment state.
 
 The bot sends public payment reminders only to groups assigned to the `payments` category and private reminders only to active unpaid members whose payment notifications are enabled. Use `/groupnotifications` in the administrator chat to inspect or change group categories. Payment state, member data, notification preferences, logs, `.env`, and service-account credentials are runtime data and must not be committed.
+
+The primary administrator can use `/paymenttest` to create one isolated
+low-value NWC invoice and `/paymenttest status` to inspect it. The test amount
+is capped at 100 sats, is sent only to the administrator, and is stored outside
+the production membership payment state. A settled test invoice confirms the
+NWC connection and lookup flow but never marks a real membership as paid.
 
 5.  **Google Calendar Credentials:**
     Place your Service Account JSON file in the root directory and name it `google_calendar.json`. Ensure the service account email has **"Make changes to events"** permissions on your calendar.
