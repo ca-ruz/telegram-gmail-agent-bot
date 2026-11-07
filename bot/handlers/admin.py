@@ -46,6 +46,14 @@ from core.notification_preferences import (
     filter_users_by_category,
     is_notification_enabled,
 )
+from core.nwc_client import NwcInvoiceClient
+from core.payment_test_state import (
+    build_payment_test_state,
+    get_active_payment_test_invoice,
+    normalize_payment_test_amount_sats,
+    record_payment_test_invoice,
+    save_payment_test_state,
+)
 from core.membership_payments import (
     build_member,
     can_manage_payments,
@@ -279,6 +287,7 @@ async def help_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_i
         "/coffeehost add | Name | Telegram ID\n"
         "/coffeehost remove | Name or host-id\n"
         "/payments - Revisar el estado de pagos de membresía\n"
+        "/paymenttest - Crear una factura privada de prueba\n"
         "/broadcast - Send a manual message to all subscribers\n\n"
         "💡 <i>Tip: Puedes responder a un borrador o a un evento seleccionado para editarlo con AI.</i>",
         parse_mode=ParseMode.HTML
@@ -750,6 +759,103 @@ async def manage_members(
         "/members add | Nombre | Telegram ID | Plan | Cantidad\n"
         "/members update | member-id | Nombre | Telegram ID | Plan | Cantidad\n"
         "/members deactivate | member-id"
+    )
+
+
+async def payment_test(update, context, admin_id, state, config):
+    """Create or inspect one isolated low-value payment test invoice."""
+    if update.effective_user.id != admin_id:
+        return
+
+    raw_args = update.message.text.partition(" ")[2].strip().lower()
+    if raw_args not in {"", "status"}:
+        await update.message.reply_text(
+            "Uso: /paymenttest o /paymenttest status"
+        )
+        return
+
+    test_state = state.setdefault(
+        "payment_test_state",
+        build_payment_test_state(),
+    )
+    active_invoice = get_active_payment_test_invoice(test_state)
+    if raw_args == "status":
+        if active_invoice is None:
+            await update.message.reply_text("🧪 No hay una prueba de pago activa.")
+            return
+        await update.message.reply_text(
+            "🧪 Prueba de pago\n"
+            f"ID: {active_invoice.get('test_id', 'sin ID')}\n"
+            f"Estado: {active_invoice.get('state', 'desconocido')}\n"
+            f"Monto: {active_invoice.get('amount_sats', 0)} sats\n"
+            f"Hash: {active_invoice.get('payment_hash', 'sin hash')}"
+        )
+        return
+
+    if active_invoice is not None:
+        await update.message.reply_text(
+            "🧪 Ya hay una prueba de pago activa.\n"
+            "Usa /paymenttest status para consultar su estado."
+        )
+        return
+
+    if not config.get("PAYMENT_VERIFICATION_ENABLED", False):
+        await update.message.reply_text(
+            "❌ La verificación automática de pagos está desactivada."
+        )
+        return
+
+    connection_uri = str(config.get("PAYMENT_NWC_URI", "")).strip()
+    if not connection_uri:
+        await update.message.reply_text("❌ No hay una conexión NWC configurada.")
+        return
+
+    try:
+        amount_sats = normalize_payment_test_amount_sats(
+            config.get("PAYMENT_TEST_INVOICE_AMOUNT_SATS", 100)
+        )
+        expiry_seconds = int(config.get("PAYMENT_INVOICE_EXPIRY_SECONDS", 0))
+        if expiry_seconds <= 0:
+            raise ValueError("Invalid invoice expiry")
+    except ValueError:
+        await update.message.reply_text(
+            "❌ La configuración de la factura de prueba no es válida."
+        )
+        return
+
+    now = datetime.now(timezone.utc)
+    test_id = f"test-{now.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        invoice = await NwcInvoiceClient(connection_uri).make_invoice(
+            amount_msat=amount_sats * 1000,
+            description="Prueba de pago del bot",
+            expiry_seconds=expiry_seconds,
+        )
+        normalized_state = record_payment_test_invoice(
+            test_state,
+            invoice,
+            amount_sats,
+            test_id,
+            created_at=now,
+        )
+    except Exception:
+        logger.exception("Could not create isolated payment test invoice.")
+        await update.message.reply_text(
+            "❌ No se pudo crear la factura de prueba. Revisa los logs del servicio."
+        )
+        return
+
+    state["payment_test_state"] = normalized_state
+    save_payment_test_state(config["PAYMENT_TEST_STATE_FILE"], normalized_state)
+    invoice_value = normalized_state["active_invoice"]["invoice"]
+    await update.message.reply_text(
+        "🧪 Factura de prueba creada\n\n"
+        f"ID: {test_id}\n"
+        f"Monto: {amount_sats} sats ({amount_sats * 1000} msat)\n"
+        f"Expiración: {expiry_seconds} segundos\n\n"
+        f"{invoice_value}\n\n"
+        "Págala para probar la detección automática. Este pago no modifica "
+        "ninguna membresía real."
     )
 
 

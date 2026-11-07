@@ -15,6 +15,7 @@ from bot.handlers.admin import (
     linked_promo_cancel, handle_admin_photo, monthly_calendar, payments,
     handle_payment_review, handle_payment_period, handle_payment_status,
     handle_status_detail,
+    payment_test,
     manage_members,
     flyers, handle_imported_flyer_selection,
     handle_manual_promo_send_now, handle_manual_promo_test,
@@ -513,6 +514,13 @@ def main():
             primary_admin_id=CONFIG['ADMIN_ID'],
             payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
             state=STATE,
+        )))
+    app.add_handler(CommandHandler("paymenttest",
+        partial(
+            payment_test,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
         )))
     
     # Callback Handlers
