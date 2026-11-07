@@ -65,6 +65,8 @@ def _normalize_integer(value):
 
 def _timestamp_string(value=None):
     """Return a UTC ISO timestamp for a datetime or the current time."""
+    if isinstance(value, str) and value:
+        return value
     timestamp = value or datetime.now(timezone.utc)
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=timezone.utc)
@@ -206,4 +208,30 @@ def record_payment_test_invoice(state, invoice, amount_sats, test_id, created_at
     if active_invoice:
         normalized_state["history"].append(active_invoice)
     normalized_state["active_invoice"] = invoice_record
+    return normalized_state
+
+
+def update_payment_test_invoice(
+    state,
+    payment_hash,
+    *,
+    state_value=None,
+    settled_at=None,
+    last_checked_at=None,
+):
+    """Update the active test invoice without touching production payment state."""
+    normalized_state = normalize_payment_test_state(state)
+    invoice = normalized_state.get("active_invoice")
+    if not invoice or invoice.get("payment_hash") != str(payment_hash):
+        raise KeyError(f"Payment test invoice does not exist: {payment_hash}")
+
+    if state_value is not None:
+        normalized_state_value = str(state_value).lower()
+        if normalized_state_value not in PAYMENT_TEST_INVOICE_STATES:
+            raise ValueError(f"Unsupported payment test invoice state: {state_value}")
+        invoice["state"] = normalized_state_value
+    if settled_at is not None:
+        invoice["settled_at"] = _timestamp_string(settled_at)
+    if last_checked_at is not None:
+        invoice["last_checked_at"] = _timestamp_string(last_checked_at)
     return normalized_state

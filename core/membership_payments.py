@@ -17,6 +17,11 @@ from core.membership_exchange import (
 from core.nwc_client import NwcInvoiceClient
 from core.notification_preferences import is_notification_enabled
 from core.membership_pricing import normalize_membership_plan, normalize_membership_quantity
+from core.payment_test_state import (
+    get_active_payment_test_invoice,
+    save_payment_test_state,
+    update_payment_test_invoice,
+)
 from tools.local.data_manager import load_json, save_json
 
 
@@ -891,6 +896,90 @@ async def check_payment_invoice_status(config, state, now=None):
             payment_state,
         )
     return result
+
+
+async def check_payment_test_invoice_status(context, config, state, now=None):
+    """Poll the isolated test invoice without changing production payment state."""
+    settings = _payment_invoice_settings(config)
+    if settings is None:
+        return {"checked": 0, "settled": 0, "failed": 0}
+
+    test_state = state.setdefault("payment_test_state", {})
+    active_invoice = get_active_payment_test_invoice(test_state)
+    if not active_invoice or active_invoice.get("state") != "pending":
+        return {"checked": 0, "settled": 0, "failed": 0}
+
+    connection_uri, _expiry_seconds = settings
+    checked_at = now or datetime.now(timezone.utc)
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+    checked_at = checked_at.astimezone(timezone.utc)
+    payment_hash = active_invoice["payment_hash"]
+    expires_at = active_invoice.get("expires_at")
+    if expires_at is not None and expires_at <= int(checked_at.timestamp()):
+        normalized_state = update_payment_test_invoice(
+            test_state,
+            payment_hash,
+            state_value="expired",
+            last_checked_at=checked_at,
+        )
+        state["payment_test_state"] = normalized_state
+        save_payment_test_state(config["PAYMENT_TEST_STATE_FILE"], normalized_state)
+        return {"checked": 1, "settled": 0, "failed": 0}
+
+    try:
+        status = await NwcInvoiceClient(connection_uri).lookup_invoice(
+            payment_hash=payment_hash,
+        )
+    except Exception:
+        logger.warning("Could not check isolated payment test invoice.")
+        return {"checked": 1, "settled": 0, "failed": 1}
+
+    status_state = _normalized_invoice_status(status)
+    if str(getattr(status, "payment_hash", "")) != payment_hash:
+        status_state = "unmatched"
+    if _normalize_invoice_integer(getattr(status, "amount_msat", None)) != (
+        active_invoice.get("amount_msat")
+    ):
+        status_state = "unmatched"
+
+    settled_at = None
+    if status_state == "settled":
+        settled_at = _invoice_status_timestamp(
+            getattr(status, "settled_at", None),
+            checked_at,
+        )
+    normalized_state = update_payment_test_invoice(
+        test_state,
+        payment_hash,
+        state_value=status_state,
+        settled_at=settled_at,
+        last_checked_at=checked_at,
+    )
+    state["payment_test_state"] = normalized_state
+    save_payment_test_state(config["PAYMENT_TEST_STATE_FILE"], normalized_state)
+
+    if status_state == "settled":
+        admin_id = _normalize_user_id(config.get("ADMIN_ID"))
+        if admin_id is not None:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=(
+                        "✅ La factura de prueba fue pagada correctamente.\n"
+                        f"Monto: {active_invoice['amount_sats']} sats\n"
+                        f"Hash: {payment_hash}\n\n"
+                        "Este resultado no modificó ninguna membresía real."
+                    ),
+                )
+            except Exception:
+                logger.exception("Could not notify the primary administrator about payment test.")
+
+    return {
+        "checked": 1,
+        "settled": 1 if status_state == "settled" else 0,
+        "failed": 0,
+    }
 
 
 def build_monthly_payment_state(members, period=None):

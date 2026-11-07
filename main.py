@@ -44,6 +44,7 @@ from core.payment_test_state import (
 )
 from core.membership_payments import (
     check_payment_invoice_status,
+    check_payment_test_invoice_status,
     check_payment_reminders,
     current_billing_period,
     load_members,
@@ -375,6 +376,11 @@ def main():
 
     async def payment_verification_job(context):
         await check_payment_invoice_status(config=CONFIG, state=STATE)
+        await check_payment_test_invoice_status(
+            context,
+            config=CONFIG,
+            state=STATE,
+        )
 
     async def coworking_job(context):
         await check_coworking_notifications(context, config=CONFIG, state=STATE)
