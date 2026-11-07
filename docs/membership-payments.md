@@ -24,6 +24,8 @@ PAYMENT_EXCHANGE_RATE_CACHE_FILE=data/payment_exchange_rate.json
 PAYMENT_EXCHANGE_RATE_MAX_AGE_SECONDS=900
 PAYMENT_EXCHANGE_RATE_TIMEOUT_SECONDS=10
 PAYMENT_INVOICE_EXPIRY_SECONDS=259200
+PAYMENT_TEST_INVOICE_AMOUNT_SATS=100
+PAYMENT_TEST_STATE_FILE=data/payment_test_state.json
 PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS=300
 ```
 
@@ -62,6 +64,33 @@ scheduler check as the public reminder.
 
 If `MEMBERS_GROUP_ID` is empty or zero, public reminders are skipped. Personal
 reminders can still be enabled later when the scheduler is configured.
+
+## Testing NWC Payment Automation
+
+Before allowing the bot to create invoices for members, the primary
+administrator can run this private test:
+
+```text
+/paymenttest
+```
+
+The bot creates one low-value invoice using the configured NWC connection and
+sends it only to the primary administrator. The amount defaults to 100 sats
+and values above 100 sats are rejected. The test invoice is stored in
+`data/payment_test_state.json`, separate from `data/payment_state.json`.
+
+After paying the invoice, the existing verification job checks it using NWC.
+Use this command to inspect the current result:
+
+```text
+/paymenttest status
+```
+
+The bot sends a private success message after settlement. A successful test
+does not mark any real member or billing period as paid, does not send a group
+message, and does not trigger member reminders. It only confirms invoice
+creation, payment lookup, exact amount validation, settlement detection, and
+expiry handling. Keep the NWC URI private during the test.
 
 ## Managing Members
 

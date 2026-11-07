@@ -15,6 +15,7 @@ from bot.handlers.admin import (
     linked_promo_cancel, handle_admin_photo, monthly_calendar, payments,
     handle_payment_review, handle_payment_period, handle_payment_status,
     handle_status_detail,
+    payment_test,
     manage_members,
     flyers, handle_imported_flyer_selection,
     handle_manual_promo_send_now, handle_manual_promo_test,
@@ -37,8 +38,13 @@ from core.imported_events import load_imported_events
 from core.notification_preferences import load_notification_preferences
 from core.telegram_metadata import load_telegram_metadata
 from core.membership_pricing import load_membership_plans
+from core.payment_test_state import (
+    load_payment_test_state,
+    parse_payment_test_amount_sats,
+)
 from core.membership_payments import (
     check_payment_invoice_status,
+    check_payment_test_invoice_status,
     check_payment_reminders,
     current_billing_period,
     load_members,
@@ -185,6 +191,12 @@ CONFIG = {
         'PAYMENT_VERIFICATION_ENABLED', False
     ),
     'PAYMENT_NWC_URI': os.getenv('PAYMENT_NWC_URI', '').strip(),
+    'PAYMENT_TEST_INVOICE_AMOUNT_SATS': parse_payment_test_amount_sats(
+        os.getenv('PAYMENT_TEST_INVOICE_AMOUNT_SATS', '100')
+    ),
+    'PAYMENT_TEST_STATE_FILE': os.getenv(
+        'PAYMENT_TEST_STATE_FILE', 'data/payment_test_state.json'
+    ),
     'PAYMENT_INVOICE_EXPIRY_SECONDS': parse_env_int(
         'PAYMENT_INVOICE_EXPIRY_SECONDS', 259200
     ),
@@ -225,6 +237,7 @@ if isinstance(raw_notified, list):
 
 members = load_members(CONFIG['MEMBERS_FILE'])
 membership_plans = load_membership_plans(CONFIG['MEMBERSHIP_PLANS_FILE'])
+payment_test_state = load_payment_test_state(CONFIG['PAYMENT_TEST_STATE_FILE'])
 payment_state = synchronize_multi_period_payment_state(
     load_multi_period_payment_state(CONFIG['PAYMENT_STATE_FILE']),
     members,
@@ -262,6 +275,7 @@ STATE = {
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
     'members': members,
     'membership_plans': membership_plans,
+    'payment_test_state': payment_test_state,
     'payment_state': payment_state,
     'coworking': load_coworking_state(CONFIG['COWORKING_STATE_FILE']),
 }
@@ -326,6 +340,7 @@ def main():
             BotCommand("calendario", "Subir calendario mensual"),
             BotCommand("members", "Administrar miembros"),
             BotCommand("payments", "Revisar pagos"),
+            BotCommand("paymenttest", "Probar pagos NWC"),
         ]
         if CONFIG['ADMIN_ID']:
             await application.bot.set_my_commands(
@@ -362,6 +377,11 @@ def main():
 
     async def payment_verification_job(context):
         await check_payment_invoice_status(config=CONFIG, state=STATE)
+        await check_payment_test_invoice_status(
+            context,
+            config=CONFIG,
+            state=STATE,
+        )
 
     async def coworking_job(context):
         await check_coworking_notifications(context, config=CONFIG, state=STATE)
@@ -501,6 +521,13 @@ def main():
             primary_admin_id=CONFIG['ADMIN_ID'],
             payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
             state=STATE,
+        )))
+    app.add_handler(CommandHandler("paymenttest",
+        partial(
+            payment_test,
+            admin_id=CONFIG['ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
         )))
     
     # Callback Handlers
