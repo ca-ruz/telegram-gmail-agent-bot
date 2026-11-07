@@ -37,6 +37,10 @@ from core.imported_events import load_imported_events
 from core.notification_preferences import load_notification_preferences
 from core.telegram_metadata import load_telegram_metadata
 from core.membership_pricing import load_membership_plans
+from core.payment_test_state import (
+    load_payment_test_state,
+    parse_payment_test_amount_sats,
+)
 from core.membership_payments import (
     check_payment_invoice_status,
     check_payment_reminders,
@@ -185,6 +189,12 @@ CONFIG = {
         'PAYMENT_VERIFICATION_ENABLED', False
     ),
     'PAYMENT_NWC_URI': os.getenv('PAYMENT_NWC_URI', '').strip(),
+    'PAYMENT_TEST_INVOICE_AMOUNT_SATS': parse_payment_test_amount_sats(
+        os.getenv('PAYMENT_TEST_INVOICE_AMOUNT_SATS', '100')
+    ),
+    'PAYMENT_TEST_STATE_FILE': os.getenv(
+        'PAYMENT_TEST_STATE_FILE', 'data/payment_test_state.json'
+    ),
     'PAYMENT_INVOICE_EXPIRY_SECONDS': parse_env_int(
         'PAYMENT_INVOICE_EXPIRY_SECONDS', 259200
     ),
@@ -225,6 +235,7 @@ if isinstance(raw_notified, list):
 
 members = load_members(CONFIG['MEMBERS_FILE'])
 membership_plans = load_membership_plans(CONFIG['MEMBERSHIP_PLANS_FILE'])
+payment_test_state = load_payment_test_state(CONFIG['PAYMENT_TEST_STATE_FILE'])
 payment_state = synchronize_multi_period_payment_state(
     load_multi_period_payment_state(CONFIG['PAYMENT_STATE_FILE']),
     members,
@@ -262,6 +273,7 @@ STATE = {
     'coffee_host_schedule': load_coffee_schedule(CONFIG['COFFEE_HOST_SCHEDULE_FILE']),
     'members': members,
     'membership_plans': membership_plans,
+    'payment_test_state': payment_test_state,
     'payment_state': payment_state,
     'coworking': load_coworking_state(CONFIG['COWORKING_STATE_FILE']),
 }
