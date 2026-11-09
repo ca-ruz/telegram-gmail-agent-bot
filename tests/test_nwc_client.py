@@ -6,6 +6,7 @@ import pytest
 
 from core.nwc_client import (
     InvalidNwcUriError,
+    NwcClientError,
     NwcInvoiceClient,
     NwcTransportError,
     redact_nwc_uri,
@@ -178,6 +179,21 @@ def test_lookup_invoice_normalizes_settled_response():
     assert status.amount_msat == 25_000
     assert status.settled_at == 1_800_000_100
     assert status.is_settled is True
+
+
+def test_lookup_invoice_rejects_response_without_payment_hash():
+    """An incomplete lookup response cannot inherit the requested hash."""
+    session = FakeSession(
+        lookup_response={
+            "state": "settled",
+            "amount": 25_000,
+            "settled_at": 1_800_000_100,
+        }
+    )
+    client = NwcInvoiceClient(NWC_URI, client_factory=lambda _: session)
+
+    with pytest.raises(NwcClientError, match="payment_hash"):
+        asyncio.run(client.lookup_invoice(payment_hash="hash-001"))
 
 
 def test_transport_errors_do_not_include_connection_uri():

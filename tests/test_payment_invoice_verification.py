@@ -147,6 +147,38 @@ def test_pending_invoice_is_checked_but_member_remains_unpaid(monkeypatch, tmp_p
     )
 
 
+def test_mismatched_hash_never_marks_membership_invoice_paid(monkeypatch, tmp_path):
+    """A settled response for another invoice remains unmatched."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash="another-invoice",
+        state="settled",
+        amount_msat=25_000,
+        settled_at=1_800_000_100,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        FakeNwcInvoiceClient,
+    )
+    state = {"payment_state": _invoice_state()}
+
+    result = asyncio.run(
+        check_payment_invoice_status(
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    member = state["payment_state"]["periods"]["2026-11"]["members"][
+        "member-001"
+    ]
+    assert result == {"checked": 1, "settled": 0, "failed": 0}
+    assert member["status"] == "unpaid"
+    assert member["payment_invoices"]["hash-test-invoice"]["state"] == "unmatched"
+
+
 def test_expired_invoice_is_closed_without_a_wallet_lookup(monkeypatch, tmp_path):
     """A persisted expiry prevents stale invoices from being queried forever."""
     FakeNwcInvoiceClient.calls = []
