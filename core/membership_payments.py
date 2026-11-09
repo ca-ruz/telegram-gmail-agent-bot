@@ -1250,6 +1250,49 @@ def _append_payment_invoice(message, period, invoice):
     )
 
 
+def _format_invoice_amount(amount_msat):
+    """Format a positive millisatoshi amount for a user-facing message."""
+    normalized_amount = _normalize_invoice_integer(amount_msat)
+    if normalized_amount is None:
+        return "no disponible"
+    whole_sats, remainder_msat = divmod(normalized_amount, 1000)
+    if remainder_msat == 0:
+        sats_label = str(whole_sats)
+    else:
+        sats_label = f"{whole_sats}.{remainder_msat:03d}".rstrip("0")
+    return f"{sats_label} sats ({normalized_amount} msat)"
+
+
+def _format_invoice_expiry(expires_at):
+    """Format an invoice expiry timestamp in the community timezone."""
+    normalized_expiry = _normalize_invoice_integer(expires_at)
+    if normalized_expiry is None:
+        return "no disponible"
+    try:
+        expiry_time = datetime.fromtimestamp(
+            normalized_expiry,
+            timezone.utc,
+        ).astimezone(PAYMENT_TIMEZONE)
+    except (OverflowError, OSError, ValueError):
+        return "no disponible"
+    return expiry_time.strftime("%d/%m/%Y %H:%M")
+
+
+def format_payment_invoice_caption(period, invoice):
+    """Build a QR caption with payment details and a copyable invoice."""
+    invoice_value = _invoice_field(invoice, "invoice") if invoice else None
+    if not invoice_value:
+        return None
+    return "\n".join([
+        f"💳 Pago de membresía: {format_payment_period(period)}",
+        f"Monto: {_format_invoice_amount(_invoice_field(invoice, 'amount_msat'))}",
+        f"Expira: {_format_invoice_expiry(_invoice_field(invoice, 'expires_at'))}",
+        "",
+        "Escanea el código QR o copia esta factura Lightning:",
+        str(invoice_value),
+    ])
+
+
 def format_personal_payment_reminder(member_name, period, stage, invoice=None):
     """Build a private payment reminder for one unpaid member."""
     month_label = format_payment_period(period)
