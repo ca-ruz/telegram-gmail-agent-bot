@@ -14,6 +14,10 @@ NWC_URI = (
     "nostr+walletconnect://wallet-key?"
     "relay=wss%3A%2F%2Frelay.example&secret=test-secret"
 )
+TEST_PAYMENT_HASH = (
+    "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
+)
+TEST_PAYMENT_PREIMAGE = "00" * 32
 
 
 def _test_state(expires_at=1_800_000_000):
@@ -22,7 +26,7 @@ def _test_state(expires_at=1_800_000_000):
         build_payment_test_state(),
         {
             "invoice": "lnbc-payment-test",
-            "payment_hash": "payment-test-hash",
+            "payment_hash": TEST_PAYMENT_HASH,
             "amount_msat": 100_000,
             "expires_at": expires_at,
         },
@@ -70,10 +74,11 @@ def test_settled_test_invoice_notifies_admin_without_changing_production_state(
     """Settlement updates only test state and sends a private confirmation."""
     FakeNwcInvoiceClient.calls = []
     FakeNwcInvoiceClient.status = NwcInvoiceStatus(
-        payment_hash="payment-test-hash",
+        payment_hash=TEST_PAYMENT_HASH,
         state="settled",
         amount_msat=100_000,
         settled_at=1_800_000_100,
+        preimage=TEST_PAYMENT_PREIMAGE,
     )
     monkeypatch.setattr(
         membership_payments,
@@ -96,7 +101,7 @@ def test_settled_test_invoice_notifies_admin_without_changing_production_state(
     )
 
     assert result == {"checked": 1, "settled": 1, "failed": 0}
-    assert FakeNwcInvoiceClient.calls == ["payment-test-hash"]
+    assert FakeNwcInvoiceClient.calls == [TEST_PAYMENT_HASH]
     assert state["payment_test_state"]["active_invoice"]["state"] == "settled"
     assert state["payment_state"] == {"version": 2, "periods": {}}
     assert "no modificó ninguna membresía real" in (
@@ -111,7 +116,7 @@ def test_pending_test_invoice_records_last_check_without_notification(
     """Pending test invoices remain pending and do not notify the administrator."""
     FakeNwcInvoiceClient.calls = []
     FakeNwcInvoiceClient.status = NwcInvoiceStatus(
-        payment_hash="payment-test-hash",
+        payment_hash=TEST_PAYMENT_HASH,
         state="pending",
         amount_msat=100_000,
         settled_at=None,
@@ -139,11 +144,45 @@ def test_pending_test_invoice_records_last_check_without_notification(
     assert context.bot.send_message.await_count == 0
 
 
+def test_settled_test_invoice_without_preimage_stays_unmatched(
+    monkeypatch,
+    tmp_path,
+):
+    """A settled test response without proof cannot notify the administrator."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=100_000,
+        settled_at=1_800_000_100,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        FakeNwcInvoiceClient,
+    )
+    context = _context()
+    state = {"payment_test_state": _test_state()}
+
+    result = asyncio.run(
+        membership_payments.check_payment_test_invoice_status(
+            context,
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert result == {"checked": 1, "settled": 0, "failed": 0}
+    assert state["payment_test_state"]["active_invoice"]["state"] == "unmatched"
+    assert context.bot.send_message.await_count == 0
+
+
 def test_wrong_test_invoice_amount_becomes_unmatched(monkeypatch, tmp_path):
     """A settled response with a wrong amount cannot pass the test."""
     FakeNwcInvoiceClient.calls = []
     FakeNwcInvoiceClient.status = NwcInvoiceStatus(
-        payment_hash="payment-test-hash",
+        payment_hash=TEST_PAYMENT_HASH,
         state="settled",
         amount_msat=99_000,
         settled_at=1_800_000_100,
@@ -174,7 +213,7 @@ def test_missing_test_invoice_amount_becomes_unmatched(monkeypatch, tmp_path):
     """A settled response without an amount cannot pass the test."""
     FakeNwcInvoiceClient.calls = []
     FakeNwcInvoiceClient.status = NwcInvoiceStatus(
-        payment_hash="payment-test-hash",
+        payment_hash=TEST_PAYMENT_HASH,
         state="settled",
         amount_msat=None,
         settled_at=1_800_000_100,
@@ -236,7 +275,7 @@ def test_unknown_test_invoice_state_becomes_unmatched(monkeypatch, tmp_path):
     """An unknown wallet state cannot trigger a paid confirmation."""
     FakeNwcInvoiceClient.calls = []
     FakeNwcInvoiceClient.status = NwcInvoiceStatus(
-        payment_hash="payment-test-hash",
+        payment_hash=TEST_PAYMENT_HASH,
         state="mysterious",
         amount_msat=100_000,
         settled_at=1_800_000_100,
