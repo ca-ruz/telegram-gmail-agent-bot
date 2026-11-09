@@ -163,7 +163,11 @@ def _integer_field_alias(
     return None
 
 
-def _normalize_invoice(payload: Any) -> NwcInvoice:
+def _normalize_invoice(
+    payload: Any,
+    *,
+    fallback_amount_msat: int | None = None,
+) -> NwcInvoice:
     """Normalize an invoice response and require its payment identity."""
     invoice = _field(payload, "invoice")
     payment_hash = _field(payload, "payment_hash")
@@ -172,8 +176,10 @@ def _normalize_invoice(payload: Any) -> NwcInvoice:
     amount_msat = _integer_field_alias(
         payload,
         ("amount", "amount_msat"),
-        required=True,
+        required=fallback_amount_msat is None,
     )
+    if amount_msat is None:
+        amount_msat = fallback_amount_msat
     return NwcInvoice(
         invoice=str(invoice),
         payment_hash=str(payment_hash),
@@ -224,7 +230,10 @@ class NwcInvoiceClient:
                     description=description,
                     expiry=expiry_seconds,
                 )
-            return _normalize_invoice(response)
+            return _normalize_invoice(
+                response,
+                fallback_amount_msat=amount_msat,
+            )
         except NwcClientError:
             raise
         except Exception as exc:
