@@ -55,8 +55,10 @@ Open a private chat with the bot and send:
 /paymenttest
 ```
 
-Only the primary administrator can use this command. The bot should send a
-private invoice for the configured test amount.
+Only the primary administrator can use this command. The bot sends a QR code
+and the full invoice text for the configured test amount.
+
+If QR generation or delivery fails, the bot still sends the full invoice text.
 
 The command does not require a membership plan and does not modify November's
 real payment status.

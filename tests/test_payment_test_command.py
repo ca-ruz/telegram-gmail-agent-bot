@@ -39,7 +39,11 @@ def _update(text="/paymenttest", user_id=42):
     """Build a minimal Telegram update for the command handler."""
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=user_id),
-        message=SimpleNamespace(text=text, reply_text=AsyncMock()),
+        message=SimpleNamespace(
+            text=text,
+            reply_photo=AsyncMock(),
+            reply_text=AsyncMock(),
+        ),
     )
 
 
@@ -72,6 +76,29 @@ def test_primary_admin_receives_only_the_isolated_test_invoice(monkeypatch, tmp_
     assert "lnbc-payment-test" in update.message.reply_text.await_args.args[0]
     assert state["payment_state"] == {"version": 2, "periods": {}}
     assert state["payment_test_state"]["active_invoice"]["amount_sats"] == 100
+    update.message.reply_photo.assert_awaited_once()
+
+
+def test_paymenttest_keeps_text_fallback_when_qr_generation_fails(
+    monkeypatch,
+    tmp_path,
+):
+    """A QR failure still delivers the complete copyable invoice."""
+    FakeNwcInvoiceClient.calls = []
+    monkeypatch.setattr(admin, "NwcInvoiceClient", FakeNwcInvoiceClient)
+
+    def fail_qr(invoice):
+        """Simulate a QR rendering failure."""
+        raise ValueError("invalid invoice")
+
+    monkeypatch.setattr(admin, "build_invoice_qr", fail_qr)
+    update = _update()
+    state = {"payment_test_state": build_payment_test_state()}
+
+    asyncio.run(admin.payment_test(update, SimpleNamespace(), 42, state, _config(tmp_path)))
+
+    update.message.reply_photo.assert_not_awaited()
+    assert "lnbc-payment-test" in update.message.reply_text.await_args.args[0]
 
 
 def test_paymenttest_reuses_active_invoice_and_status_reports_it(monkeypatch, tmp_path):

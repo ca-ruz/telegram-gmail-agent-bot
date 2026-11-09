@@ -67,6 +67,7 @@ def test_payment_test_flow_creates_then_verifies_without_production_mutation(
         effective_user=SimpleNamespace(id=42),
         message=SimpleNamespace(
             text="/paymenttest",
+            reply_photo=AsyncMock(),
             reply_text=AsyncMock(),
         ),
     )
