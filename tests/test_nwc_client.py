@@ -10,6 +10,7 @@ from core.nwc_client import (
     NwcInvoiceClient,
     NwcTransportError,
     redact_nwc_uri,
+    is_valid_payment_preimage,
     validate_nwc_uri,
 )
 
@@ -168,6 +169,7 @@ def test_lookup_invoice_normalizes_settled_response():
             "state": "settled",
             "amount": "25000msat",
             "settled_at": 1_800_000_100,
+            "preimage": "00" * 32,
         }
     )
     client = NwcInvoiceClient(NWC_URI, client_factory=lambda _: session)
@@ -178,7 +180,30 @@ def test_lookup_invoice_normalizes_settled_response():
     assert status.state == "settled"
     assert status.amount_msat == 25_000
     assert status.settled_at == 1_800_000_100
+    assert status.preimage == "00" * 32
     assert status.is_settled is True
+
+
+def test_payment_preimage_proves_payment_hash():
+    """A valid 32-byte preimage hashes to the reported payment hash."""
+    assert is_valid_payment_preimage(
+        "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925",
+        "00" * 32,
+    ) is True
+
+
+@pytest.mark.parametrize(
+    ("payment_hash", "preimage"),
+    [
+        ("66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925", None),
+        ("66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925", "11" * 32),
+        ("not-a-hash", "00" * 32),
+        ("66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925", "invalid"),
+    ],
+)
+def test_invalid_payment_preimage_does_not_prove_payment(payment_hash, preimage):
+    """Missing or mismatched preimages cannot prove invoice settlement."""
+    assert is_valid_payment_preimage(payment_hash, preimage) is False
 
 
 def test_lookup_invoice_rejects_response_without_payment_hash():

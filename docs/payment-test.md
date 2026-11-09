@@ -80,9 +80,14 @@ detected within about one or two minutes after the payment is confirmed.
 The bot should send a private confirmation after settlement.
 
 The confirmation is sent only when the wallet reports an explicit settled or
-paid state for the exact tracked payment hash and amount. Missing, malformed,
-or mismatched lookup data remains unmatched and does not produce a paid
-confirmation.
+paid state for the exact tracked payment hash and amount, and returns a valid
+payment preimage whose SHA-256 matches that hash. A settled label by itself is
+not sufficient. Missing, malformed, or mismatched lookup data remains
+unmatched and does not produce a paid confirmation.
+
+This proof requirement protects the bot from incorrectly marking an invoice as
+paid when the NWC service returns an incomplete, stale, or incorrectly mapped
+lookup response.
 
 ## 5. Confirm the safety boundary
 

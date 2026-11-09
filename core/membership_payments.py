@@ -14,7 +14,7 @@ from core.membership_exchange import (
     membership_price_mxn,
     mxn_to_msat,
 )
-from core.nwc_client import NwcInvoiceClient
+from core.nwc_client import NwcInvoiceClient, is_valid_payment_preimage
 from core.notification_preferences import is_notification_enabled
 from core.membership_pricing import normalize_membership_plan, normalize_membership_quantity
 from core.payment_test_state import (
@@ -781,6 +781,14 @@ def _invoice_status_matches(status, payment_hash, amount_msat):
     )
 
 
+def _invoice_status_has_settlement_proof(status, payment_hash):
+    """Return whether a settled response proves ownership of the payment hash."""
+    return is_valid_payment_preimage(
+        str(payment_hash),
+        getattr(status, "preimage", None),
+    )
+
+
 async def check_payment_invoice_status(config, state, now=None):
     """Poll pending invoices and mark member periods paid after settlement."""
     settings = _payment_invoice_settings(config)
@@ -866,6 +874,15 @@ async def check_payment_invoice_status(config, state, now=None):
                     payment_hash,
                     invoice.get("amount_msat"),
                 ):
+                    status_state = "unmatched"
+                elif status_state == "settled" and not _invoice_status_has_settlement_proof(
+                    status,
+                    payment_hash,
+                ):
+                    logger.warning(
+                        "NWC reported membership settlement without valid proof; "
+                        "keeping the invoice unmatched."
+                    )
                     status_state = "unmatched"
 
                 settled_at = None
@@ -956,6 +973,15 @@ async def check_payment_test_invoice_status(context, config, state, now=None):
         payment_hash,
         active_invoice.get("amount_msat"),
     ):
+        status_state = "unmatched"
+    elif status_state == "settled" and not _invoice_status_has_settlement_proof(
+        status,
+        payment_hash,
+    ):
+        logger.warning(
+            "NWC reported payment-test settlement without valid proof; "
+            "keeping the invoice unmatched."
+        )
         status_state = "unmatched"
 
     settled_at = None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import importlib
 from typing import Any, Callable, Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
@@ -57,6 +58,7 @@ class NwcInvoiceStatus:
     state: str
     amount_msat: int | None
     settled_at: int | None
+    preimage: str | None = None
 
     @property
     def is_settled(self) -> bool:
@@ -170,6 +172,34 @@ def _integer_field_alias(
     return None
 
 
+def _string_field_alias(payload: Any, names: tuple[str, ...]) -> str | None:
+    """Read the first non-empty string response field from compatible names."""
+    for name in names:
+        value = _field(payload, name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def is_valid_payment_preimage(payment_hash: str, preimage: str | None) -> bool:
+    """Return whether a hex preimage cryptographically proves the payment hash."""
+    if not isinstance(payment_hash, str) or not isinstance(preimage, str):
+        return False
+
+    normalized_hash = payment_hash.strip().lower()
+    normalized_preimage = preimage.strip()
+    if len(normalized_hash) != 64 or len(normalized_preimage) != 64:
+        return False
+
+    try:
+        hash_bytes = bytes.fromhex(normalized_hash)
+        preimage_bytes = bytes.fromhex(normalized_preimage)
+    except ValueError:
+        return False
+
+    return hashlib.sha256(preimage_bytes).digest() == hash_bytes
+
+
 def _normalize_invoice(
     payload: Any,
     *,
@@ -219,6 +249,7 @@ def _normalize_status(payload: Any) -> NwcInvoiceStatus:
         state=state,
         amount_msat=_integer_field_alias(payload, ("amount", "amount_msat")),
         settled_at=_integer_field(payload, "settled_at"),
+        preimage=_string_field_alias(payload, ("preimage", "payment_preimage")),
     )
 
 

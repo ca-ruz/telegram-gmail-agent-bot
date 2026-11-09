@@ -14,6 +14,10 @@ NWC_URI = (
     "nostr+walletconnect://wallet-key?"
     "relay=wss%3A%2F%2Frelay.example&secret=test-secret"
 )
+TEST_PAYMENT_HASH = (
+    "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
+)
+TEST_PAYMENT_PREIMAGE = "00" * 32
 
 
 class EndToEndNwcClient:
@@ -28,7 +32,7 @@ class EndToEndNwcClient:
         """Return the isolated test invoice."""
         return NwcInvoice(
             invoice="lnbc-e2e-payment-test",
-            payment_hash="e2e-payment-test-hash",
+            payment_hash=TEST_PAYMENT_HASH,
             amount_msat=amount_msat,
             expires_at=1_800_000_000,
         )
@@ -40,6 +44,7 @@ class EndToEndNwcClient:
             state="settled" if self.paid else "pending",
             amount_msat=100_000,
             settled_at=1_800_000_100 if self.paid else None,
+            preimage=TEST_PAYMENT_PREIMAGE if self.paid else None,
         )
 
 
