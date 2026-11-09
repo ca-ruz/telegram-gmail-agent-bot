@@ -147,13 +147,33 @@ def _integer_field(payload: Any, name: str, *, required: bool = False) -> int | 
         raise NwcClientError(f"NWC response contains an invalid {name}.") from exc
 
 
+def _integer_field_alias(
+    payload: Any,
+    names: tuple[str, ...],
+    *,
+    required: bool = False,
+) -> int | None:
+    """Read an integer field using compatible SDK field names."""
+    for name in names:
+        value = _field(payload, name)
+        if value is not None:
+            return _integer_field(payload, name, required=True)
+    if required:
+        raise NwcClientError(f"NWC response is missing {names[0]}.")
+    return None
+
+
 def _normalize_invoice(payload: Any) -> NwcInvoice:
     """Normalize an invoice response and require its payment identity."""
     invoice = _field(payload, "invoice")
     payment_hash = _field(payload, "payment_hash")
     if not invoice or not payment_hash:
         raise NwcClientError("NWC invoice response is missing its payment identity.")
-    amount_msat = _integer_field(payload, "amount", required=True)
+    amount_msat = _integer_field_alias(
+        payload,
+        ("amount", "amount_msat"),
+        required=True,
+    )
     return NwcInvoice(
         invoice=str(invoice),
         payment_hash=str(payment_hash),
@@ -171,7 +191,7 @@ def _normalize_status(payload: Any, requested_payment_hash: str) -> NwcInvoiceSt
     return NwcInvoiceStatus(
         payment_hash=payment_hash,
         state=str(state).lower(),
-        amount_msat=_integer_field(payload, "amount"),
+        amount_msat=_integer_field_alias(payload, ("amount", "amount_msat")),
         settled_at=_integer_field(payload, "settled_at"),
     )
 

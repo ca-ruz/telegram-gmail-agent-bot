@@ -114,6 +114,29 @@ def test_make_invoice_normalizes_sdk_response():
     assert invoice.expires_at == 1_800_000_000
 
 
+def test_make_invoice_accepts_amount_msat_sdk_field():
+    """Invoice creation accepts SDK responses using the explicit amount name."""
+    session = FakeSession(
+        invoice_response={
+            "invoice": "lnbc-test",
+            "payment_hash": "hash-001",
+            "amount_msat": 25_000,
+            "expires_at": 1_800_000_000,
+        }
+    )
+    client = NwcInvoiceClient(NWC_URI, client_factory=lambda _: session)
+
+    invoice = asyncio.run(
+        client.make_invoice(
+            amount_msat=25_000,
+            description="Membership 2026-11",
+            expiry_seconds=600,
+        )
+    )
+
+    assert invoice.amount_msat == 25_000
+
+
 def test_lookup_invoice_normalizes_settled_response():
     """Invoice lookup exposes settlement state and timestamp."""
     session = FakeSession(
