@@ -170,6 +170,99 @@ def test_wrong_test_invoice_amount_becomes_unmatched(monkeypatch, tmp_path):
     assert context.bot.send_message.await_count == 0
 
 
+def test_missing_test_invoice_amount_becomes_unmatched(monkeypatch, tmp_path):
+    """A settled response without an amount cannot pass the test."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash="payment-test-hash",
+        state="settled",
+        amount_msat=None,
+        settled_at=1_800_000_100,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        FakeNwcInvoiceClient,
+    )
+    context = _context()
+    state = {"payment_test_state": _test_state()}
+
+    result = asyncio.run(
+        membership_payments.check_payment_test_invoice_status(
+            context,
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert result == {"checked": 1, "settled": 0, "failed": 0}
+    assert state["payment_test_state"]["active_invoice"]["state"] == "unmatched"
+    assert context.bot.send_message.await_count == 0
+
+
+def test_mismatched_test_invoice_hash_becomes_unmatched(monkeypatch, tmp_path):
+    """A settled response for a different hash cannot pass the test."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash="another-payment-hash",
+        state="settled",
+        amount_msat=100_000,
+        settled_at=1_800_000_100,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        FakeNwcInvoiceClient,
+    )
+    context = _context()
+    state = {"payment_test_state": _test_state()}
+
+    result = asyncio.run(
+        membership_payments.check_payment_test_invoice_status(
+            context,
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert result == {"checked": 1, "settled": 0, "failed": 0}
+    assert state["payment_test_state"]["active_invoice"]["state"] == "unmatched"
+    assert context.bot.send_message.await_count == 0
+
+
+def test_unknown_test_invoice_state_becomes_unmatched(monkeypatch, tmp_path):
+    """An unknown wallet state cannot trigger a paid confirmation."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash="payment-test-hash",
+        state="mysterious",
+        amount_msat=100_000,
+        settled_at=1_800_000_100,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        FakeNwcInvoiceClient,
+    )
+    context = _context()
+    state = {"payment_test_state": _test_state()}
+
+    result = asyncio.run(
+        membership_payments.check_payment_test_invoice_status(
+            context,
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert result == {"checked": 1, "settled": 0, "failed": 0}
+    assert state["payment_test_state"]["active_invoice"]["state"] == "unmatched"
+    assert context.bot.send_message.await_count == 0
+
+
 def test_expired_test_invoice_is_closed_without_lookup(monkeypatch, tmp_path):
     """Expired test invoices are closed without contacting NWC."""
     FakeNwcInvoiceClient.calls = []

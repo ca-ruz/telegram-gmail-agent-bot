@@ -757,6 +757,8 @@ def _invoice_status_timestamp(value, fallback=None):
             return datetime.fromtimestamp(value, timezone.utc).isoformat()
         except (OverflowError, OSError, ValueError):
             pass
+    if fallback is None:
+        return None
     return _timestamp_string(fallback)
 
 
@@ -764,6 +766,19 @@ def _normalized_invoice_status(status):
     """Map an NWC status to the persisted invoice-state vocabulary."""
     state = str(getattr(status, "state", "unmatched")).lower()
     return state if state in PAYMENT_INVOICE_STATES else "unmatched"
+
+
+def _invoice_status_matches(status, payment_hash, amount_msat):
+    """Return whether an NWC status identifies the tracked invoice exactly."""
+    returned_hash = str(getattr(status, "payment_hash", ""))
+    returned_amount = _normalize_invoice_integer(
+        getattr(status, "amount_msat", None)
+    )
+    expected_amount = _normalize_invoice_integer(amount_msat)
+    return returned_hash == str(payment_hash) and (
+        returned_amount is not None
+        and returned_amount == expected_amount
+    )
 
 
 async def check_payment_invoice_status(config, state, now=None):
@@ -846,17 +861,17 @@ async def check_payment_invoice_status(config, state, now=None):
                     continue
 
                 status_state = _normalized_invoice_status(status)
-                if str(getattr(status, "payment_hash", "")) != payment_hash:
-                    status_state = "unmatched"
-                status_amount = getattr(status, "amount_msat", None)
-                if _normalize_invoice_integer(status_amount) != invoice.get("amount_msat"):
+                if not _invoice_status_matches(
+                    status,
+                    payment_hash,
+                    invoice.get("amount_msat"),
+                ):
                     status_state = "unmatched"
 
                 settled_at = None
                 if status_state == "settled":
                     settled_at = _invoice_status_timestamp(
                         getattr(status, "settled_at", None),
-                        checked_at,
                     )
                 try:
                     normalized_state = update_payment_invoice(
@@ -936,10 +951,10 @@ async def check_payment_test_invoice_status(context, config, state, now=None):
         return {"checked": 1, "settled": 0, "failed": 1}
 
     status_state = _normalized_invoice_status(status)
-    if str(getattr(status, "payment_hash", "")) != payment_hash:
-        status_state = "unmatched"
-    if _normalize_invoice_integer(getattr(status, "amount_msat", None)) != (
-        active_invoice.get("amount_msat")
+    if not _invoice_status_matches(
+        status,
+        payment_hash,
+        active_invoice.get("amount_msat"),
     ):
         status_state = "unmatched"
 
@@ -947,7 +962,6 @@ async def check_payment_test_invoice_status(context, config, state, now=None):
     if status_state == "settled":
         settled_at = _invoice_status_timestamp(
             getattr(status, "settled_at", None),
-            checked_at,
         )
     normalized_state = update_payment_test_invoice(
         test_state,

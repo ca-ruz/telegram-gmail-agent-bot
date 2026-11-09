@@ -10,6 +10,13 @@ from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 NWC_SCHEME = "nostr+walletconnect"
 REQUIRED_NWC_QUERY_PARAMETERS = ("relay", "secret")
+NWC_STATUS_STATES = frozenset({
+    "pending",
+    "settled",
+    "expired",
+    "failed",
+    "unmatched",
+})
 
 
 class NwcClientError(RuntimeError):
@@ -188,15 +195,28 @@ def _normalize_invoice(
     )
 
 
-def _normalize_status(payload: Any, requested_payment_hash: str) -> NwcInvoiceStatus:
+def _normalize_status(payload: Any) -> NwcInvoiceStatus:
     """Normalize an invoice lookup response."""
-    payment_hash = str(_field(payload, "payment_hash", requested_payment_hash))
-    state = _field(payload, "state")
-    if not state:
-        state = "settled" if _field(payload, "paid", False) else "pending"
+    payment_hash = _field(payload, "payment_hash")
+    if not payment_hash:
+        raise NwcClientError("NWC lookup response is missing payment_hash.")
+
+    raw_state = _field(payload, "state")
+    if isinstance(raw_state, str) and raw_state.strip():
+        state = raw_state.strip().lower()
+        if state == "paid":
+            state = "settled"
+        if state not in NWC_STATUS_STATES:
+            state = "unmatched"
+    else:
+        paid = _field(payload, "paid")
+        if isinstance(paid, bool):
+            state = "settled" if paid else "pending"
+        else:
+            state = "unmatched"
     return NwcInvoiceStatus(
-        payment_hash=payment_hash,
-        state=str(state).lower(),
+        payment_hash=str(payment_hash),
+        state=state,
         amount_msat=_integer_field_alias(payload, ("amount", "amount_msat")),
         settled_at=_integer_field(payload, "settled_at"),
     )
@@ -248,7 +268,7 @@ class NwcInvoiceClient:
                 response = await client.lookup_invoice(
                     payment_hash=payment_hash.strip()
                 )
-            return _normalize_status(response, payment_hash.strip())
+            return _normalize_status(response)
         except NwcClientError:
             raise
         except Exception as exc:
