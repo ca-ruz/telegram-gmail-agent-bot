@@ -6,3 +6,4 @@ google-auth
 python-dotenv
 icalendar
 nostrwalletconnect==0.2.1
+qrcode[pil]
