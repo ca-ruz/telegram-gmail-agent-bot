@@ -184,6 +184,38 @@ def test_settled_invoice_without_preimage_remains_unmatched(monkeypatch, tmp_pat
     assert member["payment_invoices"][TEST_PAYMENT_HASH]["state"] == "unmatched"
 
 
+def test_settled_invoice_with_invalid_preimage_remains_unmatched(monkeypatch, tmp_path):
+    """A mismatched preimage cannot confirm a membership invoice."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=25_000,
+        settled_at=1_800_000_100,
+        preimage="11" * 32,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        FakeNwcInvoiceClient,
+    )
+    state = {"payment_state": _invoice_state()}
+
+    asyncio.run(
+        check_payment_invoice_status(
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    member = state["payment_state"]["periods"]["2026-11"]["members"][
+        "member-001"
+    ]
+    assert member["status"] == "unpaid"
+    assert member["payment_invoices"][TEST_PAYMENT_HASH]["state"] == "unmatched"
+
+
 def test_mismatched_hash_never_marks_membership_invoice_paid(monkeypatch, tmp_path):
     """A settled response for another invoice remains unmatched."""
     FakeNwcInvoiceClient.calls = []

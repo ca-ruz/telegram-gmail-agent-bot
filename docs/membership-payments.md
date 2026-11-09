@@ -86,11 +86,15 @@ Use this command to inspect the current result:
 /paymenttest status
 ```
 
-The bot sends a private success message after settlement. A successful test
-does not mark any real member or billing period as paid, does not send a group
-message, and does not trigger member reminders. It only confirms invoice
-creation, payment lookup, exact amount validation, settlement detection, and
-expiry handling. Keep the NWC URI private during the test.
+The bot sends a private success message only after settlement is
+cryptographically verified. The lookup must contain the exact payment hash and
+amount, an explicit settled or paid state, and a payment preimage whose
+SHA-256 matches the payment hash. A settled label by itself is not sufficient.
+
+A successful test does not mark any real member or billing period as paid, does
+not send a group message, and does not trigger member reminders. It only
+confirms invoice creation, payment lookup, exact amount validation, settlement
+proof, and expiry handling. Keep the NWC URI private during the test.
 
 ## Managing Members
 

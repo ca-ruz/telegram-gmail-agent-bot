@@ -178,6 +178,41 @@ def test_settled_test_invoice_without_preimage_stays_unmatched(
     assert context.bot.send_message.await_count == 0
 
 
+def test_settled_test_invoice_with_invalid_preimage_stays_unmatched(
+    monkeypatch,
+    tmp_path,
+):
+    """A mismatched preimage cannot trigger the payment-test confirmation."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=100_000,
+        settled_at=1_800_000_100,
+        preimage="11" * 32,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        FakeNwcInvoiceClient,
+    )
+    context = _context()
+    state = {"payment_test_state": _test_state()}
+
+    result = asyncio.run(
+        membership_payments.check_payment_test_invoice_status(
+            context,
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert result == {"checked": 1, "settled": 0, "failed": 0}
+    assert state["payment_test_state"]["active_invoice"]["state"] == "unmatched"
+    assert context.bot.send_message.await_count == 0
+
+
 def test_wrong_test_invoice_amount_becomes_unmatched(monkeypatch, tmp_path):
     """A settled response with a wrong amount cannot pass the test."""
     FakeNwcInvoiceClient.calls = []
