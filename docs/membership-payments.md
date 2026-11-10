@@ -185,18 +185,29 @@ Automated invoice verification is disabled by default. To enable it, set
 and give each member a configured plan and quantity. The bot calculates the
 MXN total, converts it to millisatoshis using the configured MXN-per-BTC
 provider, and creates or reuses one invoice per unpaid member and billing
-period in private reminders. A separate verification job checks pending invoices using
-`PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS`; it marks the matching period as
+period in private reminders. The invoice record is saved to `payment_state.json`
+before the invoice or QR code is sent. If that save fails, the bot does not send
+the unrecorded invoice. A failed Telegram delivery leaves the saved invoice
+available for retry after a restart.
+
+A separate verification job checks pending and unresolved invoices using
+`PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS`. It marks the matching period as
 paid only after the wallet reports that exact invoice as settled, or omits
-`state` but includes a settlement timestamp, with matching preimage. Wallet errors,
-expired invoices, and hash mismatches do not mark a member paid, and the manual
+`state` but includes a settlement timestamp, with the correct amount and a
+matching preimage. Wallet errors, incomplete responses, and mismatches leave
+the invoice unresolved for a later check. Legacy invoices that were marked
+expired from their local timestamp alone are also rechecked. The manual
 `/payments` workflow remains available.
 The amount returned by NWC must match the amount calculated for that member and
 period. NWC amounts are handled in millisatoshis. Each invoice stores a pricing
 snapshot containing the plan, quantity, MXN total, and exchange rate used.
-Persisted expiry timestamps are enforced locally so expired invoices are closed
-and replaced without being treated as paid. The default invoice lifetime is
-three days; set `PAYMENT_INVOICE_EXPIRY_SECONDS` to change it.
+The local expiry timestamp stops an old invoice from being sent again, but
+does not prove that it was unpaid. The bot checks the wallet before deciding
+whether a late settlement should mark the period paid. A replacement invoice
+is created only after the wallet explicitly confirms the old invoice expired.
+When the wallet is unavailable or its answer is inconclusive, no replacement
+is created for that member and period. The default invoice lifetime is three
+days; set `PAYMENT_INVOICE_EXPIRY_SECONDS` to change it.
 
 The exchange-rate cache is refreshed after `PAYMENT_EXCHANGE_RATE_MAX_AGE_SECONDS`
 (15 minutes by default). If the provider is unavailable and the cached rate is

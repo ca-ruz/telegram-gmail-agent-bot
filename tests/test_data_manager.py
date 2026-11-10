@@ -1,6 +1,7 @@
 import pytest
 import os
 import json
+from unittest.mock import patch
 from tools.local.data_manager import load_json, save_json
 
 def test_save_and_load_json(tmp_path):
@@ -32,3 +33,15 @@ def test_load_json_invalid(tmp_path):
     # Load it
     loaded = load_json(str(test_file), "fallback")
     assert loaded == "fallback"
+
+
+def test_strict_save_reports_failure_without_changing_existing_file(tmp_path):
+    """Strict writes fail visibly while preserving the last durable JSON."""
+    test_file = tmp_path / "payment_state.json"
+    save_json(str(test_file), {"version": 1})
+
+    with patch("tools.local.data_manager.os.replace", side_effect=OSError("disk unavailable")):
+        with pytest.raises(OSError, match="disk unavailable"):
+            save_json(str(test_file), {"version": 2}, raise_on_error=True)
+
+    assert load_json(str(test_file), {}) == {"version": 1}

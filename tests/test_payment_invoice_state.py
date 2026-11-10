@@ -79,8 +79,25 @@ def test_new_pending_invoice_conflicts_with_existing_active_invoice():
         )
 
 
+@pytest.mark.parametrize("uncertain_state", ["unmatched", "failed"])
+def test_uncertain_invoice_blocks_replacement(uncertain_state):
+    """An inconclusive wallet result cannot authorize a second invoice."""
+    state = record_payment_invoice(_state(), "2026-11", "member-001", _invoice())
+    state = update_payment_invoice(
+        state, "2026-11", "member-001", "hash-001", state=uncertain_state
+    )
+
+    with pytest.raises(PaymentInvoiceConflict):
+        record_payment_invoice(
+            state, "2026-11", "member-001", _invoice("hash-002", "lnbc-second")
+        )
+    assert get_active_payment_invoice(state, "2026-11", "member-001")[
+        "payment_hash"
+    ] == "hash-001"
+
+
 def test_expired_invoice_can_be_replaced_while_history_is_preserved():
-    """An expired invoice can be replaced without losing its audit record."""
+    """Only wallet-confirmed expiry permits a replacement invoice."""
     state = record_payment_invoice(_state(), "2026-11", "member-001", _invoice())
     state = update_payment_invoice(
         state,
@@ -88,6 +105,21 @@ def test_expired_invoice_can_be_replaced_while_history_is_preserved():
         "member-001",
         "hash-001",
         state="expired",
+    )
+    with pytest.raises(PaymentInvoiceConflict):
+        record_payment_invoice(
+            state, "2026-11", "member-001", _invoice("hash-002", "lnbc-second")
+        )
+    assert get_active_payment_invoice(state, "2026-11", "member-001")[
+        "payment_hash"
+    ] == "hash-001"
+    state = update_payment_invoice(
+        state,
+        "2026-11",
+        "member-001",
+        "hash-001",
+        state="expired",
+        expiry_confirmed=True,
     )
     state = record_payment_invoice(
         state,
@@ -99,6 +131,7 @@ def test_expired_invoice_can_be_replaced_while_history_is_preserved():
     member = state["periods"]["2026-11"]["members"]["member-001"]
     assert member["active_invoice_payment_hash"] == "hash-002"
     assert member["payment_invoices"]["hash-001"]["state"] == "expired"
+    assert member["payment_invoices"]["hash-001"]["expiry_confirmed"] is True
     assert member["payment_invoices"]["hash-002"]["state"] == "pending"
 
 
