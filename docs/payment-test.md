@@ -81,6 +81,25 @@ last verification time, settlement time, payment hash, and full invoice. It
 also sends the invoice QR code when the invoice is available. If QR delivery
 fails, the same details are sent as one text message.
 
+If an earlier test was archived, inspect that exact invoice in a private chat:
+
+```text
+/paymenttest status <test-id>
+```
+
+To ask the wallet to verify an archived test again, use:
+
+```text
+/paymenttest recheck <test-id>
+```
+
+Use the ID shown by the original test message. This checks only that archived
+invoice, even if a newer test is active. It marks the archived test settled
+only when the wallet returns matching invoice identity, amount, settlement
+state, and valid payment preimage. An inconclusive or unpaid response leaves
+it unconfirmed. The command never creates a new invoice or changes a real
+membership. Rechecking an already settled test is harmless.
+
 To stop an unpaid test without deleting its record, use:
 
 ```text

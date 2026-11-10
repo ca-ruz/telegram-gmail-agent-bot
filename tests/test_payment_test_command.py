@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 from bot.handlers import admin
 from core.nwc_client import NwcInvoice
 from core.payment_test_state import build_payment_test_state
+from core.payment_test_state import record_payment_test_invoice, reset_payment_test_invoice
 
 
 NWC_URI = (
@@ -35,10 +36,11 @@ class FakeNwcInvoiceClient:
         )
 
 
-def _update(text="/paymenttest", user_id=42):
+def _update(text="/paymenttest", user_id=42, chat_type="private"):
     """Build a minimal Telegram update for the command handler."""
     return SimpleNamespace(
         effective_user=SimpleNamespace(id=user_id),
+        effective_chat=SimpleNamespace(type=chat_type),
         message=SimpleNamespace(
             text=text,
             reply_photo=AsyncMock(),
@@ -212,3 +214,54 @@ def test_paymenttest_is_primary_admin_only(tmp_path):
     )
 
     update.message.reply_text.assert_not_awaited()
+
+
+def _state_with_archived_test():
+    """Build an archived test and a distinct active invoice."""
+    first = record_payment_test_invoice(
+        build_payment_test_state(),
+        {"invoice": "lnbc-old", "payment_hash": "old-hash", "amount_msat": 100_000},
+        100,
+        "test-001",
+    )
+    return {"payment_test_state": record_payment_test_invoice(
+        reset_payment_test_invoice(first),
+        {"invoice": "lnbc-new", "payment_hash": "new-hash", "amount_msat": 100_000},
+        100,
+        "test-002",
+    )}
+
+
+def test_archived_test_status_by_id_shows_original_invoice(tmp_path):
+    """Status by ID reads history rather than the newer active test."""
+    update = _update("/paymenttest status test-001")
+
+    asyncio.run(admin.payment_test(
+        update, SimpleNamespace(), 42, _state_with_archived_test(), _config(tmp_path)
+    ))
+
+    caption = update.message.reply_photo.await_args.kwargs["caption"]
+    assert "test-001" in caption
+    assert "lnbc-old" in caption
+    assert "lnbc-new" not in caption
+
+
+def test_archived_recheck_reports_success_only_to_private_admin(monkeypatch, tmp_path):
+    """The archived recheck requires a private chat with the primary admin."""
+    recheck = AsyncMock(return_value="settled")
+    monkeypatch.setattr(admin, "recheck_archived_payment_test_invoice", recheck)
+    config = _config(tmp_path)
+    state = _state_with_archived_test()
+    group_update = _update("/paymenttest recheck test-001", chat_type="group")
+    asyncio.run(admin.payment_test(group_update, SimpleNamespace(), 42, state, config))
+    unauthorized = _update("/paymenttest recheck test-001", user_id=99)
+    asyncio.run(admin.payment_test(unauthorized, SimpleNamespace(), 42, state, config))
+    recheck.assert_not_awaited()
+    unauthorized.message.reply_text.assert_not_awaited()
+
+    update = _update("/paymenttest recheck test-001")
+    asyncio.run(admin.payment_test(update, SimpleNamespace(), 42, state, config))
+
+    recheck.assert_awaited_once_with(config, state, "test-001")
+    assert "confirmado" in update.message.reply_text.await_args.args[0]
+    assert "no modificó ninguna membresía real" in update.message.reply_text.await_args.args[0]

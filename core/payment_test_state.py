@@ -203,6 +203,37 @@ def get_latest_payment_test_invoice(state):
     return history[-1] if history else None
 
 
+def get_archived_payment_test_invoice(state, test_id):
+    """Return one archived test by ID, rejecting ambiguous history."""
+    matches = [
+        invoice
+        for invoice in normalize_payment_test_state(state)["history"]
+        if invoice["test_id"] == test_id
+    ]
+    if len(matches) > 1:
+        raise PaymentTestInvoiceConflict("Duplicate archived payment test ID.")
+    return matches[0] if matches else None
+
+
+def update_archived_payment_test_invoice(
+    state, test_id, payment_hash, *, settled_at=None, last_checked_at=None
+):
+    """Settle one exact archived test without changing the active invoice."""
+    normalized_state = normalize_payment_test_state(state)
+    invoice = get_archived_payment_test_invoice(normalized_state, test_id)
+    if invoice is None or invoice["payment_hash"] != payment_hash:
+        raise KeyError("Archived payment test invoice does not exist.")
+    for archived_invoice in normalized_state["history"]:
+        if archived_invoice["test_id"] == test_id:
+            archived_invoice["state"] = "settled"
+            if settled_at is not None:
+                archived_invoice["settled_at"] = _timestamp_string(settled_at)
+            if last_checked_at is not None:
+                archived_invoice["last_checked_at"] = _timestamp_string(last_checked_at)
+            break
+    return normalized_state
+
+
 def cancel_payment_test_invoice(state, cancelled_at=None):
     """Mark the pending test invoice cancelled without deleting its record."""
     normalized_state = normalize_payment_test_state(state)

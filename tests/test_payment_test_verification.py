@@ -10,7 +10,9 @@ from core import membership_payments
 from core.nwc_client import NwcInvoiceClient, NwcInvoiceStatus
 from core.payment_test_state import (
     build_payment_test_state,
+    load_payment_test_state,
     record_payment_test_invoice,
+    reset_payment_test_invoice,
     update_payment_test_invoice,
 )
 
@@ -115,6 +117,129 @@ class UnpaidRawNwcSession(PendingRawNwcSession):
 def _context():
     """Build a context with a private administrator notification sink."""
     return SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+
+
+def _archived_test_state():
+    """Return one archived test while another invoice remains active."""
+    archived = reset_payment_test_invoice(_test_state())
+    return record_payment_test_invoice(
+        archived,
+        {
+            "invoice": "lnbc-current-test",
+            "payment_hash": "current-test-hash",
+            "amount_msat": 100_000,
+        },
+        100,
+        "test-002",
+    )
+
+
+def test_archived_recheck_confirms_paid_test_without_touching_active_or_members(
+    monkeypatch, tmp_path
+):
+    """Exact wallet proof updates only the selected archived test."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=100_000,
+        settled_at=1_800_000_100,
+        preimage=TEST_PAYMENT_PREIMAGE,
+    )
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    state = {
+        "payment_test_state": _archived_test_state(),
+        "payment_state": {"periods": {"example": "unchanged"}},
+    }
+    active_before = state["payment_test_state"]["active_invoice"].copy()
+    config = _config(tmp_path)
+
+    result = asyncio.run(membership_payments.recheck_archived_payment_test_invoice(
+        config, state, "test-001"
+    ))
+
+    assert result == "settled"
+    assert FakeNwcInvoiceClient.calls == [TEST_PAYMENT_HASH]
+    assert state["payment_test_state"]["history"][0]["state"] == "settled"
+    assert state["payment_test_state"]["active_invoice"] == active_before
+    assert state["payment_state"] == {"periods": {"example": "unchanged"}}
+    assert load_payment_test_state(config["PAYMENT_TEST_STATE_FILE"]) == state["payment_test_state"]
+    assert asyncio.run(membership_payments.recheck_archived_payment_test_invoice(
+        config, state, "test-001"
+    )) == "already_settled"
+    assert FakeNwcInvoiceClient.calls == [TEST_PAYMENT_HASH]
+
+
+def test_archived_recheck_does_not_confirm_pending_or_invalid_proof(
+    monkeypatch, tmp_path
+):
+    """A preimage alone or an invalid preimage cannot settle history."""
+    FakeNwcInvoiceClient.calls = []
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    state = {"payment_test_state": _archived_test_state()}
+    config = _config(tmp_path)
+
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="pending",
+        amount_msat=100_000,
+        settled_at=None,
+        preimage=TEST_PAYMENT_PREIMAGE,
+    )
+    assert asyncio.run(membership_payments.recheck_archived_payment_test_invoice(
+        config, state, "test-001"
+    )) == "pending"
+    assert state["payment_test_state"]["history"][0]["state"] != "settled"
+
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=100_000,
+        settled_at=1_800_000_100,
+        preimage="11" * 32,
+    )
+    assert asyncio.run(membership_payments.recheck_archived_payment_test_invoice(
+        config, state, "test-001"
+    )) == "unmatched"
+    assert state["payment_test_state"]["history"][0]["state"] != "settled"
+    assert state["payment_test_state"]["active_invoice"]["state"] == "pending"
+
+
+def test_archived_recheck_accepts_timestamp_only_wallet_settlement(
+    monkeypatch, tmp_path
+):
+    """A wallet omitting optional state can still prove an archived payment."""
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        lambda uri: NwcInvoiceClient(
+            uri, client_factory=lambda _: SettledRawNwcSession()
+        ),
+    )
+    state = {"payment_test_state": _archived_test_state()}
+
+    assert asyncio.run(membership_payments.recheck_archived_payment_test_invoice(
+        _config(tmp_path), state, "test-001"
+    )) == "settled"
+    assert state["payment_test_state"]["history"][0]["state"] == "settled"
+
+
+def test_archived_recheck_rejects_wrong_amount(monkeypatch, tmp_path):
+    """A settled response for another amount cannot confirm the old test."""
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=200_000,
+        settled_at=1_800_000_100,
+        preimage=TEST_PAYMENT_PREIMAGE,
+    )
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    state = {"payment_test_state": _archived_test_state()}
+
+    assert asyncio.run(membership_payments.recheck_archived_payment_test_invoice(
+        _config(tmp_path), state, "test-001"
+    )) == "unmatched"
+    assert state["payment_test_state"]["history"][0]["state"] != "settled"
 
 
 def test_settled_test_invoice_notifies_admin_without_changing_production_state(

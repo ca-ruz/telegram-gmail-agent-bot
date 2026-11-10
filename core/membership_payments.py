@@ -19,8 +19,11 @@ from core.notification_preferences import is_notification_enabled
 from core.membership_pricing import normalize_membership_plan, normalize_membership_quantity
 from core.payment_qr import build_invoice_qr
 from core.payment_test_state import (
+    PaymentTestInvoiceConflict,
     get_active_payment_test_invoice,
+    get_archived_payment_test_invoice,
     save_payment_test_state,
+    update_archived_payment_test_invoice,
     update_payment_test_invoice,
 )
 from tools.local.data_manager import load_json, save_json
@@ -790,6 +793,62 @@ def _invoice_status_has_settlement_proof(status, payment_hash):
     )
 
 
+def _verified_test_invoice_state(status, invoice):
+    """Require exact invoice identity and proof before trusting settlement."""
+    payment_hash = invoice["payment_hash"]
+    if not _invoice_status_matches(status, payment_hash, invoice["amount_msat"]):
+        return "unmatched"
+    status_state = _normalized_invoice_status(status)
+    if status_state == "settled" and not _invoice_status_has_settlement_proof(
+        status, payment_hash
+    ):
+        logger.warning("NWC reported payment-test settlement without valid proof.")
+        return "unmatched"
+    return status_state
+
+
+async def recheck_archived_payment_test_invoice(config, state, test_id, now=None):
+    """Verify one archived test on demand without touching active or member state."""
+    settings = _payment_invoice_settings(config)
+    if settings is None:
+        raise ValueError("Payment verification is not configured.")
+    test_state = state.setdefault("payment_test_state", {})
+    archived = get_archived_payment_test_invoice(test_state, test_id)
+    if archived is None:
+        raise KeyError("Archived payment test does not exist.")
+    if archived["state"] == "settled":
+        return "already_settled"
+
+    checked_at = now or datetime.now(timezone.utc)
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+    checked_at = checked_at.astimezone(timezone.utc)
+    status = await NwcInvoiceClient(settings[0]).lookup_invoice(
+        payment_hash=archived["payment_hash"]
+    )
+    result = _verified_test_invoice_state(status, archived)
+    if result != "settled":
+        return result
+
+    # Re-read after the network call so a concurrent active test is preserved.
+    current_state = state["payment_test_state"]
+    current = get_archived_payment_test_invoice(current_state, test_id)
+    if current is None or current["payment_hash"] != archived["payment_hash"]:
+        raise PaymentTestInvoiceConflict("Archived payment test changed during lookup.")
+    if current["state"] == "settled":
+        return "already_settled"
+    normalized_state = update_archived_payment_test_invoice(
+        current_state,
+        test_id,
+        archived["payment_hash"],
+        settled_at=_invoice_status_timestamp(getattr(status, "settled_at", None)),
+        last_checked_at=checked_at,
+    )
+    state["payment_test_state"] = normalized_state
+    save_payment_test_state(config["PAYMENT_TEST_STATE_FILE"], normalized_state)
+    return "settled"
+
+
 async def check_payment_invoice_status(config, state, now=None):
     """Poll pending invoices and mark member periods paid after settlement."""
     settings = _payment_invoice_settings(config)
@@ -980,22 +1039,7 @@ async def check_payment_test_invoice_status(context, config, state, now=None):
         _invoice_status_has_settlement_proof(status, payment_hash),
     )
 
-    status_state = _normalized_invoice_status(status)
-    if not _invoice_status_matches(
-        status,
-        payment_hash,
-        active_invoice.get("amount_msat"),
-    ):
-        status_state = "unmatched"
-    elif status_state == "settled" and not _invoice_status_has_settlement_proof(
-        status,
-        payment_hash,
-    ):
-        logger.warning(
-            "NWC reported payment-test settlement without valid proof; "
-            "keeping the invoice unmatched."
-        )
-        status_state = "unmatched"
+    status_state = _verified_test_invoice_state(status, active_invoice)
 
     settled_at = None
     if status_state == "settled":

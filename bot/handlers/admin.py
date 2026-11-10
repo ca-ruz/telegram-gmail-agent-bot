@@ -53,6 +53,7 @@ from core.payment_test_state import (
     build_payment_test_state,
     cancel_payment_test_invoice,
     get_active_payment_test_invoice,
+    get_archived_payment_test_invoice,
     get_latest_payment_test_invoice,
     normalize_payment_test_amount_sats,
     record_payment_test_invoice,
@@ -69,6 +70,7 @@ from core.membership_payments import (
     save_members,
     save_payment_state,
     synchronize_multi_period_payment_state,
+    recheck_archived_payment_test_invoice,
 )
 from core.imported_events import (
     assign_imported_event_flyer,
@@ -807,10 +809,16 @@ async def payment_test(update, context, admin_id, state, config):
     if update.effective_user.id != admin_id:
         return
 
-    raw_args = update.message.text.partition(" ")[2].strip().lower()
-    if raw_args not in {"", "status", "cancel", "reset"}:
+    args = update.message.text.split()[1:]
+    action = args[0].lower() if args else ""
+    if (
+        action not in {"", "status", "cancel", "reset", "recheck"}
+        or len(args) > (2 if action in {"status", "recheck"} else 1)
+        or (action == "recheck" and len(args) != 2)
+    ):
         await update.message.reply_text(
             "Uso: /paymenttest | /paymenttest status | "
+            "/paymenttest status <test-id> | /paymenttest recheck <test-id> | "
             "/paymenttest cancel | /paymenttest reset"
         )
         return
@@ -820,8 +828,54 @@ async def payment_test(update, context, admin_id, state, config):
         build_payment_test_state(),
     )
     active_invoice = get_active_payment_test_invoice(test_state)
-    if raw_args == "status":
-        invoice = get_latest_payment_test_invoice(test_state)
+    if action in {"status", "recheck"} and len(args) == 2:
+        if getattr(update.effective_chat, "type", None) != "private":
+            await update.message.reply_text("❌ Usa este comando en el chat privado.")
+            return
+        try:
+            archived = get_archived_payment_test_invoice(test_state, args[1])
+        except PaymentTestInvoiceConflict:
+            await update.message.reply_text("❌ Hay varias pruebas con ese ID.")
+            return
+        if archived is None:
+            await update.message.reply_text("❌ No existe una prueba archivada con ese ID.")
+            return
+        if action == "recheck":
+            try:
+                result = await recheck_archived_payment_test_invoice(
+                    config, state, args[1]
+                )
+            except ValueError:
+                await update.message.reply_text("❌ La verificación NWC no está configurada.")
+                return
+            except (KeyError, PaymentTestInvoiceConflict):
+                await update.message.reply_text("❌ La prueba archivada cambió. Consulta su estado.")
+                return
+            except Exception:
+                logger.exception("Could not recheck archived payment test invoice.")
+                await update.message.reply_text("❌ No se pudo verificar la prueba. Revisa los logs.")
+                return
+            if result == "settled":
+                await update.message.reply_text(
+                    f"✅ Pago de prueba confirmado: {args[1]} "
+                    f"({archived['amount_sats']} sats).\n"
+                    "Este resultado no modificó ninguna membresía real."
+                )
+            elif result == "already_settled":
+                await update.message.reply_text("✅ Esta prueba ya estaba confirmada como pagada.")
+            else:
+                await update.message.reply_text(
+                    f"🧪 La prueba {args[1]} no tiene un pago confirmado "
+                    f"(resultado: {result}). No se marcó como pagada."
+                )
+            return
+
+    if action == "status":
+        invoice = (
+            get_archived_payment_test_invoice(test_state, args[1])
+            if len(args) == 2
+            else get_latest_payment_test_invoice(test_state)
+        )
         if invoice is None:
             await update.message.reply_text("🧪 No hay una prueba de pago activa.")
             return
@@ -836,7 +890,7 @@ async def payment_test(update, context, admin_id, state, config):
             await update.message.reply_text(status_message)
         return
 
-    if raw_args == "cancel":
+    if action == "cancel":
         if active_invoice is None:
             await update.message.reply_text("🧪 No hay una prueba pendiente para cancelar.")
             return
@@ -861,7 +915,7 @@ async def payment_test(update, context, admin_id, state, config):
         )
         return
 
-    if raw_args == "reset":
+    if action == "reset":
         if active_invoice is None:
             await update.message.reply_text(
                 "🧪 No hay una prueba activa para reiniciar. Usa /paymenttest "
