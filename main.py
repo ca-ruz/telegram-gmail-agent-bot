@@ -38,7 +38,6 @@ from core.imported_events import load_imported_events
 from core.notification_preferences import load_notification_preferences
 from core.telegram_metadata import load_telegram_metadata
 from core.membership_pricing import load_membership_plans
-from core.payment_delivery_policy import resolve_payment_delivery_policy
 from core.payment_test_state import (
     load_payment_test_state,
     parse_payment_test_amount_sats,
@@ -376,8 +375,6 @@ def main():
         await check_manual_promo_reminders(context, config=CONFIG, state=STATE)
 
     async def payment_reminder_job(context):
-        if resolve_payment_delivery_policy(CONFIG, STATE.get('members', {})).mode != 'full':
-            return
         await check_payment_reminders(context, config=CONFIG, state=STATE)
 
     async def payment_verification_job(context):

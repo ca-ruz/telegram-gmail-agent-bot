@@ -18,6 +18,7 @@ from core.nwc_client import NwcInvoiceClient, is_valid_payment_preimage
 from core.notification_preferences import is_notification_enabled
 from core.membership_pricing import normalize_membership_plan, normalize_membership_quantity
 from core.payment_qr import build_invoice_qr
+from core.payment_delivery_policy import resolve_payment_delivery_policy
 from core.payment_test_state import (
     PaymentTestInvoiceConflict,
     get_active_payment_test_invoice,
@@ -1580,7 +1581,7 @@ def _payment_group_ids(config, state):
         return set()
 
 
-async def _check_multi_period_payment_reminders(context, config, state, now):
+async def _check_multi_period_payment_reminders(context, config, state, now, policy):
     """Deliver due reminders for upcoming, current, and rollover periods."""
     payment_state = state.setdefault("payment_state", {})
     available_periods = payment_state.get("periods", {})
@@ -1607,7 +1608,9 @@ async def _check_multi_period_payment_reminders(context, config, state, now):
 
     state_changed = False
     public_error = None
-    payment_group_ids = _payment_group_ids(config, state)
+    payment_group_ids = (
+        _payment_group_ids(config, state) if policy.allows_broadcasts else set()
+    )
     public_entries = []
     for schedule in schedules:
         public_stage = schedule.get("public_stage")
@@ -1679,6 +1682,12 @@ async def _check_multi_period_payment_reminders(context, config, state, now):
     personal_deliveries = {}
     local_date = now.astimezone(PAYMENT_TIMEZONE).date()
     members = state.get("members", {})
+    if policy.mode == "pilot":
+        members = {
+            member_id: member
+            for member_id, member in members.items()
+            if policy.allows_member(member_id)
+        }
     notification_preferences = state.get("notification_preferences")
     for schedule in schedules:
         personal_stage = schedule.get("personal_stage")
@@ -1806,7 +1815,7 @@ async def _check_multi_period_payment_reminders(context, config, state, now):
                 state_changed = True
 
     payment_admin_id = _normalize_user_id(config.get("PAYMENT_ADMIN_ID"))
-    if payment_admin_id is not None:
+    if payment_admin_id is not None and policy.allows_broadcasts:
         delay_hours = config.get("PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS", 2)
         try:
             delay_hours = int(delay_hours)
@@ -1845,6 +1854,9 @@ async def check_payment_reminders(context, config, state, now=None):
     """Send due public and private payment reminders with duplicate protection."""
     if not config.get("ENABLE_PAYMENT_REMINDERS", True):
         return
+    policy = resolve_payment_delivery_policy(config, state.get("members", {}))
+    if policy.mode == "off":
+        return
 
     current_time = now or datetime.now(PAYMENT_TIMEZONE)
     if current_time.tzinfo is None:
@@ -1857,6 +1869,7 @@ async def check_payment_reminders(context, config, state, now=None):
             config,
             state,
             current_time,
+            policy,
         )
         return
 
@@ -1875,14 +1888,9 @@ async def check_payment_reminders(context, config, state, now=None):
 
     period_state = payment_state
 
-    configured_group_id = config.get("MEMBERS_GROUP_ID", 0)
-    if "group_notification_categories" in state:
-        payment_group_ids = get_group_targets(state, "payments")
-    else:
-        try:
-            payment_group_ids = {int(configured_group_id)} if configured_group_id else set()
-        except (TypeError, ValueError):
-            payment_group_ids = set()
+    payment_group_ids = (
+        _payment_group_ids(config, state) if policy.allows_broadcasts else set()
+    )
 
     public_reminders = period_state.setdefault("public_reminders_sent", {})
     public_group_reminders = period_state.setdefault(
@@ -1932,6 +1940,12 @@ async def check_payment_reminders(context, config, state, now=None):
                 f"daily:{current_time.astimezone(PAYMENT_TIMEZONE).date()}"
             )
         members = state.get("members", {})
+        if policy.mode == "pilot":
+            members = {
+                member_id: member
+                for member_id, member in members.items()
+                if policy.allows_member(member_id)
+            }
         notification_preferences = state.get("notification_preferences")
         pending_recipients = [
             (member_id, telegram_id)
@@ -1961,7 +1975,7 @@ async def check_payment_reminders(context, config, state, now=None):
                 state_changed = True
 
     payment_admin_id = _normalize_user_id(config.get("PAYMENT_ADMIN_ID"))
-    if payment_admin_id is not None:
+    if payment_admin_id is not None and policy.allows_broadcasts:
         followups = period_state.setdefault("payment_admin_followups_sent", {})
         if not isinstance(followups, dict):
             followups = {}

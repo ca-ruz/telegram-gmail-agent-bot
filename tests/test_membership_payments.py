@@ -17,7 +17,7 @@ from core.membership_payments import (
     build_member,
     build_monthly_payment_state,
     can_manage_payments,
-    check_payment_reminders,
+    check_payment_reminders as _check_payment_reminders,
     current_billing_period,
     build_multi_period_payment_state,
     ensure_payment_period,
@@ -44,6 +44,12 @@ from core.membership_payments import (
     synchronize_multi_period_payment_state,
 )
 from tools.local.data_manager import load_json
+
+
+async def check_payment_reminders(context, config, state, now=None):
+    """Run existing reminder expectations under explicit full delivery."""
+    full_config = {**config, "PAYMENT_DELIVERY_MODE": "full"}
+    return await _check_payment_reminders(context, full_config, state, now=now)
 
 
 def test_payment_roles_distinguish_primary_and_payment_administrators():
