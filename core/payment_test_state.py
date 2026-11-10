@@ -222,7 +222,7 @@ def reset_payment_test_invoice(state, reset_at=None):
     """Archive the current test and clear the active slot for a new test."""
     normalized_state = normalize_payment_test_state(state)
     active_invoice = normalized_state.get("active_invoice")
-    if active_invoice is None:
+    if active_invoice is None or active_invoice.get("state") == "cancelled":
         return normalized_state
     if active_invoice.get("state") == "pending":
         active_invoice = cancel_payment_test_invoice(
