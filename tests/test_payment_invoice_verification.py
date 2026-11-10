@@ -71,6 +71,30 @@ class FakeNwcInvoiceClient:
         return self.status
 
 
+class SettledRawNwcSession:
+    """Return a paid wallet response with no optional NIP-47 state field."""
+
+    async def __aenter__(self):
+        """Open the fake session."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        """Close the fake session."""
+        return None
+
+    async def _send_request(self, method, params):
+        """Return the wallet's timestamp and exact invoice proof."""
+        assert method == "lookup_invoice"
+        assert params == {"payment_hash": TEST_PAYMENT_HASH}
+        return {
+            "payment_hash": TEST_PAYMENT_HASH,
+            "type": "incoming",
+            "amount": 25_000,
+            "settled_at": 1_783_599_600,
+            "preimage": TEST_PAYMENT_PREIMAGE,
+        }
+
+
 class PendingRawNwcSession:
     """Expose a valid preimage while the wallet invoice remains pending."""
 
@@ -141,6 +165,63 @@ def test_settled_invoice_marks_matching_member_period_paid(monkeypatch, tmp_path
     assert persisted["periods"]["2026-11"]["members"]["member-001"][
         "status"
     ] == "paid"
+
+
+def test_settled_invoice_without_optional_timestamp_uses_verification_time(
+    monkeypatch, tmp_path
+):
+    """A confirmed wallet settlement need not include NIP-47 settled_at."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=25_000,
+        settled_at=None,
+        preimage=TEST_PAYMENT_PREIMAGE,
+    )
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    state = {"payment_state": _invoice_state()}
+    checked_at = datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc)
+
+    result = asyncio.run(
+        check_payment_invoice_status(_config(tmp_path), state, now=checked_at)
+    )
+
+    member = state["payment_state"]["periods"]["2026-11"]["members"][
+        "member-001"
+    ]
+    assert result == {"checked": 1, "settled": 1, "failed": 0}
+    assert member["status"] == "paid"
+    assert member["paid_at"] == "2026-11-02T10:00:00+00:00"
+    assert member["payment_invoices"][TEST_PAYMENT_HASH]["settled_at"] is None
+
+
+def test_production_invoice_accepts_wallet_timestamp_without_state(
+    monkeypatch, tmp_path
+):
+    """A paid member is recognized from the wallet's timestamp-only response."""
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        lambda uri: NwcInvoiceClient(
+            uri, client_factory=lambda _: SettledRawNwcSession()
+        ),
+    )
+    state = {"payment_state": _invoice_state()}
+
+    result = asyncio.run(
+        check_payment_invoice_status(
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    member = state["payment_state"]["periods"]["2026-11"]["members"][
+        "member-001"
+    ]
+    assert result == {"checked": 1, "settled": 1, "failed": 0}
+    assert member["status"] == "paid"
 
 
 def test_pending_invoice_is_checked_but_member_remains_unpaid(monkeypatch, tmp_path):

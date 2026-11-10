@@ -226,20 +226,24 @@ def _normalize_invoice(
 
 
 def _normalize_status(payload: Any) -> NwcInvoiceStatus:
-    """Normalize the wallet's explicit invoice state, never a derived paid flag."""
+    """Normalize wallet settlement signals without trusting a derived paid flag."""
     payment_hash = _field(payload, "payment_hash")
     if not payment_hash:
         raise NwcClientError("NWC lookup response is missing payment_hash.")
 
+    settled_at = _integer_field(payload, "settled_at")
+    if settled_at is not None and settled_at <= 0:
+        settled_at = None
     raw_state = _field(payload, "state")
     if isinstance(raw_state, str) and raw_state.strip():
         state = raw_state.strip().lower()
         if state not in NWC_STATUS_STATES:
             state = "unmatched"
+    elif raw_state is None or raw_state == "":
+        # NIP-47 permits state to be absent. A settlement timestamp is an
+        # independent wallet signal; a preimage or SDK paid flag is not.
+        state = "settled" if settled_at is not None else "pending"
     else:
-        state = "unmatched"
-    settled_at = _integer_field(payload, "settled_at")
-    if state == "settled" and (settled_at is None or settled_at <= 0):
         state = "unmatched"
     return NwcInvoiceStatus(
         payment_hash=str(payment_hash),

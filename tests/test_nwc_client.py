@@ -207,7 +207,7 @@ def test_lookup_invoice_preimage_does_not_override_pending_state():
 
 
 def test_lookup_invoice_rejects_derived_paid_flag_without_wallet_state():
-    """The SDK's paid=True is not authoritative invoice settlement."""
+    """The SDK's paid=True cannot settle an invoice without wallet evidence."""
     session = FakeSession(
         lookup_response={
             "payment_hash": "hash-001",
@@ -223,11 +223,75 @@ def test_lookup_invoice_rejects_derived_paid_flag_without_wallet_state():
         )
     )
 
+    assert status.state == "pending"
+
+
+def test_lookup_invoice_uses_settlement_timestamp_when_state_is_missing():
+    """A wallet may omit optional state while reporting a real settlement."""
+    session = FakeSession(
+        lookup_response={
+            "payment_hash": "hash-001",
+            "type": "incoming",
+            "amount": 25_000,
+            "settled_at": 1_800_000_100,
+            "preimage": "00" * 32,
+        }
+    )
+
+    status = asyncio.run(
+        NwcInvoiceClient(NWC_URI, client_factory=lambda _: session).lookup_invoice(
+            payment_hash="hash-001"
+        )
+    )
+
+    assert status.state == "settled"
+    assert status.settled_at == 1_800_000_100
+
+
+def test_explicit_pending_state_overrides_settlement_timestamp():
+    """Contradictory wallet data must never turn pending into settled."""
+    session = FakeSession(
+        lookup_response={
+            "payment_hash": "hash-001",
+            "state": "pending",
+            "amount": 25_000,
+            "settled_at": 1_800_000_100,
+            "preimage": "00" * 32,
+        }
+    )
+
+    status = asyncio.run(
+        NwcInvoiceClient(NWC_URI, client_factory=lambda _: session).lookup_invoice(
+            payment_hash="hash-001"
+        )
+    )
+
+    assert status.state == "pending"
+
+
+def test_malformed_state_cannot_fall_back_to_settlement_timestamp():
+    """Only a missing optional state may use the timestamp fallback."""
+    session = FakeSession(
+        lookup_response={
+            "payment_hash": "hash-001",
+            "state": 123,
+            "amount": 25_000,
+            "settled_at": 1_800_000_100,
+            "preimage": "00" * 32,
+        }
+    )
+
+    status = asyncio.run(
+        NwcInvoiceClient(NWC_URI, client_factory=lambda _: session).lookup_invoice(
+            payment_hash="hash-001"
+        )
+    )
+
     assert status.state == "unmatched"
 
 
-def test_lookup_invoice_rejects_settled_state_without_timestamp():
-    """A settled label alone is insufficient without a CLN paid_at value."""
+def test_lookup_invoice_accepts_settled_state_without_timestamp():
+    """The wallet may omit the optional NIP-47 settlement timestamp."""
     session = FakeSession(
         lookup_response={
             "payment_hash": "hash-001",
@@ -243,7 +307,8 @@ def test_lookup_invoice_rejects_settled_state_without_timestamp():
         )
     )
 
-    assert status.state == "unmatched"
+    assert status.state == "settled"
+    assert status.settled_at is None
 
 
 def test_payment_preimage_proves_payment_hash():
