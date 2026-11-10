@@ -17,6 +17,8 @@ PAYMENT_REMINDER_HOUR=9
 PAYMENT_ADVANCE_REMINDER_DAYS=3
 PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS=2
 ENABLE_PAYMENT_REMINDERS=true
+PAYMENT_DELIVERY_MODE=off
+PAYMENT_PILOT_MEMBER_IDS=
 PAYMENT_VERIFICATION_ENABLED=false
 PAYMENT_NWC_URI=
 PAYMENT_EXCHANGE_RATE_URL=https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=mxn
@@ -37,6 +39,20 @@ numeric Telegram chat ID before enabling public payment reminders.
 
 The reminder hour uses `America/Mexico_City`. The payment and member JSON files
 are runtime data and must remain outside Git.
+
+Automated payment delivery requires an explicit `PAYMENT_DELIVERY_MODE`:
+
+- `off`: scheduled payment reminders and invoice delivery are disabled.
+- `pilot`: delivery is limited to exactly one existing stable member ID in
+  `PAYMENT_PILOT_MEMBER_IDS`, for example `member-001`. Group broadcasts and
+  payment-administrator follow-ups are suppressed.
+- `full`: normal delivery to eligible members and configured payment groups.
+  Clear `PAYMENT_PILOT_MEMBER_IDS` before selecting this mode.
+
+Missing, invalid, or inconsistent mode/allowlist settings fail closed. The
+pilot allowlist must contain one existing ID; paid and inactive members still
+do not receive reminders. The verifier continues reconciling invoices already
+issued, since wallet lookups do not send member or group messages.
 
 The repository includes `data/membership_plans.json.example` as a template.
 Copy it to the configured runtime path and edit the plan names and MXN prices
@@ -65,6 +81,45 @@ scheduler check as the public reminder.
 
 If `MEMBERS_GROUP_ID` is empty or zero, public reminders are skipped. Personal
 reminders can still be enabled later when the scheduler is configured.
+
+## Single-Member Pilot Checklist
+
+Keep automated delivery off until the pilot is deliberately prepared. Do not
+temporarily mark another member unpaid or assign an artificial plan to test the
+workflow.
+
+1. Back up `data/members.json`, `data/membership_plans.json`, and
+   `data/payment_state.json` to protected storage. Verify the backup can be
+   read, and do not put runtime data or `.env` in Git.
+2. Confirm the selected member has explicitly consented to receive a private
+   invoice. Review their active status, Telegram ID, plan, and quantity in the
+   member roster. Confirm the configured plan and MXN price are correct.
+3. Confirm the exchange-rate provider is reachable and its cached rate is
+   within `PAYMENT_EXCHANGE_RATE_MAX_AGE_SECONDS`. Run `/paymenttest` and
+   `/paymenttest status` first; leave the test unpaid through two verifier
+   polls before paying it.
+4. Set `PAYMENT_DELIVERY_MODE=pilot` and set
+   `PAYMENT_PILOT_MEMBER_IDS` to exactly the selected stable member ID. Keep
+   `PAYMENT_VERIFICATION_ENABLED=true` and the NWC URI configured privately.
+5. Restart the service. Confirm `/status` and service logs show no startup
+   failure. Observe the private invoice delivery; verify no payment-group or
+   payment-administrator message was sent by the pilot run.
+6. Confirm the saved member-period record contains the expected invoice,
+   amount, pricing snapshot, and delivery history. Restart the service and
+   verify the record remains intact and retries reuse the same invoice.
+7. Leave the member's invoice unpaid through at least two scheduled verifier
+   polls. Confirm it remains pending. Pay the invoice, then confirm the
+   scheduled verifier marks only that member-period paid without a manual
+   recheck. Review the persisted record after another restart.
+8. For rollback, set `PAYMENT_DELIVERY_MODE=off` and restart the service.
+   Preserve the payment state and investigate any uncertain invoice before
+   changing its status. Do not delete invoice history to make a retry succeed.
+9. To enable normal delivery, first review the pilot results and obtain
+   operator approval. Clear `PAYMENT_PILOT_MEMBER_IDS`, explicitly set
+   `PAYMENT_DELIVERY_MODE=full`, then restart and verify the configuration.
+
+Changing from `pilot` to `off` does not turn on full delivery. Selecting
+`full` with a non-empty pilot allowlist is invalid and suppresses delivery.
 
 ## Testing NWC Payment Automation
 
