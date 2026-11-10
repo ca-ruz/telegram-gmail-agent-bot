@@ -96,6 +96,13 @@ not send a group message, and does not trigger member reminders. It only
 confirms invoice creation, payment lookup, exact amount validation, settlement
 proof, and expiry handling. Keep the NWC URI private during the test.
 
+Private membership reminders include a QR code for each generated Lightning
+invoice. The QR caption includes the billing period, amount, expiration, and
+the full copyable invoice. If QR generation or Telegram photo delivery fails,
+the bot sends the invoice as text instead. Invoice QR codes and BOLT11 strings
+are sent only in private member chats and are never included in public group
+reminders.
+
 ## Managing Members
 
 The primary administrator or payment administrator can use `/members`:
