@@ -69,6 +69,7 @@ def test_payment_reminder_creates_invoice_from_member_plan(monkeypatch, tmp_path
     context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
     config = {
         "ENABLE_PAYMENT_REMINDERS": True,
+        "PAYMENT_DELIVERY_MODE": "full",
         "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
         "PAYMENT_VERIFICATION_ENABLED": True,
         "PAYMENT_NWC_URI": (
