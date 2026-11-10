@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from core import membership_payments
-from core.nwc_client import NwcInvoiceStatus
+from core.nwc_client import NwcInvoiceClient, NwcInvoiceStatus
 from core.payment_test_state import build_payment_test_state, record_payment_test_invoice
 
 
@@ -60,6 +60,29 @@ class FakeNwcInvoiceClient:
         """Return the configured status for the requested hash."""
         self.calls.append(payment_hash)
         return self.status
+
+
+class PendingRawNwcSession:
+    """Return a pending wallet result that already exposes its preimage."""
+
+    async def __aenter__(self):
+        """Open the fake session."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        """Close the fake session."""
+        return None
+
+    async def _send_request(self, method, params):
+        """Return a wallet-level pending invoice with valid preimage."""
+        assert method == "lookup_invoice"
+        assert params == {"payment_hash": TEST_PAYMENT_HASH}
+        return {
+            "payment_hash": TEST_PAYMENT_HASH,
+            "state": "pending",
+            "amount": 100_000,
+            "preimage": TEST_PAYMENT_PREIMAGE,
+        }
 
 
 def _context():
@@ -136,6 +159,32 @@ def test_pending_test_invoice_records_last_check_without_notification(
             _config(tmp_path),
             state,
             now=now,
+        )
+    )
+
+    assert result == {"checked": 1, "settled": 0, "failed": 0}
+    assert state["payment_test_state"]["active_invoice"]["state"] == "pending"
+    assert context.bot.send_message.await_count == 0
+
+
+def test_pending_wallet_preimage_cannot_confirm_payment_test(monkeypatch, tmp_path):
+    """The full lookup path ignores a preimage on an unpaid invoice."""
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        lambda uri: NwcInvoiceClient(
+            uri, client_factory=lambda _: PendingRawNwcSession()
+        ),
+    )
+    context = _context()
+    state = {"payment_test_state": _test_state()}
+
+    result = asyncio.run(
+        membership_payments.check_payment_test_invoice_status(
+            context,
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc),
         )
     )
 

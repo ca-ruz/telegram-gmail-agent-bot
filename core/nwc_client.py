@@ -80,8 +80,8 @@ class NwcSession(Protocol):
     ) -> Any:
         """Create an invoice through the wallet service."""
 
-    async def lookup_invoice(self, *, payment_hash: str) -> Any:
-        """Look up an invoice through the wallet service."""
+    async def _send_request(self, method: str, params: dict[str, Any]) -> Any:
+        """Return the raw wallet result before the pinned SDK derives paid."""
 
 
 NwcClientFactory = Callable[[str], NwcSession]
@@ -226,7 +226,7 @@ def _normalize_invoice(
 
 
 def _normalize_status(payload: Any) -> NwcInvoiceStatus:
-    """Normalize an invoice lookup response."""
+    """Normalize the wallet's explicit invoice state, never a derived paid flag."""
     payment_hash = _field(payload, "payment_hash")
     if not payment_hash:
         raise NwcClientError("NWC lookup response is missing payment_hash.")
@@ -234,21 +234,18 @@ def _normalize_status(payload: Any) -> NwcInvoiceStatus:
     raw_state = _field(payload, "state")
     if isinstance(raw_state, str) and raw_state.strip():
         state = raw_state.strip().lower()
-        if state == "paid":
-            state = "settled"
         if state not in NWC_STATUS_STATES:
             state = "unmatched"
     else:
-        paid = _field(payload, "paid")
-        if isinstance(paid, bool):
-            state = "settled" if paid else "pending"
-        else:
-            state = "unmatched"
+        state = "unmatched"
+    settled_at = _integer_field(payload, "settled_at")
+    if state == "settled" and (settled_at is None or settled_at <= 0):
+        state = "unmatched"
     return NwcInvoiceStatus(
         payment_hash=str(payment_hash),
         state=state,
         amount_msat=_integer_field_alias(payload, ("amount", "amount_msat")),
-        settled_at=_integer_field(payload, "settled_at"),
+        settled_at=settled_at,
         preimage=_string_field_alias(payload, ("preimage", "payment_preimage")),
     )
 
@@ -291,13 +288,15 @@ class NwcInvoiceClient:
             raise NwcTransportError("NWC invoice creation failed.") from exc
 
     async def lookup_invoice(self, *, payment_hash: str) -> NwcInvoiceStatus:
-        """Look up and normalize an invoice by payment hash."""
+        """Look up raw wallet state by hash without the SDK's derived paid flag."""
         if not payment_hash or not payment_hash.strip():
             raise ValueError("Payment hash is required.")
         try:
             async with self._client_factory(self._connection_uri) as client:
-                response = await client.lookup_invoice(
-                    payment_hash=payment_hash.strip()
+                # The pinned SDK's public lookup drops `state` and treats any
+                # preimage as paid, even when the wallet reports pending.
+                response = await client._send_request(
+                    "lookup_invoice", {"payment_hash": payment_hash.strip()}
                 )
             return _normalize_status(response)
         except NwcClientError:
