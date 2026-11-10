@@ -38,6 +38,7 @@ from core.imported_events import load_imported_events
 from core.notification_preferences import load_notification_preferences
 from core.telegram_metadata import load_telegram_metadata
 from core.membership_pricing import load_membership_plans
+from core.payment_delivery_policy import resolve_payment_delivery_policy
 from core.payment_test_state import (
     load_payment_test_state,
     parse_payment_test_amount_sats,
@@ -128,6 +129,8 @@ CONFIG = {
     'ENABLE_COFFEE_HOST_REMINDERS': parse_env_bool('ENABLE_COFFEE_HOST_REMINDERS', True),
     'ENABLE_MANUAL_PROMO_REMINDERS': parse_env_bool('ENABLE_MANUAL_PROMO_REMINDERS', True),
     'ENABLE_PAYMENT_REMINDERS': parse_env_bool('ENABLE_PAYMENT_REMINDERS', True),
+    'PAYMENT_DELIVERY_MODE': os.getenv('PAYMENT_DELIVERY_MODE', 'off'),
+    'PAYMENT_PILOT_MEMBER_IDS': os.getenv('PAYMENT_PILOT_MEMBER_IDS', ''),
     'EVENT_SAME_DAY_REMINDER_HOUR': parse_env_int('EVENT_SAME_DAY_REMINDER_HOUR', 13),
     'EVENT_MORNING_REMINDER_LEAD_HOURS': parse_env_int('EVENT_MORNING_REMINDER_LEAD_HOURS', 2),
     'REMINDERS_FILE': "data/sent_reminders.json",
@@ -373,6 +376,8 @@ def main():
         await check_manual_promo_reminders(context, config=CONFIG, state=STATE)
 
     async def payment_reminder_job(context):
+        if resolve_payment_delivery_policy(CONFIG, STATE.get('members', {})).mode != 'full':
+            return
         await check_payment_reminders(context, config=CONFIG, state=STATE)
 
     async def payment_verification_job(context):
