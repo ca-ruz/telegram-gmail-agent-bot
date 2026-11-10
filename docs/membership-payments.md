@@ -87,13 +87,14 @@ Use this command to inspect the current result:
 /paymenttest status
 ```
 
-The bot sends a private success message only after settlement is
-verified. The raw wallet lookup must contain the exact payment hash and amount,
-`state=settled`, a positive `settled_at` timestamp, and a payment preimage
-whose SHA-256 matches the payment hash. The bot ignores the NWC SDK's derived
-`paid` flag because an unpaid invoice may already expose its preimage. Leave
-the test invoice unpaid through at least two verification polls and confirm it
-remains pending before paying it. See [the payment test guide](payment-test.md).
+The bot sends a private success message only after settlement is verified. The
+raw wallet lookup must match the exact payment hash and amount, include a
+preimage whose SHA-256 matches that hash, and report either `state=settled` or
+a positive `settled_at` when `state` is absent. An explicit `pending` state is
+never treated as paid. The bot ignores the NWC SDK's derived `paid` flag
+because an unpaid invoice may already expose its preimage. Leave the test
+invoice unpaid through at least two verification polls and confirm it remains
+pending before paying it. See [the payment test guide](payment-test.md).
 
 A successful test does not mark any real member or billing period as paid, does
 not send a group message, and does not trigger member reminders. It only
@@ -186,8 +187,8 @@ MXN total, converts it to millisatoshis using the configured MXN-per-BTC
 provider, and creates or reuses one invoice per unpaid member and billing
 period in private reminders. A separate verification job checks pending invoices using
 `PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS`; it marks the matching period as
-paid only after the wallet reports that exact invoice as settled with a
-settlement timestamp and matching preimage. Wallet errors,
+paid only after the wallet reports that exact invoice as settled, or omits
+`state` but includes a settlement timestamp, with matching preimage. Wallet errors,
 expired invoices, and hash mismatches do not mark a member paid, and the manual
 `/payments` workflow remains available.
 The amount returned by NWC must match the amount calculated for that member and

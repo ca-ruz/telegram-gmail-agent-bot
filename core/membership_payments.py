@@ -920,7 +920,7 @@ async def check_payment_invoice_status(config, state, now=None):
                 if status_state == "settled":
                     if member_record.get("status") != "paid":
                         member_record["status"] = "paid"
-                        member_record["paid_at"] = settled_at
+                        member_record["paid_at"] = settled_at or _timestamp_string(checked_at)
                     result["settled"] += 1
 
     if state_changed:
@@ -939,7 +939,7 @@ async def check_payment_test_invoice_status(context, config, state, now=None):
 
     test_state = state.setdefault("payment_test_state", {})
     active_invoice = get_active_payment_test_invoice(test_state)
-    if not active_invoice or active_invoice.get("state") != "pending":
+    if not active_invoice or active_invoice.get("state") not in {"pending", "unmatched"}:
         return {"checked": 0, "settled": 0, "failed": 0}
 
     connection_uri, _expiry_seconds = settings
@@ -967,6 +967,18 @@ async def check_payment_test_invoice_status(context, config, state, now=None):
     except Exception:
         logger.warning("Could not check isolated payment test invoice.")
         return {"checked": 1, "settled": 0, "failed": 1}
+
+    returned_amount = _normalize_invoice_integer(getattr(status, "amount_msat", None))
+    expected_amount = _normalize_invoice_integer(active_invoice.get("amount_msat"))
+    logger.info(
+        "Payment test lookup: state=%s, settled_at_present=%s, "
+        "hash_matches=%s, amount_matches=%s, preimage_valid=%s.",
+        getattr(status, "state", "unknown"),
+        bool(getattr(status, "settled_at", None)),
+        str(getattr(status, "payment_hash", "")) == payment_hash,
+        returned_amount is not None and returned_amount == expected_amount,
+        _invoice_status_has_settlement_proof(status, payment_hash),
+    )
 
     status_state = _normalized_invoice_status(status)
     if not _invoice_status_matches(

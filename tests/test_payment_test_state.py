@@ -16,6 +16,7 @@ from core.payment_test_state import (
     record_payment_test_invoice,
     reset_payment_test_invoice,
     save_payment_test_state,
+    update_payment_test_invoice,
 )
 
 
@@ -76,6 +77,22 @@ def test_pending_test_invoice_cannot_be_duplicated():
 
     with pytest.raises(PaymentTestInvoiceConflict):
         record_payment_test_invoice(state, _invoice(payment_hash="hash-002"), 100, "test-002")
+
+
+def test_unmatched_test_remains_active_until_rechecked_or_reset():
+    """An inconclusive lookup must not discard a potentially paid test."""
+    state = record_payment_test_invoice(
+        build_payment_test_state(), _invoice(), 100, "test-001"
+    )
+    state = update_payment_test_invoice(state, "hash-test", state_value="unmatched")
+
+    assert get_active_payment_test_invoice(state)["state"] == "unmatched"
+    with pytest.raises(PaymentTestInvoiceConflict):
+        record_payment_test_invoice(state, _invoice(payment_hash="hash-002"), 100, "test-002")
+
+    reset = reset_payment_test_invoice(state)
+    assert reset["active_invoice"] is None
+    assert reset["history"][-1]["state"] == "unmatched"
 
 
 def test_cancelled_test_invoice_is_preserved_but_not_active():

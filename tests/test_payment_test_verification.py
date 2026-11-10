@@ -2,12 +2,17 @@
 
 import asyncio
 from datetime import datetime, timezone
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from core import membership_payments
 from core.nwc_client import NwcInvoiceClient, NwcInvoiceStatus
-from core.payment_test_state import build_payment_test_state, record_payment_test_invoice
+from core.payment_test_state import (
+    build_payment_test_state,
+    record_payment_test_invoice,
+    update_payment_test_invoice,
+)
 
 
 NWC_URI = (
@@ -85,6 +90,28 @@ class PendingRawNwcSession:
         }
 
 
+class SettledRawNwcSession(PendingRawNwcSession):
+    """Model the paid NWC response that omitted its optional state field."""
+
+    async def _send_request(self, method, params):
+        """Return the receiver's exact timestamp-only settlement shape."""
+        result = await super()._send_request(method, params)
+        result.pop("state")
+        result["type"] = "incoming"
+        result["settled_at"] = 1_783_599_600
+        return result
+
+
+class UnpaidRawNwcSession(PendingRawNwcSession):
+    """Model an unpaid wallet that omits its optional state field."""
+
+    async def _send_request(self, method, params):
+        """Return no settlement signal despite an available preimage."""
+        result = await super()._send_request(method, params)
+        result.pop("state")
+        return result
+
+
 def _context():
     """Build a context with a private administrator notification sink."""
     return SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
@@ -132,6 +159,95 @@ def test_settled_test_invoice_notifies_admin_without_changing_production_state(
     )
 
 
+def test_unmatched_test_rechecks_settlement_without_timestamp(
+    monkeypatch, tmp_path, caplog
+):
+    """A previously inconclusive test recovers when the wallet confirms settlement."""
+    caplog.set_level(logging.INFO, logger=membership_payments.__name__)
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="unmatched",
+        amount_msat=100_000,
+        settled_at=None,
+    )
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    context = _context()
+    state = {"payment_test_state": _test_state()}
+    config = _config(tmp_path)
+
+    first_result = asyncio.run(
+        membership_payments.check_payment_test_invoice_status(
+            context,
+            config,
+            state,
+            now=datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+    assert first_result == {"checked": 1, "settled": 0, "failed": 0}
+    assert state["payment_test_state"]["active_invoice"]["state"] == "unmatched"
+
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=100_000,
+        settled_at=None,
+        preimage=TEST_PAYMENT_PREIMAGE,
+    )
+    second_result = asyncio.run(
+        membership_payments.check_payment_test_invoice_status(
+            context,
+            config,
+            state,
+            now=datetime(2026, 11, 7, 12, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    assert second_result == {"checked": 1, "settled": 1, "failed": 0}
+    assert state["payment_test_state"]["active_invoice"]["state"] == "settled"
+    assert state["payment_test_state"]["active_invoice"]["settled_at"] is None
+    assert context.bot.send_message.await_count == 1
+    assert FakeNwcInvoiceClient.calls == [TEST_PAYMENT_HASH, TEST_PAYMENT_HASH]
+    assert "state=settled" in caplog.text
+    assert "preimage_valid=True" in caplog.text
+    assert TEST_PAYMENT_HASH not in caplog.text
+    assert TEST_PAYMENT_PREIMAGE not in caplog.text
+
+
+def test_unmatched_test_recovers_from_wallet_response_without_state(
+    monkeypatch, tmp_path
+):
+    """A paid test is recognized even when raw NWC omits optional state."""
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        lambda uri: NwcInvoiceClient(
+            uri, client_factory=lambda _: SettledRawNwcSession()
+        ),
+    )
+    context = _context()
+    test_state = _test_state()
+    test_state = update_payment_test_invoice(
+        test_state,
+        TEST_PAYMENT_HASH,
+        state_value="unmatched",
+    )
+    state = {"payment_test_state": test_state}
+
+    result = asyncio.run(
+        membership_payments.check_payment_test_invoice_status(
+            context,
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 7, 12, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    assert result == {"checked": 1, "settled": 1, "failed": 0}
+    assert state["payment_test_state"]["active_invoice"]["state"] == "settled"
+    assert context.bot.send_message.await_count == 1
+
+
 def test_pending_test_invoice_records_last_check_without_notification(
     monkeypatch,
     tmp_path,
@@ -174,6 +290,34 @@ def test_pending_wallet_preimage_cannot_confirm_payment_test(monkeypatch, tmp_pa
         "NwcInvoiceClient",
         lambda uri: NwcInvoiceClient(
             uri, client_factory=lambda _: PendingRawNwcSession()
+        ),
+    )
+    context = _context()
+    state = {"payment_test_state": _test_state()}
+
+    result = asyncio.run(
+        membership_payments.check_payment_test_invoice_status(
+            context,
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert result == {"checked": 1, "settled": 0, "failed": 0}
+    assert state["payment_test_state"]["active_invoice"]["state"] == "pending"
+    assert context.bot.send_message.await_count == 0
+
+
+def test_missing_wallet_state_without_timestamp_keeps_test_pending(
+    monkeypatch, tmp_path
+):
+    """An unpaid wallet's omitted state must stay retryable, not unmatched."""
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        lambda uri: NwcInvoiceClient(
+            uri, client_factory=lambda _: UnpaidRawNwcSession()
         ),
     )
     context = _context()

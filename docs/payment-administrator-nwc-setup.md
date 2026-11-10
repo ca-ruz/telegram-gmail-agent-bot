@@ -121,9 +121,10 @@ El bot utilizará la conexión para:
 2. Asociar la factura con el miembro, el periodo y el monto esperado.
 3. Enviar la factura al miembro por Telegram.
 4. Detectar o consultar si la factura fue liquidada.
-5. Marcar el pago como confirmado únicamente cuando la respuesta NWC incluya un
-   estado explícito de liquidación y un preimage válido cuyo SHA-256 coincida
-   con el hash de pago de la factura.
+5. Marcar el pago como confirmado únicamente cuando la respuesta NWC coincida
+   con el hash y monto de la factura, incluya un preimage válido cuyo SHA-256
+   coincida con el hash, e indique `state=settled` o, si omite `state`, incluya
+   un `settled_at` positivo. Un estado explícito `pending` no confirma el pago.
 6. Reconciliar facturas después de reinicios o interrupciones.
 
 El bot no podrá gastar fondos, pagar facturas externas ni acceder directamente

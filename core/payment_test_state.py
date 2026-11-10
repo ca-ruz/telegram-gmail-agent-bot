@@ -186,9 +186,9 @@ def build_payment_test_invoice_record(
 
 
 def get_active_payment_test_invoice(state):
-    """Return the active test invoice when it is still pending or settled."""
+    """Return a test invoice while it may still be reconciled or inspected."""
     invoice = normalize_payment_test_state(state).get("active_invoice")
-    if invoice and invoice.get("state") in {"pending", "settled"}:
+    if invoice and invoice.get("state") in {"pending", "unmatched", "settled"}:
         return invoice
     return None
 
@@ -238,7 +238,7 @@ def record_payment_test_invoice(state, invoice, amount_sats, test_id, created_at
     """Persist one test invoice while preserving prior test history."""
     normalized_state = normalize_payment_test_state(state)
     active_invoice = normalized_state.get("active_invoice")
-    if active_invoice and active_invoice.get("state") in {"pending", "settled"}:
+    if active_invoice and active_invoice.get("state") in {"pending", "unmatched", "settled"}:
         raise PaymentTestInvoiceConflict("A payment test invoice is already active.")
 
     invoice_record = build_payment_test_invoice_record(
