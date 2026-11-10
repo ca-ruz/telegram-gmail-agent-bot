@@ -55,10 +55,13 @@ Open a private chat with the bot and send:
 /paymenttest
 ```
 
-Only the primary administrator can use this command. The bot sends a QR code
-and the full invoice text for the configured test amount.
+Only the primary administrator can use this command. The bot sends one message
+containing the QR code, invoice details, and the full copyable invoice for the
+configured test amount.
 
-If QR generation or delivery fails, the bot still sends the full invoice text.
+If QR generation or delivery fails, the bot sends one text fallback containing
+the full invoice. It does not send a duplicate message after a successful QR
+delivery.
 
 The command does not require a membership plan and does not modify November's
 real payment status.
