@@ -118,10 +118,83 @@ def test_paymenttest_reuses_active_invoice_and_status_reports_it(monkeypatch, tm
     asyncio.run(admin.payment_test(duplicate_update, SimpleNamespace(), 42, state, config))
 
     assert len(FakeNwcInvoiceClient.calls) == 1
-    assert "payment-test-hash" in status_update.message.reply_text.await_args.args[0]
+    assert status_update.message.reply_text.await_count == 0
+    status_caption = status_update.message.reply_photo.await_args.kwargs["caption"]
+    assert "payment-test-hash" in status_caption
+    assert "lnbc-payment-test" in status_caption
+    assert "Estado: pending" in status_caption
     assert "Ya hay una prueba de pago activa" in (
         duplicate_update.message.reply_text.await_args.args[0]
     )
+
+
+def test_paymenttest_status_falls_back_to_full_text(monkeypatch, tmp_path):
+    """Status still exposes the full invoice when QR delivery fails."""
+    FakeNwcInvoiceClient.calls = []
+    monkeypatch.setattr(admin, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    monkeypatch.setattr(
+        admin,
+        "build_invoice_qr",
+        lambda invoice: (_ for _ in ()).throw(ValueError("invalid QR")),
+    )
+    state = {"payment_test_state": build_payment_test_state()}
+    config = _config(tmp_path)
+
+    asyncio.run(admin.payment_test(_update(), SimpleNamespace(), 42, state, config))
+    status_update = _update("/paymenttest status")
+    asyncio.run(admin.payment_test(status_update, SimpleNamespace(), 42, state, config))
+
+    assert status_update.message.reply_photo.await_count == 0
+    status_text = status_update.message.reply_text.await_args.args[0]
+    assert "Estado: pending" in status_text
+    assert "payment-test-hash" in status_text
+    assert "lnbc-payment-test" in status_text
+
+
+def test_paymenttest_cancel_preserves_history_and_allows_new_test(monkeypatch, tmp_path):
+    """Cancelling a pending test preserves it and permits a replacement."""
+    FakeNwcInvoiceClient.calls = []
+    monkeypatch.setattr(admin, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    state = {"payment_test_state": build_payment_test_state()}
+    config = _config(tmp_path)
+
+    asyncio.run(admin.payment_test(_update(), SimpleNamespace(), 42, state, config))
+    cancel_update = _update("/paymenttest cancel")
+    asyncio.run(admin.payment_test(cancel_update, SimpleNamespace(), 42, state, config))
+
+    assert "cancelada" in cancel_update.message.reply_text.await_args.args[0]
+    assert state["payment_test_state"]["active_invoice"]["state"] == "cancelled"
+
+    asyncio.run(admin.payment_test(_update(), SimpleNamespace(), 42, state, config))
+
+    assert len(FakeNwcInvoiceClient.calls) == 2
+    assert len(state["payment_test_state"]["history"]) == 1
+    assert state["payment_test_state"]["active_invoice"]["state"] == "pending"
+
+
+def test_paymenttest_reset_archives_settled_test_and_allows_new_test(
+    monkeypatch,
+    tmp_path,
+):
+    """Reset archives a completed test and clears it before recreation."""
+    FakeNwcInvoiceClient.calls = []
+    monkeypatch.setattr(admin, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    state = {"payment_test_state": build_payment_test_state()}
+    config = _config(tmp_path)
+
+    asyncio.run(admin.payment_test(_update(), SimpleNamespace(), 42, state, config))
+    state["payment_test_state"]["active_invoice"]["state"] = "settled"
+    reset_update = _update("/paymenttest reset")
+    asyncio.run(admin.payment_test(reset_update, SimpleNamespace(), 42, state, config))
+
+    assert "reiniciada" in reset_update.message.reply_text.await_args.args[0]
+    assert state["payment_test_state"]["active_invoice"] is None
+    assert state["payment_test_state"]["history"][0]["state"] == "settled"
+
+    asyncio.run(admin.payment_test(_update(), SimpleNamespace(), 42, state, config))
+
+    assert len(FakeNwcInvoiceClient.calls) == 2
+    assert state["payment_test_state"]["active_invoice"]["state"] == "pending"
 
 
 def test_paymenttest_is_primary_admin_only(tmp_path):

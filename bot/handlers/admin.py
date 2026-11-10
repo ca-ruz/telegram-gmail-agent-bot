@@ -49,10 +49,14 @@ from core.notification_preferences import (
 from core.nwc_client import NwcInvoiceClient
 from core.payment_qr import build_invoice_qr
 from core.payment_test_state import (
+    PaymentTestInvoiceConflict,
     build_payment_test_state,
+    cancel_payment_test_invoice,
     get_active_payment_test_invoice,
+    get_latest_payment_test_invoice,
     normalize_payment_test_amount_sats,
     record_payment_test_invoice,
+    reset_payment_test_invoice,
     save_payment_test_state,
 )
 from core.membership_payments import (
@@ -763,15 +767,51 @@ async def manage_members(
     )
 
 
+def _format_payment_test_timestamp(value):
+    """Format a persisted payment-test timestamp without exposing secrets."""
+    if value is None:
+        return "no disponible"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(value, timezone.utc).strftime(
+                "%Y-%m-%d %H:%M UTC"
+            )
+        except (OverflowError, OSError, ValueError):
+            return "no disponible"
+    return str(value)
+
+
+def _format_payment_test_status(invoice):
+    """Build the full private status message for one payment test invoice."""
+    return "\n".join([
+        "🧪 Estado de la prueba de pago",
+        "",
+        f"ID: {invoice.get('test_id', 'sin ID')}",
+        f"Estado: {invoice.get('state', 'desconocido')}",
+        f"Monto: {invoice.get('amount_sats', 0)} sats "
+        f"({invoice.get('amount_msat', 0)} msat)",
+        f"Creada: {_format_payment_test_timestamp(invoice.get('created_at'))}",
+        f"Expira: {_format_payment_test_timestamp(invoice.get('expires_at'))}",
+        f"Última revisión: "
+        f"{_format_payment_test_timestamp(invoice.get('last_checked_at'))}",
+        f"Liquidada: {_format_payment_test_timestamp(invoice.get('settled_at'))}",
+        f"Hash: {invoice.get('payment_hash', 'sin hash')}",
+        "",
+        "⚡ Factura Lightning:",
+        str(invoice.get("invoice", "sin factura")),
+    ])
+
+
 async def payment_test(update, context, admin_id, state, config):
     """Create or inspect one isolated low-value payment test invoice."""
     if update.effective_user.id != admin_id:
         return
 
     raw_args = update.message.text.partition(" ")[2].strip().lower()
-    if raw_args not in {"", "status"}:
+    if raw_args not in {"", "status", "cancel", "reset"}:
         await update.message.reply_text(
-            "Uso: /paymenttest o /paymenttest status"
+            "Uso: /paymenttest | /paymenttest status | "
+            "/paymenttest cancel | /paymenttest reset"
         )
         return
 
@@ -781,15 +821,64 @@ async def payment_test(update, context, admin_id, state, config):
     )
     active_invoice = get_active_payment_test_invoice(test_state)
     if raw_args == "status":
-        if active_invoice is None:
+        invoice = get_latest_payment_test_invoice(test_state)
+        if invoice is None:
             await update.message.reply_text("🧪 No hay una prueba de pago activa.")
             return
+        status_message = _format_payment_test_status(invoice)
+        try:
+            await update.message.reply_photo(
+                photo=build_invoice_qr(invoice["invoice"]),
+                caption=status_message,
+            )
+        except Exception:
+            logger.exception("Could not send payment test status QR; using text fallback.")
+            await update.message.reply_text(status_message)
+        return
+
+    if raw_args == "cancel":
+        if active_invoice is None:
+            await update.message.reply_text("🧪 No hay una prueba pendiente para cancelar.")
+            return
+        try:
+            state["payment_test_state"] = cancel_payment_test_invoice(
+                test_state,
+                cancelled_at=datetime.now(timezone.utc),
+            )
+        except PaymentTestInvoiceConflict:
+            await update.message.reply_text(
+                "❌ La prueba ya no está pendiente. Usa /paymenttest reset para "
+                "archivarla y comenzar otra."
+            )
+            return
+        save_payment_test_state(
+            config["PAYMENT_TEST_STATE_FILE"],
+            state["payment_test_state"],
+        )
         await update.message.reply_text(
-            "🧪 Prueba de pago\n"
-            f"ID: {active_invoice.get('test_id', 'sin ID')}\n"
-            f"Estado: {active_invoice.get('state', 'desconocido')}\n"
-            f"Monto: {active_invoice.get('amount_sats', 0)} sats\n"
-            f"Hash: {active_invoice.get('payment_hash', 'sin hash')}"
+            "✅ La prueba de pago fue cancelada. Su historial se conserva y "
+            "puedes crear una nueva con /paymenttest."
+        )
+        return
+
+    if raw_args == "reset":
+        if active_invoice is None:
+            await update.message.reply_text(
+                "🧪 No hay una prueba activa para reiniciar. Usa /paymenttest "
+                "para crear una nueva."
+            )
+            return
+        state["payment_test_state"] = reset_payment_test_invoice(
+            test_state,
+            reset_at=datetime.now(timezone.utc),
+        )
+        save_payment_test_state(
+            config["PAYMENT_TEST_STATE_FILE"],
+            state["payment_test_state"],
+        )
+        await update.message.reply_text(
+            "✅ La prueba fue reiniciada. Su historial se conserva y puedes "
+            "crear una nueva con /paymenttest."
         )
         return
 

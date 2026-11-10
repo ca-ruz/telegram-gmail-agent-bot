@@ -7,11 +7,14 @@ import pytest
 from core.payment_test_state import (
     PaymentTestInvoiceConflict,
     build_payment_test_state,
+    cancel_payment_test_invoice,
     get_active_payment_test_invoice,
+    get_latest_payment_test_invoice,
     load_payment_test_state,
     normalize_payment_test_amount_sats,
     parse_payment_test_amount_sats,
     record_payment_test_invoice,
+    reset_payment_test_invoice,
     save_payment_test_state,
 )
 
@@ -73,6 +76,51 @@ def test_pending_test_invoice_cannot_be_duplicated():
 
     with pytest.raises(PaymentTestInvoiceConflict):
         record_payment_test_invoice(state, _invoice(payment_hash="hash-002"), 100, "test-002")
+
+
+def test_cancelled_test_invoice_is_preserved_but_not_active():
+    """Cancelling a pending invoice stops it from blocking a new test."""
+    state = record_payment_test_invoice(
+        build_payment_test_state(),
+        _invoice(),
+        100,
+        "test-001",
+    )
+
+    cancelled = cancel_payment_test_invoice(
+        state,
+        cancelled_at=datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert get_active_payment_test_invoice(cancelled) is None
+    latest = get_latest_payment_test_invoice(cancelled)
+    assert latest["state"] == "cancelled"
+    assert latest["last_checked_at"] == "2026-11-07T12:00:00+00:00"
+
+
+def test_reset_archives_current_test_and_allows_a_new_one():
+    """Reset preserves history and clears the slot used for new tests."""
+    state = record_payment_test_invoice(
+        build_payment_test_state(),
+        _invoice(),
+        100,
+        "test-001",
+    )
+
+    reset = reset_payment_test_invoice(
+        state,
+        reset_at=datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc),
+    )
+    reset = record_payment_test_invoice(
+        reset,
+        _invoice(payment_hash="hash-002"),
+        100,
+        "test-002",
+    )
+
+    assert len(reset["history"]) == 1
+    assert reset["history"][0]["state"] == "cancelled"
+    assert reset["active_invoice"]["test_id"] == "test-002"
 
 
 def test_test_invoice_amount_mismatch_is_rejected():

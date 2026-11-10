@@ -15,6 +15,7 @@ PAYMENT_TEST_INVOICE_STATES = frozenset({
     "expired",
     "failed",
     "unmatched",
+    "cancelled",
 })
 
 
@@ -190,6 +191,47 @@ def get_active_payment_test_invoice(state):
     if invoice and invoice.get("state") in {"pending", "settled"}:
         return invoice
     return None
+
+
+def get_latest_payment_test_invoice(state):
+    """Return the active test or the newest historical test invoice."""
+    normalized_state = normalize_payment_test_state(state)
+    active_invoice = normalized_state.get("active_invoice")
+    if active_invoice is not None:
+        return active_invoice
+    history = normalized_state.get("history", [])
+    return history[-1] if history else None
+
+
+def cancel_payment_test_invoice(state, cancelled_at=None):
+    """Mark the pending test invoice cancelled without deleting its record."""
+    normalized_state = normalize_payment_test_state(state)
+    invoice = normalized_state.get("active_invoice")
+    if invoice is None:
+        return normalized_state
+    if invoice.get("state") != "pending":
+        raise PaymentTestInvoiceConflict(
+            "Only a pending payment test invoice can be cancelled."
+        )
+    invoice["state"] = "cancelled"
+    invoice["last_checked_at"] = _timestamp_string(cancelled_at)
+    return normalized_state
+
+
+def reset_payment_test_invoice(state, reset_at=None):
+    """Archive the current test and clear the active slot for a new test."""
+    normalized_state = normalize_payment_test_state(state)
+    active_invoice = normalized_state.get("active_invoice")
+    if active_invoice is None or active_invoice.get("state") == "cancelled":
+        return normalized_state
+    if active_invoice.get("state") == "pending":
+        active_invoice = cancel_payment_test_invoice(
+            normalized_state,
+            cancelled_at=reset_at,
+        ).get("active_invoice")
+    normalized_state["history"].append(active_invoice)
+    normalized_state["active_invoice"] = None
+    return normalized_state
 
 
 def record_payment_test_invoice(state, invoice, amount_sats, test_id, created_at=None):

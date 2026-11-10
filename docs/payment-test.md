@@ -77,6 +77,26 @@ Check the current test state with:
 /paymenttest status
 ```
 
+The status command shows the test ID, state, amount, creation time, expiration,
+last verification time, settlement time, payment hash, and full invoice. It
+also sends the invoice QR code when the invoice is available. If QR delivery
+fails, the same details are sent as one text message.
+
+To stop an unpaid test without deleting its record, use:
+
+```text
+/paymenttest cancel
+```
+
+To archive the current test and make room for a new one, use:
+
+```text
+/paymenttest reset
+```
+
+Both commands preserve the test history and affect only the isolated payment
+test state.
+
 With the temporary 60-second polling interval, settlement should normally be
 detected within about one or two minutes after the payment is confirmed.
 
