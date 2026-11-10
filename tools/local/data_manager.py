@@ -26,13 +26,14 @@ def load_json(file_path, default):
         logger.error(f"Error loading JSON from {file_path}: {e}")
         return default
 
-def save_json(file_path, data):
+def save_json(file_path, data, *, raise_on_error=False):
     """
     Saves data to a JSON file atomically using a temporary file.
     
     Args:
         file_path (str): Path to the destination JSON file.
         data: The data to serialize to JSON.
+        raise_on_error (bool): Raise write errors when callers must fail closed.
     """
     tmp = file_path + ".tmp"
     try:
@@ -42,6 +43,8 @@ def save_json(file_path, data):
         os.replace(tmp, file_path)
     except Exception as e:
         logger.error(f"Error saving JSON to {file_path}: {e}")
+        if raise_on_error:
+            raise
 
 def load_reminder_rules(config_file):
     """

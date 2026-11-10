@@ -9,6 +9,7 @@ from core.membership_payments import (
     build_multi_period_payment_state,
     check_payment_invoice_status,
     get_or_create_payment_invoice,
+    load_multi_period_payment_state,
     record_payment_invoice,
 )
 from core.nwc_client import NwcInvoice, NwcInvoiceClient, NwcInvoiceStatus
@@ -379,9 +380,16 @@ def test_mismatched_hash_never_marks_membership_invoice_paid(monkeypatch, tmp_pa
     assert member["payment_invoices"][TEST_PAYMENT_HASH]["state"] == "unmatched"
 
 
-def test_expired_invoice_is_closed_without_a_wallet_lookup(monkeypatch, tmp_path):
-    """A persisted expiry prevents stale invoices from being queried forever."""
+def test_late_settlement_is_recognized_after_local_expiry(monkeypatch, tmp_path):
+    """Local expiry cannot discard a payment settled before reconciliation."""
     FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=25_000,
+        settled_at=1_800_000_100,
+        preimage=TEST_PAYMENT_PREIMAGE,
+    )
     monkeypatch.setattr(
         membership_payments,
         "NwcInvoiceClient",
@@ -401,10 +409,32 @@ def test_expired_invoice_is_closed_without_a_wallet_lookup(monkeypatch, tmp_path
         )
     )
 
+    assert result == {"checked": 1, "settled": 1, "failed": 0}
+    assert FakeNwcInvoiceClient.calls == [TEST_PAYMENT_HASH]
+    assert member["status"] == "paid"
+    assert member["payment_invoices"][TEST_PAYMENT_HASH]["state"] == "settled"
+    assert member["active_invoice_payment_hash"] is None
+
+
+def test_wallet_confirmed_expiry_allows_replacement(monkeypatch, tmp_path):
+    """An exact wallet expiry releases the old invoice without marking it paid."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="expired",
+        amount_msat=25_000,
+        settled_at=None,
+    )
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    state = {"payment_state": _invoice_state()}
+
+    result = asyncio.run(check_payment_invoice_status(_config(tmp_path), state))
+
+    member = state["payment_state"]["periods"]["2026-11"]["members"]["member-001"]
     assert result == {"checked": 1, "settled": 0, "failed": 0}
-    assert FakeNwcInvoiceClient.calls == []
+    assert FakeNwcInvoiceClient.calls == [TEST_PAYMENT_HASH]
     assert member["status"] == "unpaid"
-    assert member["payment_invoices"][TEST_PAYMENT_HASH]["state"] == "expired"
+    assert member["payment_invoices"][TEST_PAYMENT_HASH]["expiry_confirmed"] is True
     assert member["active_invoice_payment_hash"] is None
 
 
@@ -521,4 +551,104 @@ def test_mismatched_payment_hash_is_not_marked_paid(monkeypatch, tmp_path):
     assert result == {"checked": 1, "settled": 0, "failed": 0}
     assert member["status"] == "unpaid"
     assert member["payment_invoices"][TEST_PAYMENT_HASH]["state"] == "unmatched"
-    assert member["active_invoice_payment_hash"] is None
+    assert member["active_invoice_payment_hash"] == TEST_PAYMENT_HASH
+
+
+def test_unmatched_invoice_can_settle_after_restart(monkeypatch, tmp_path):
+    """An inconclusive lookup remains tracked and can settle on the next run."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash="different-hash",
+        state="settled",
+        amount_msat=25_000,
+        settled_at=1_800_000_100,
+        preimage=TEST_PAYMENT_PREIMAGE,
+    )
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    config = _config(tmp_path)
+    state = {"payment_state": _invoice_state()}
+    asyncio.run(check_payment_invoice_status(config, state))
+    saved = load_multi_period_payment_state(config["PAYMENT_STATE_FILE"])
+    member = saved["periods"]["2026-11"]["members"]["member-001"]
+    assert member["status"] == "unpaid"
+    assert member["active_invoice_payment_hash"] == TEST_PAYMENT_HASH
+    assert member["payment_invoices"][TEST_PAYMENT_HASH]["state"] == "unmatched"
+
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=25_000,
+        settled_at=1_800_000_100,
+        preimage=TEST_PAYMENT_PREIMAGE,
+    )
+    restarted = {"payment_state": saved}
+    result = asyncio.run(check_payment_invoice_status(config, restarted))
+
+    assert result == {"checked": 1, "settled": 1, "failed": 0}
+    assert FakeNwcInvoiceClient.calls == [TEST_PAYMENT_HASH, TEST_PAYMENT_HASH]
+    restarted_member = restarted["payment_state"]["periods"]["2026-11"]["members"][
+        "member-001"
+    ]
+    assert restarted_member["status"] == "paid"
+
+
+def test_transient_lookup_failure_keeps_invoice_for_retry(monkeypatch, tmp_path):
+    """A temporary wallet error does not clear the invoice or mint another."""
+
+    class FlakyNwcClient(FakeNwcInvoiceClient):
+        """Fail once, then return exact settlement proof."""
+
+        calls = []
+
+        async def lookup_invoice(self, *, payment_hash):
+            """Simulate one failed wallet lookup."""
+            type(self).calls.append(payment_hash)
+            if len(type(self).calls) == 1:
+                raise RuntimeError("wallet unavailable")
+            return NwcInvoiceStatus(
+                payment_hash=payment_hash,
+                state="settled",
+                amount_msat=25_000,
+                settled_at=1_800_000_100,
+                preimage=TEST_PAYMENT_PREIMAGE,
+            )
+
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FlakyNwcClient)
+    config = _config(tmp_path)
+    state = {"payment_state": _invoice_state()}
+
+    failed = asyncio.run(check_payment_invoice_status(config, state))
+    member = state["payment_state"]["periods"]["2026-11"]["members"]["member-001"]
+    assert failed == {"checked": 1, "settled": 0, "failed": 1}
+    assert member["active_invoice_payment_hash"] == TEST_PAYMENT_HASH
+    assert member["status"] == "unpaid"
+
+    recovered = asyncio.run(check_payment_invoice_status(config, state))
+    assert recovered == {"checked": 1, "settled": 1, "failed": 0}
+    assert FlakyNwcClient.calls == [TEST_PAYMENT_HASH, TEST_PAYMENT_HASH]
+    assert member["status"] == "paid"
+
+
+def test_legacy_locally_expired_invoice_is_rechecked(monkeypatch, tmp_path):
+    """A legacy expiry without wallet confirmation is still reconcilable."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=25_000,
+        settled_at=1_800_000_100,
+        preimage=TEST_PAYMENT_PREIMAGE,
+    )
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    payment_state = _invoice_state()
+    member = payment_state["periods"]["2026-11"]["members"]["member-001"]
+    member["payment_invoices"][TEST_PAYMENT_HASH]["state"] = "expired"
+    member["payment_invoices"][TEST_PAYMENT_HASH].pop("expiry_confirmed")
+    member["active_invoice_payment_hash"] = None
+    state = {"payment_state": payment_state}
+
+    result = asyncio.run(check_payment_invoice_status(_config(tmp_path), state))
+
+    assert result == {"checked": 1, "settled": 1, "failed": 0}
+    assert FakeNwcInvoiceClient.calls == [TEST_PAYMENT_HASH]
+    assert member["status"] == "paid"

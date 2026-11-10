@@ -11,9 +11,11 @@ from core.membership_payments import (
     build_member,
     build_multi_period_payment_state,
     check_payment_reminders,
+    check_payment_invoice_status,
     get_or_create_payment_invoice,
+    load_multi_period_payment_state,
 )
-from core.nwc_client import NwcInvoice
+from core.nwc_client import NwcInvoice, NwcInvoiceStatus
 
 
 NWC_URI = (
@@ -382,13 +384,14 @@ def test_invoice_failure_does_not_block_normal_private_reminder(
     assert "payment_invoices" not in member_state
 
 
-def test_expired_invoice_is_replaced_with_a_new_priced_invoice(monkeypatch, tmp_path):
-    """An expired invoice is closed and replaced without losing its history."""
+def test_expired_invoice_is_replaced_only_after_wallet_confirmation(monkeypatch, tmp_path):
+    """A local expiry blocks replacement until the wallet confirms expiry."""
 
     class RotatingNwcInvoiceClient:
         """Return a different invoice identity after expiry."""
 
         calls = 0
+        lookup_calls = []
 
         def __init__(self, connection_uri):
             """Accept the configured wallet connection."""
@@ -402,6 +405,16 @@ def test_expired_invoice_is_replaced_with_a_new_priced_invoice(monkeypatch, tmp_
                 payment_hash=f"hash-test-{invoice_number}",
                 amount_msat=amount_msat,
                 expires_at=1 if invoice_number == 1 else 1_800_000_000,
+            )
+
+        async def lookup_invoice(self, *, payment_hash):
+            """Confirm the old invoice expired in the wallet."""
+            type(self).lookup_calls.append(payment_hash)
+            return NwcInvoiceStatus(
+                payment_hash=payment_hash,
+                state="expired",
+                amount_msat=68_750_000,
+                settled_at=None,
             )
 
     monkeypatch.setattr(
@@ -431,6 +444,32 @@ def test_expired_invoice_is_replaced_with_a_new_priced_invoice(monkeypatch, tmp_
             membership_plans=MEMBERSHIP_PLANS,
         )
     )
+    deferred, deferred_created = asyncio.run(
+        get_or_create_payment_invoice(
+            state,
+            "2026-11",
+            "member-001",
+            config,
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+            member=member,
+            membership_plans=MEMBERSHIP_PLANS,
+        )
+    )
+    assert deferred is None
+    assert deferred_created is False
+    assert RotatingNwcInvoiceClient.calls == 1
+
+    verified = {"payment_state": state}
+    result = asyncio.run(
+        check_payment_invoice_status(
+            config,
+            verified,
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+    assert result == {"checked": 1, "settled": 0, "failed": 0}
+    assert RotatingNwcInvoiceClient.lookup_calls == ["hash-test-1"]
+
     second, created = asyncio.run(
         get_or_create_payment_invoice(
             state,
@@ -448,3 +487,119 @@ def test_expired_invoice_is_replaced_with_a_new_priced_invoice(monkeypatch, tmp_
     assert first["payment_hash"] == "hash-test-1"
     assert second["payment_hash"] == "hash-test-2"
     assert member_state["payment_invoices"]["hash-test-1"]["state"] == "expired"
+    assert member_state["payment_invoices"]["hash-test-1"]["expiry_confirmed"] is True
+
+
+def test_invoice_is_persisted_before_private_delivery(monkeypatch, tmp_path):
+    """Telegram sees an invoice only after the matching record is on disk."""
+    FakeNwcInvoiceClient.calls = []
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    monkeypatch.setattr(membership_payments, "MxnBtcRateProvider", FakeMxnBtcRateProvider)
+    config = _config(tmp_path)
+
+    async def inspect_delivery(**kwargs):
+        """Assert durable invoice identity at the delivery boundary."""
+        persisted = load_multi_period_payment_state(config["PAYMENT_STATE_FILE"])
+        saved = persisted["periods"]["2026-11"]["members"]["member-001"]
+        assert saved["active_invoice_payment_hash"] == "hash-test-invoice"
+        assert "lnbc-test-invoice" in kwargs["caption"]
+
+    bot = SimpleNamespace(
+        send_message=AsyncMock(),
+        send_photo=AsyncMock(side_effect=inspect_delivery),
+    )
+    member = build_member("Ada", 101, "coworking")
+    state = {
+        "members": {"member-001": member},
+        "membership_plans": MEMBERSHIP_PLANS,
+        "notification_preferences": {"101": {"payments": True}},
+        "payment_state": build_multi_period_payment_state(
+            {"member-001": member}, ["2026-11"]
+        ),
+    }
+
+    asyncio.run(check_payment_reminders(
+        SimpleNamespace(bot=bot), config, state,
+        now=datetime(2026, 11, 2, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+    ))
+
+    assert bot.send_photo.await_count == 1
+    assert bot.send_message.await_count == 0
+
+
+def test_failed_delivery_reuses_saved_invoice_after_restart(monkeypatch, tmp_path):
+    """Failed QR and text delivery do not mint a second invoice on retry."""
+    FakeNwcInvoiceClient.calls = []
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    monkeypatch.setattr(membership_payments, "MxnBtcRateProvider", FakeMxnBtcRateProvider)
+    config = _config(tmp_path)
+    member = build_member("Ada", 101, "coworking")
+    state = {
+        "members": {"member-001": member},
+        "membership_plans": MEMBERSHIP_PLANS,
+        "notification_preferences": {"101": {"payments": True}},
+        "payment_state": build_multi_period_payment_state(
+            {"member-001": member}, ["2026-11"]
+        ),
+    }
+    failed_bot = SimpleNamespace(
+        send_photo=AsyncMock(side_effect=RuntimeError("photo unavailable")),
+        send_message=AsyncMock(side_effect=RuntimeError("text unavailable")),
+    )
+    now = datetime(2026, 11, 2, 10, 0, tzinfo=PAYMENT_TIMEZONE)
+
+    asyncio.run(check_payment_reminders(SimpleNamespace(bot=failed_bot), config, state, now=now))
+    saved = load_multi_period_payment_state(config["PAYMENT_STATE_FILE"])
+    assert saved["periods"]["2026-11"]["personal_reminders_sent"] == {}
+    state["payment_state"] = saved
+    retry_bot = SimpleNamespace(send_photo=AsyncMock(), send_message=AsyncMock())
+
+    asyncio.run(check_payment_reminders(SimpleNamespace(bot=retry_bot), config, state, now=now))
+
+    assert len(FakeNwcInvoiceClient.calls) == 1
+    assert retry_bot.send_photo.await_count == 1
+    assert retry_bot.send_message.await_count == 0
+    period_state = state["payment_state"]["periods"]["2026-11"]
+    assert "2026-11:daily:2026-11-02:member-001" in period_state[
+        "personal_reminders_sent"
+    ]
+
+
+def test_persistence_failure_prevents_invoice_delivery(monkeypatch, tmp_path):
+    """An unrecorded invoice is never exposed to a member."""
+    FakeNwcInvoiceClient.calls = []
+    monkeypatch.setattr(membership_payments, "NwcInvoiceClient", FakeNwcInvoiceClient)
+    monkeypatch.setattr(membership_payments, "MxnBtcRateProvider", FakeMxnBtcRateProvider)
+
+    original_save = membership_payments.save_multi_period_payment_state
+
+    def fail_save(*args, **kwargs):
+        """Reject only the strict pre-delivery invoice persistence step."""
+        if kwargs.get("raise_on_error"):
+            raise OSError("storage unavailable")
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(membership_payments, "save_multi_period_payment_state", fail_save)
+    member = build_member("Ada", 101, "coworking")
+    state = {
+        "members": {"member-001": member},
+        "membership_plans": MEMBERSHIP_PLANS,
+        "notification_preferences": {"101": {"payments": True}},
+        "payment_state": build_multi_period_payment_state(
+            {"member-001": member}, ["2026-11"]
+        ),
+    }
+    bot = SimpleNamespace(send_photo=AsyncMock(), send_message=AsyncMock())
+
+    asyncio.run(check_payment_reminders(
+        SimpleNamespace(bot=bot), _config(tmp_path), state,
+        now=datetime(2026, 11, 2, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+    ))
+
+    assert bot.send_photo.await_count == 0
+    assert all(
+        "lnbc-test-invoice" not in call.kwargs["text"]
+        for call in bot.send_message.await_args_list
+    )
+    member_state = state["payment_state"]["periods"]["2026-11"]["members"]["member-001"]
+    assert "payment_invoices" not in member_state

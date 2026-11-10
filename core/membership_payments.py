@@ -121,6 +121,7 @@ def _normalize_payment_invoice(raw_invoice):
         "created_at": created_at,
         "expires_at": _normalize_invoice_integer(raw_invoice.get("expires_at")),
         "state": state,
+        "expiry_confirmed": raw_invoice.get("expiry_confirmed") is True,
         "settled_at": settled_at,
         "last_checked_at": last_checked_at,
         "pricing_snapshot": pricing_snapshot,
@@ -418,9 +419,13 @@ def load_multi_period_payment_state(file_path):
     return migrate_payment_state(load_json(file_path, {}))
 
 
-def save_multi_period_payment_state(file_path, payment_state):
-    """Persist normalized multi-period payment state atomically."""
-    save_json(file_path, migrate_payment_state(payment_state))
+def save_multi_period_payment_state(file_path, payment_state, *, raise_on_error=False):
+    """Persist payment state atomically, optionally surfacing write failures."""
+    save_json(
+        file_path,
+        migrate_payment_state(payment_state),
+        raise_on_error=raise_on_error,
+    )
 
 
 def _timestamp_string(value=None):
@@ -467,6 +472,7 @@ def build_payment_invoice_record(
         "created_at": _timestamp_string(created_at),
         "expires_at": expires_at,
         "state": "pending",
+        "expiry_confirmed": False,
         "settled_at": None,
         "last_checked_at": None,
         "pricing_snapshot": pricing_snapshot
@@ -475,8 +481,15 @@ def build_payment_invoice_record(
     }
 
 
+def _invoice_needs_reconciliation(invoice):
+    """Keep uncertain invoices, including legacy local expiries, in scope."""
+    return invoice["state"] in {"pending", "unmatched", "failed"} or (
+        invoice["state"] == "expired" and not invoice["expiry_confirmed"]
+    )
+
+
 def get_active_payment_invoice(payment_state, period, member_id):
-    """Return the active invoice for one member and billing period, if present."""
+    """Return a tracked invoice that still needs settlement reconciliation."""
     normalized_state = migrate_payment_state(payment_state)
     period_key = _normalize_period_key(period)
     if period_key is None:
@@ -487,9 +500,13 @@ def get_active_payment_invoice(payment_state, period, member_id):
         return None
     payment_hash = member_record.get("active_invoice_payment_hash")
     invoices = _normalize_payment_invoices(member_record.get("payment_invoices"))
-    if not payment_hash:
-        return None
-    return invoices.get(str(payment_hash))
+    active_invoice = invoices.get(str(payment_hash)) if payment_hash else None
+    if active_invoice and _invoice_needs_reconciliation(active_invoice):
+        return active_invoice
+    return next(
+        (invoice for invoice in invoices.values() if _invoice_needs_reconciliation(invoice)),
+        None,
+    )
 
 
 def record_payment_invoice(
@@ -533,11 +550,9 @@ def record_payment_invoice(
             f"Cannot create an invoice for an already paid member: {member_key}"
         )
 
-    active_hash = member_record.get("active_invoice_payment_hash")
-    active_invoice = invoices.get(str(active_hash)) if active_hash else None
-    if active_invoice and active_invoice["state"] in {"pending", "settled"}:
+    if any(_invoice_needs_reconciliation(existing) for existing in invoices.values()):
         raise PaymentInvoiceConflict(
-            f"An active invoice already exists for member-period: {member_key}"
+            f"An unresolved invoice already exists for member-period: {member_key}"
         )
 
     invoices[payment_hash] = invoice_record
@@ -553,6 +568,7 @@ def update_payment_invoice(
     payment_hash,
     *,
     state=None,
+    expiry_confirmed=None,
     settled_at=None,
     last_checked_at=None,
 ):
@@ -580,6 +596,10 @@ def update_payment_invoice(
         if normalized_invoice_state not in PAYMENT_INVOICE_STATES:
             raise ValueError(f"Unsupported payment invoice state: {state}")
         invoice_record["state"] = normalized_invoice_state
+    if expiry_confirmed is not None:
+        if invoice_record["state"] != "expired" or expiry_confirmed is not True:
+            raise ValueError("Wallet expiry confirmation requires an expired invoice.")
+        invoice_record["expiry_confirmed"] = True
     if settled_at is not None:
         invoice_record["settled_at"] = _timestamp_string(settled_at)
     if last_checked_at is not None:
@@ -588,7 +608,10 @@ def update_payment_invoice(
     member_record["payment_invoices"] = invoices
     if (
         member_record.get("active_invoice_payment_hash") == payment_hash
-        and invoice_record["state"] in {"settled", "expired", "failed", "unmatched"}
+        and (
+            invoice_record["state"] == "settled"
+            or (invoice_record["state"] == "expired" and invoice_record["expiry_confirmed"])
+        )
     ):
         member_record["active_invoice_payment_hash"] = None
     return normalized_state
@@ -671,33 +694,11 @@ async def get_or_create_payment_invoice(
         return None, False
 
     active_invoice = get_active_payment_invoice(payment_state, period, member_id)
-    if active_invoice and active_invoice.get("state") == "pending" and _invoice_is_expired(
-        active_invoice,
-        now,
-    ):
-        try:
-            normalized_state = update_payment_invoice(
-                payment_state,
-                period,
-                member_id,
-                active_invoice["payment_hash"],
-                state="expired",
-                last_checked_at=now,
-            )
-            _replace_payment_member_record(
-                payment_state,
-                normalized_state,
-                period,
-                member_id,
-            )
-        except (KeyError, ValueError):
-            logger.warning(
-                "Could not expire the previous membership invoice for %s in %s.",
-                member_id,
-                period,
-            )
-        active_invoice = None
-    if active_invoice and active_invoice.get("state") in {"pending", "settled"}:
+    if active_invoice:
+        if active_invoice["state"] != "pending" or _invoice_is_expired(
+            active_invoice, now
+        ):
+            return None, False
         return active_invoice, False
 
     connection_uri, expiry_seconds = settings
@@ -736,6 +737,11 @@ async def get_or_create_payment_invoice(
             created_at=now,
             pricing_snapshot=pricing_snapshot,
             expiry_seconds=expiry_seconds,
+        )
+        save_multi_period_payment_state(
+            config["PAYMENT_STATE_FILE"],
+            normalized_state,
+            raise_on_error=True,
         )
     except Exception:
         logger.warning(
@@ -878,43 +884,14 @@ async def check_payment_invoice_status(config, state, now=None):
             invoices = _normalize_payment_invoices(
                 member_record.get("payment_invoices")
             )
-            pending_hashes = [
+            reconcilable_hashes = [
                 payment_hash
                 for payment_hash, invoice in invoices.items()
-                if invoice.get("state") == "pending"
+                if _invoice_needs_reconciliation(invoice)
             ]
-            for payment_hash in pending_hashes:
+            for payment_hash in reconcilable_hashes:
                 result["checked"] += 1
                 invoice = invoices[payment_hash]
-                expires_at = invoice.get("expires_at")
-                if (
-                    expires_at is not None
-                    and expires_at <= int(checked_at.timestamp())
-                ):
-                    try:
-                        normalized_state = update_payment_invoice(
-                            payment_state,
-                            period,
-                            member_id,
-                            payment_hash,
-                            state="expired",
-                            last_checked_at=checked_at,
-                        )
-                        _replace_payment_member_record(
-                            payment_state,
-                            normalized_state,
-                            period,
-                            member_id,
-                        )
-                        state_changed = True
-                    except (KeyError, ValueError):
-                        result["failed"] += 1
-                        logger.warning(
-                            "Could not expire membership invoice for %s in %s.",
-                            member_id,
-                            period,
-                        )
-                    continue
                 try:
                     status = await client.lookup_invoice(
                         payment_hash=payment_hash,
@@ -944,6 +921,18 @@ async def check_payment_invoice_status(config, state, now=None):
                         "keeping the invoice unmatched."
                     )
                     status_state = "unmatched"
+                elif status_state == "failed":
+                    status_state = "unmatched"
+                if status_state == "pending" and _invoice_is_expired(
+                    invoice, checked_at
+                ):
+                    status_state = "unmatched"
+                if status_state == "unmatched" and invoice["state"] != "unmatched":
+                    logger.warning(
+                        "Membership invoice for %s in %s needs further reconciliation.",
+                        member_id,
+                        period,
+                    )
 
                 settled_at = None
                 if status_state == "settled":
@@ -957,6 +946,7 @@ async def check_payment_invoice_status(config, state, now=None):
                         member_id,
                         payment_hash,
                         state=status_state,
+                        expiry_confirmed=True if status_state == "expired" else None,
                         settled_at=settled_at,
                         last_checked_at=checked_at,
                     )
@@ -1745,6 +1735,10 @@ async def _check_multi_period_payment_reminders(context, config, state, now):
         for entry in entries:
             invoice = invoices.get(entry["period"])
             if invoice is None:
+                if get_active_payment_invoice(
+                    payment_state, entry["period"], entry["member_id"]
+                ) is not None:
+                    continue
                 text_only_entries.append(entry)
                 continue
 
