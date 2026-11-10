@@ -145,7 +145,10 @@ def test_due_private_reminder_includes_created_invoice(monkeypatch, tmp_path):
         "MxnBtcRateProvider",
         FakeMxnBtcRateProvider,
     )
-    bot = SimpleNamespace(send_message=AsyncMock())
+    bot = SimpleNamespace(
+        send_message=AsyncMock(),
+        send_photo=AsyncMock(),
+    )
     context = SimpleNamespace(bot=bot)
     member = build_member("Ada", 101, "coworking")
     state = {
@@ -163,19 +166,163 @@ def test_due_private_reminder_includes_created_invoice(monkeypatch, tmp_path):
             context,
             _config(tmp_path),
             state,
-            now=datetime(2026, 11, 1, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=PAYMENT_TIMEZONE),
         )
     )
 
-    text = bot.send_message.await_args.kwargs["text"]
-    assert "lnbc-test-invoice" in text
+    assert bot.send_photo.await_count == 1
+    assert bot.send_message.await_count == 0
+    caption = bot.send_photo.await_args.kwargs["caption"]
+    assert "Pago de membresía: noviembre de 2026" in caption
+    assert "68750 sats (68750000 msat)" in caption
+    assert "Expira:" in caption
+    assert "lnbc-test-invoice" in caption
     member_state = state["payment_state"]["periods"]["2026-11"]["members"][
         "member-001"
     ]
     assert member_state["active_invoice_payment_hash"] == "hash-test-invoice"
-    assert "2026-11:first_day:member-001" in state["payment_state"]["periods"][
-        "2026-11"
-    ]["personal_reminders_sent"]
+    assert "2026-11:daily:2026-11-02:member-001" in state["payment_state"][
+        "periods"
+    ]["2026-11"]["personal_reminders_sent"]
+
+
+def test_qr_delivery_falls_back_to_one_text_invoice(monkeypatch, tmp_path):
+    """A photo-delivery failure still sends one copyable invoice message."""
+    FakeNwcInvoiceClient.calls = []
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        FakeNwcInvoiceClient,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "MxnBtcRateProvider",
+        FakeMxnBtcRateProvider,
+    )
+    bot = SimpleNamespace(
+        send_message=AsyncMock(),
+        send_photo=AsyncMock(side_effect=RuntimeError("photo unavailable")),
+    )
+    context = SimpleNamespace(bot=bot)
+    member = build_member("Ada", 101, "coworking")
+    state = {
+        "members": {"member-001": member},
+        "membership_plans": MEMBERSHIP_PLANS,
+        "notification_preferences": {"101": {"payments": True}},
+        "payment_state": build_multi_period_payment_state(
+            {"member-001": member},
+            ["2026-11"],
+        ),
+    }
+
+    asyncio.run(
+        check_payment_reminders(
+            context,
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+
+    assert bot.send_photo.await_count == 1
+    assert bot.send_message.await_count == 1
+    assert "lnbc-test-invoice" in bot.send_message.await_args.kwargs["text"]
+    assert "2026-11:daily:2026-11-02:member-001" in state["payment_state"][
+        "periods"
+    ]["2026-11"]["personal_reminders_sent"]
+
+
+def test_multiple_private_periods_get_separate_qr_messages(monkeypatch, tmp_path):
+    """Each invoice is labeled by period when one member owes two periods."""
+    FakeNwcInvoiceClient.calls = []
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        FakeNwcInvoiceClient,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "MxnBtcRateProvider",
+        FakeMxnBtcRateProvider,
+    )
+    bot = SimpleNamespace(
+        send_message=AsyncMock(),
+        send_photo=AsyncMock(),
+    )
+    context = SimpleNamespace(bot=bot)
+    member = build_member("Ada", 101, "coworking")
+    state = {
+        "members": {"member-001": member},
+        "membership_plans": MEMBERSHIP_PLANS,
+        "notification_preferences": {"101": {"payments": True}},
+        "payment_state": build_multi_period_payment_state(
+            {"member-001": member},
+            ["2026-11", "2026-12"],
+        ),
+    }
+
+    asyncio.run(
+        check_payment_reminders(
+            context,
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 28, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+
+    assert bot.send_photo.await_count == 2
+    captions = [call.kwargs["caption"] for call in bot.send_photo.await_args_list]
+    assert any("noviembre de 2026" in caption for caption in captions)
+    assert any("diciembre de 2026" in caption for caption in captions)
+    assert bot.send_message.await_count == 0
+
+
+def test_public_payment_reminder_never_includes_invoice(monkeypatch, tmp_path):
+    """Public payment reminders do not expose private invoice data."""
+    FakeNwcInvoiceClient.calls = []
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        FakeNwcInvoiceClient,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "MxnBtcRateProvider",
+        FakeMxnBtcRateProvider,
+    )
+    bot = SimpleNamespace(
+        send_message=AsyncMock(),
+        send_photo=AsyncMock(),
+    )
+    context = SimpleNamespace(bot=bot)
+    member = build_member("Ada", 101, "coworking")
+    state = {
+        "members": {"member-001": member},
+        "membership_plans": MEMBERSHIP_PLANS,
+        "notification_preferences": {"101": {"payments": True}},
+        "group_notification_categories": {"payments": [-100123]},
+        "payment_state": build_multi_period_payment_state(
+            {"member-001": member},
+            ["2026-11"],
+        ),
+    }
+
+    asyncio.run(
+        check_payment_reminders(
+            context,
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 1, 10, 0, tzinfo=PAYMENT_TIMEZONE),
+        )
+    )
+
+    public_messages = [
+        call.kwargs["text"]
+        for call in bot.send_message.await_args_list
+        if call.kwargs["chat_id"] == -100123
+    ]
+    assert len(public_messages) == 1
+    assert "lnbc-test-invoice" not in public_messages[0]
 
 
 def test_invoice_failure_does_not_block_normal_private_reminder(

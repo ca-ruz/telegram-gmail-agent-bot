@@ -17,6 +17,7 @@ from core.membership_exchange import (
 from core.nwc_client import NwcInvoiceClient, is_valid_payment_preimage
 from core.notification_preferences import is_notification_enabled
 from core.membership_pricing import normalize_membership_plan, normalize_membership_quantity
+from core.payment_qr import build_invoice_qr
 from core.payment_test_state import (
     get_active_payment_test_invoice,
     save_payment_test_state,
@@ -1250,6 +1251,58 @@ def _append_payment_invoice(message, period, invoice):
     )
 
 
+def _format_invoice_amount(amount_msat):
+    """Format a positive millisatoshi amount for a user-facing message."""
+    normalized_amount = _normalize_invoice_integer(amount_msat)
+    if normalized_amount is None:
+        return "no disponible"
+    whole_sats, remainder_msat = divmod(normalized_amount, 1000)
+    if remainder_msat == 0:
+        sats_label = str(whole_sats)
+    else:
+        sats_label = f"{whole_sats}.{remainder_msat:03d}".rstrip("0")
+    return f"{sats_label} sats ({normalized_amount} msat)"
+
+
+def _format_invoice_expiry(expires_at):
+    """Format an invoice expiry timestamp in the community timezone."""
+    normalized_expiry = _normalize_invoice_integer(expires_at)
+    if normalized_expiry is None:
+        return "no disponible"
+    try:
+        expiry_time = datetime.fromtimestamp(
+            normalized_expiry,
+            timezone.utc,
+        ).astimezone(PAYMENT_TIMEZONE)
+    except (OverflowError, OSError, ValueError):
+        return "no disponible"
+    return expiry_time.strftime("%d/%m/%Y %H:%M")
+
+
+def format_payment_invoice_caption(period, invoice):
+    """Build a QR caption with payment details and a copyable invoice."""
+    invoice_value = _invoice_field(invoice, "invoice") if invoice else None
+    if not invoice_value:
+        return None
+    return "\n".join([
+        f"💳 Pago de membresía: {format_payment_period(period)}",
+        f"Monto: {_format_invoice_amount(_invoice_field(invoice, 'amount_msat'))}",
+        f"Expira: {_format_invoice_expiry(_invoice_field(invoice, 'expires_at'))}",
+        "",
+        "Escanea el código QR o copia esta factura Lightning:",
+        str(invoice_value),
+    ])
+
+
+def format_personal_payment_invoice_message(member_name, period, stage, invoice):
+    """Build one private invoice message for QR delivery or text fallback."""
+    reminder = format_personal_payment_reminder(member_name, period, stage)
+    caption = format_payment_invoice_caption(period, invoice)
+    if not caption:
+        return reminder
+    return f"{reminder}\n\n{caption}"
+
+
 def format_personal_payment_reminder(member_name, period, stage, invoice=None):
     """Build a private payment reminder for one unpaid member."""
     month_label = format_payment_period(period)
@@ -1630,27 +1683,77 @@ async def _check_multi_period_payment_reminders(context, config, state, now):
                 state_changed = True
             if invoice is not None:
                 invoices[entry["period"]] = invoice
-        try:
-            await context.bot.send_message(
-                chat_id=telegram_id,
-                text=format_combined_personal_payment_reminder(
-                    member_name,
-                    [(entry["period"], entry["stage"]) for entry in entries],
-                    invoices=invoices,
-                ),
+
+        delivered_keys = set()
+        text_only_entries = []
+        for entry in entries:
+            invoice = invoices.get(entry["period"])
+            if invoice is None:
+                text_only_entries.append(entry)
+                continue
+
+            message_text = format_personal_payment_invoice_message(
+                member_name,
+                entry["period"],
+                entry["stage"],
+                invoice,
             )
-        except Exception:
-            logger.exception(
-                "Failed to send combined personal payment reminder to %s.",
-                telegram_id,
-            )
-            continue
+            try:
+                send_photo = getattr(context.bot, "send_photo", None)
+                if send_photo is None:
+                    raise RuntimeError("Telegram bot does not support photo delivery")
+                await send_photo(
+                    chat_id=telegram_id,
+                    photo=build_invoice_qr(_invoice_field(invoice, "invoice")),
+                    caption=message_text,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send membership invoice QR to %s for %s; "
+                    "using text fallback.",
+                    telegram_id,
+                    entry["period"],
+                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=telegram_id,
+                        text=message_text,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to send membership invoice to %s for %s.",
+                        telegram_id,
+                        entry["period"],
+                    )
+                    continue
+            delivered_keys.add(entry["key"])
+
+        if text_only_entries:
+            try:
+                await context.bot.send_message(
+                    chat_id=telegram_id,
+                    text=format_combined_personal_payment_reminder(
+                        member_name,
+                        [
+                            (entry["period"], entry["stage"])
+                            for entry in text_only_entries
+                        ],
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send payment reminder without invoice to %s.",
+                    telegram_id,
+                )
+            else:
+                delivered_keys.update(entry["key"] for entry in text_only_entries)
 
         for entry in entries:
-            entry["period_state"]["personal_reminders_sent"][entry["key"]] = (
-                now.astimezone(timezone.utc).isoformat()
-            )
-            state_changed = True
+            if entry["key"] in delivered_keys:
+                entry["period_state"]["personal_reminders_sent"][entry["key"]] = (
+                    now.astimezone(timezone.utc).isoformat()
+                )
+                state_changed = True
 
     payment_admin_id = _normalize_user_id(config.get("PAYMENT_ADMIN_ID"))
     if payment_admin_id is not None:
