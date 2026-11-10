@@ -419,9 +419,13 @@ def load_multi_period_payment_state(file_path):
     return migrate_payment_state(load_json(file_path, {}))
 
 
-def save_multi_period_payment_state(file_path, payment_state):
-    """Persist normalized multi-period payment state atomically."""
-    save_json(file_path, migrate_payment_state(payment_state))
+def save_multi_period_payment_state(file_path, payment_state, *, raise_on_error=False):
+    """Persist payment state atomically, optionally surfacing write failures."""
+    save_json(
+        file_path,
+        migrate_payment_state(payment_state),
+        raise_on_error=raise_on_error,
+    )
 
 
 def _timestamp_string(value=None):
@@ -733,6 +737,11 @@ async def get_or_create_payment_invoice(
             created_at=now,
             pricing_snapshot=pricing_snapshot,
             expiry_seconds=expiry_seconds,
+        )
+        save_multi_period_payment_state(
+            config["PAYMENT_STATE_FILE"],
+            normalized_state,
+            raise_on_error=True,
         )
     except Exception:
         logger.warning(
