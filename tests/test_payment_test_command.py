@@ -73,7 +73,10 @@ def test_primary_admin_receives_only_the_isolated_test_invoice(monkeypatch, tmp_
     assert FakeNwcInvoiceClient.calls == [
         (100_000, "Prueba de pago del bot", 259200),
     ]
-    assert "lnbc-payment-test" in update.message.reply_text.await_args.args[0]
+    assert update.message.reply_text.await_count == 0
+    assert "lnbc-payment-test" in update.message.reply_photo.await_args.kwargs[
+        "caption"
+    ]
     assert state["payment_state"] == {"version": 2, "periods": {}}
     assert state["payment_test_state"]["active_invoice"]["amount_sats"] == 100
     update.message.reply_photo.assert_awaited_once()

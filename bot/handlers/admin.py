@@ -855,24 +855,22 @@ async def payment_test(update, context, admin_id, state, config):
         f"Monto: {amount_sats} sats ({amount_sats * 1000} msat)\n"
         f"Expiración: {expiry_seconds} segundos"
     )
-    try:
-        qr_image = build_invoice_qr(invoice_value)
-        await update.message.reply_photo(
-            photo=qr_image,
-            caption=(
-                f"{invoice_details}\n\n"
-                "Escanea el código QR para pagar."
-            ),
-        )
-    except Exception:
-        logger.exception("Could not send payment test QR; using text fallback.")
-    await update.message.reply_text(
+    invoice_message = (
         f"{invoice_details}\n\n"
-        "⚡ Factura Lightning:\n"
+        "Escanea el código QR o copia esta factura Lightning:\n"
         f"{invoice_value}\n\n"
         "Págala para probar la detección automática. Este pago no modifica "
         "ninguna membresía real."
     )
+    try:
+        qr_image = build_invoice_qr(invoice_value)
+        await update.message.reply_photo(
+            photo=qr_image,
+            caption=invoice_message,
+        )
+    except Exception:
+        logger.exception("Could not send payment test QR; using text fallback.")
+        await update.message.reply_text(invoice_message)
 
 
 async def monthly_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_id):
