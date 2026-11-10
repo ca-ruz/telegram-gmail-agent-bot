@@ -49,11 +49,12 @@ class FakeSession:
         }
         return self.invoice_response
 
-    async def lookup_invoice(self, **kwargs):
-        """Return the configured lookup response."""
+    async def _send_request(self, method, params):
+        """Return the wallet response before the SDK derives a paid flag."""
         if self.error:
             raise self.error
-        assert kwargs == {"payment_hash": "hash-001"}
+        assert method == "lookup_invoice"
+        assert params == {"payment_hash": "hash-001"}
         return self.lookup_response
 
 
@@ -182,6 +183,67 @@ def test_lookup_invoice_normalizes_settled_response():
     assert status.settled_at == 1_800_000_100
     assert status.preimage == "00" * 32
     assert status.is_settled is True
+
+
+def test_lookup_invoice_preimage_does_not_override_pending_state():
+    """A CLN preimage can exist before the invoice has been paid."""
+    session = FakeSession(
+        lookup_response={
+            "payment_hash": "hash-001",
+            "state": "pending",
+            "amount": 25_000,
+            "preimage": "00" * 32,
+        }
+    )
+
+    status = asyncio.run(
+        NwcInvoiceClient(NWC_URI, client_factory=lambda _: session).lookup_invoice(
+            payment_hash="hash-001"
+        )
+    )
+
+    assert status.state == "pending"
+    assert status.is_settled is False
+
+
+def test_lookup_invoice_rejects_derived_paid_flag_without_wallet_state():
+    """The SDK's paid=True is not authoritative invoice settlement."""
+    session = FakeSession(
+        lookup_response={
+            "payment_hash": "hash-001",
+            "paid": True,
+            "amount": 25_000,
+            "preimage": "00" * 32,
+        }
+    )
+
+    status = asyncio.run(
+        NwcInvoiceClient(NWC_URI, client_factory=lambda _: session).lookup_invoice(
+            payment_hash="hash-001"
+        )
+    )
+
+    assert status.state == "unmatched"
+
+
+def test_lookup_invoice_rejects_settled_state_without_timestamp():
+    """A settled label alone is insufficient without a CLN paid_at value."""
+    session = FakeSession(
+        lookup_response={
+            "payment_hash": "hash-001",
+            "state": "settled",
+            "amount": 25_000,
+            "preimage": "00" * 32,
+        }
+    )
+
+    status = asyncio.run(
+        NwcInvoiceClient(NWC_URI, client_factory=lambda _: session).lookup_invoice(
+            payment_hash="hash-001"
+        )
+    )
+
+    assert status.state == "unmatched"
 
 
 def test_payment_preimage_proves_payment_hash():

@@ -11,7 +11,7 @@ from core.membership_payments import (
     get_or_create_payment_invoice,
     record_payment_invoice,
 )
-from core.nwc_client import NwcInvoice, NwcInvoiceStatus
+from core.nwc_client import NwcInvoice, NwcInvoiceClient, NwcInvoiceStatus
 from tools.local.data_manager import load_json
 
 
@@ -69,6 +69,29 @@ class FakeNwcInvoiceClient:
         """Return the configured status for the requested payment hash."""
         self.calls.append(payment_hash)
         return self.status
+
+
+class PendingRawNwcSession:
+    """Expose a valid preimage while the wallet invoice remains pending."""
+
+    async def __aenter__(self):
+        """Open the fake session."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        """Close the fake session."""
+        return None
+
+    async def _send_request(self, method, params):
+        """Return the pending wallet result without SDK interpretation."""
+        assert method == "lookup_invoice"
+        assert params == {"payment_hash": TEST_PAYMENT_HASH}
+        return {
+            "payment_hash": TEST_PAYMENT_HASH,
+            "state": "pending",
+            "amount": 25_000,
+            "preimage": TEST_PAYMENT_PREIMAGE,
+        }
 
 
 class FakeMxnBtcRateProvider:
@@ -150,6 +173,33 @@ def test_pending_invoice_is_checked_but_member_remains_unpaid(monkeypatch, tmp_p
     assert member["payment_invoices"][TEST_PAYMENT_HASH]["last_checked_at"] == (
         "2026-11-02T10:00:00+00:00"
     )
+
+
+def test_pending_wallet_preimage_cannot_mark_member_paid(monkeypatch, tmp_path):
+    """The full lookup path never treats an unpaid preimage as settlement."""
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        lambda uri: NwcInvoiceClient(
+            uri, client_factory=lambda _: PendingRawNwcSession()
+        ),
+    )
+    state = {"payment_state": _invoice_state()}
+
+    result = asyncio.run(
+        check_payment_invoice_status(
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    member = state["payment_state"]["periods"]["2026-11"]["members"][
+        "member-001"
+    ]
+    assert result == {"checked": 1, "settled": 0, "failed": 0}
+    assert member["status"] == "unpaid"
+    assert member["payment_invoices"][TEST_PAYMENT_HASH]["state"] == "pending"
 
 
 def test_settled_invoice_without_preimage_remains_unmatched(monkeypatch, tmp_path):
