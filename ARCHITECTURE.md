@@ -1,4 +1,4 @@
-# BTC GDL Message Bot - Architecture Map
+# Community Message Bot - Architecture Map
 
 ## Overview
 The bot is built with a modular architecture in Python, following a **Dispatcher-Service-Tool** pattern. It uses natural language processing to bridge the gap between community management and Google Calendar.

@@ -9,10 +9,12 @@ unpaid.
 
 ## 1. Edit the private environment file
 
-On the Orange Pi:
+On the host running the bot, use the example service user, application path,
+and service name from [the deployment guide](orange-pi-deployment.md). Replace
+them with the values for your installation:
 
 ```bash
-sudo -u btcgdl nano /opt/btcgdl-message-bot/.env
+sudo -u botuser editor /opt/community-bot/.env
 ```
 
 Add or update these settings:
@@ -40,9 +42,9 @@ The test amount must be between 1 and 100 sats. The default is 100 sats.
 ## 2. Restart and inspect the service
 
 ```bash
-sudo systemctl restart btcgdl-message-bot
-sudo systemctl status btcgdl-message-bot --no-pager
-sudo journalctl -u btcgdl-message-bot -n 50 --no-pager
+sudo systemctl restart community-bot.service
+sudo systemctl status community-bot.service --no-pager
+sudo journalctl -u community-bot.service -n 50 --no-pager
 ```
 
 Do not print the complete `.env` file because it contains the private NWC URI.
@@ -63,13 +65,10 @@ If QR generation or delivery fails, the bot sends one text fallback containing
 the full invoice. It does not send a duplicate message after a successful QR
 delivery.
 
-The command does not require a membership plan and does not modify November's
-real payment status.
+The command does not require a membership plan and does not modify any real
+billing period's payment status.
 
-## 4. Pay the invoice
-
-Copy or scan the Lightning invoice using a wallet connected to the network used
-by the NWC connection.
+## 4. Verify pending, then pay the invoice
 
 Check the current test state with:
 
@@ -97,27 +96,36 @@ To archive the current test and make room for a new one, use:
 Both commands preserve the test history and affect only the isolated payment
 test state.
 
+Before paying, leave the invoice unpaid through at least two verification
+polls and check `/paymenttest status` again. It must still be pending. If the
+bot reports it as paid, stop the test and do not enable production payment
+verification.
+
+Then copy or scan the Lightning invoice using a wallet connected to the
+network used by the NWC connection and pay it.
+
 With the temporary 60-second polling interval, settlement should normally be
 detected within about one or two minutes after the payment is confirmed.
 
 The bot should send a private confirmation after settlement.
 
-The confirmation is sent only when the wallet reports an explicit settled or
-paid state for the exact tracked payment hash and amount, and returns a valid
-payment preimage whose SHA-256 matches that hash. A settled label by itself is
-not sufficient. Missing, malformed, or mismatched lookup data remains
-unmatched and does not produce a paid confirmation.
+The confirmation is sent only when the raw wallet lookup reports
+`state=settled` with a positive `settled_at` timestamp for the exact tracked
+payment hash and amount, and returns a payment preimage whose SHA-256 matches
+that hash. A preimage alone does not establish settlement: an unpaid invoice
+can already have one. The bot ignores the NWC SDK's derived `paid` flag.
+Missing, malformed, or mismatched lookup data does not produce a paid
+confirmation.
 
-This proof requirement protects the bot from incorrectly marking an invoice as
-paid when the NWC service returns an incomplete, stale, or incorrectly mapped
-lookup response.
+These requirements prevent a pending invoice with a known preimage from being
+mistaken for a payment.
 
 ## 5. Confirm the safety boundary
 
 The test must not:
 
 - Change any real member's payment status.
-- Change the November billing period.
+- Change any real billing period.
 - Send invoices or messages to members.
 - Send messages to groups.
 - Trigger normal payment reminders.
@@ -130,7 +138,7 @@ payment data remains in `data/payment_state.json`.
 After the test succeeds, edit the environment file again:
 
 ```bash
-sudo -u btcgdl nano /opt/btcgdl-message-bot/.env
+sudo -u botuser editor /opt/community-bot/.env
 ```
 
 Restore normal values:
@@ -143,8 +151,8 @@ PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS=300
 Restart the service:
 
 ```bash
-sudo systemctl restart btcgdl-message-bot
-sudo systemctl status btcgdl-message-bot --no-pager
+sudo systemctl restart community-bot.service
+sudo systemctl status community-bot.service --no-pager
 ```
 
 Keep `PAYMENT_VERIFICATION_ENABLED=true` only when the NWC connection is ready

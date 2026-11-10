@@ -1,6 +1,7 @@
-# BTC GDL Message Bot
+# Community Message Bot
 
-A Telegram bot designed to manage community event reminders and automated AI-powered marketing for Bitcoin Guadalajara (BTC GDL).
+A Telegram bot for community event reminders, optional membership payments,
+and AI-assisted event promotions.
 
 ## Features
 
@@ -15,7 +16,7 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
 *   **Notification Preferences:** Users can choose event, coffee-host, and membership notification categories from `/suscripciones`.
 *   **Smart Formatting:** Professional HTML-formatted messages with 12h AM/PM time and clean date display.
 *   **Link Extraction:** Automatically finds registration links in the Google Calendar event description.
-*   **Timezone Aware:** Correctly handles and displays times for Guadalajara (`America/Mexico_City`).
+*   **Timezone Aware:** Handles scheduled and displayed times in the currently supported `America/Mexico_City` timezone.
 *   **Multi-Channel Broadcast:** One-click publishing to all community groups and individual subscribers.
 *   **Deduplication:** Ensures users don't receive redundant notifications for the same event and filters recurring series to show only the closest instance.
 *   **Private User Interaction:** Interactive user commands and menus are handled in private chats, while scheduled notifications continue reaching configured groups.
@@ -32,9 +33,10 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/yourusername/btcgdl-message-bot.git
-    cd btcgdl-message-bot
+    git clone https://github.com/ORG/REPOSITORY.git community-bot
+    cd community-bot
     ```
+    Replace `ORG/REPOSITORY` with the repository you are deploying.
 
 2.  **Create and activate a virtual environment:**
     ```bash
@@ -60,7 +62,7 @@ A Telegram bot designed to manage community event reminders and automated AI-pow
     *   `OPENAI_IMAGE_MODEL`: Flyer image model (`gpt-image-1-mini`).
     *   `OPENAI_IMAGE_QUALITY`: Flyer quality (`medium`).
     *   `OPENAI_IMAGE_SIZE`: Flyer dimensions (`1024x1536`).
-    *   `EVENT_SAME_DAY_REMINDER_HOUR`: Same-day reminder hour in Guadalajara time (default `13`).
+    *   `EVENT_SAME_DAY_REMINDER_HOUR`: Same-day reminder hour in `America/Mexico_City` (default `13`).
     *   `EVENT_MORNING_REMINDER_LEAD_HOURS`: Lead time for events before the same-day hour (default `2`).
 
 ### Membership Payment Configuration
@@ -132,7 +134,7 @@ For additional group privacy, open the bot's conversation with [@BotFather](http
 *   `/editevent`: Interactively edit an existing event.
 *   `/deleteevent`: Interactively delete an event from the calendar.
 *   `/draft`: Manually trigger a promo generation for an upcoming event.
-*   `/manualpromo AAAA-MM-DD HH:MM | Title | Location | Publication text`: Stage an existing flyer for scheduled subscriber reminders, then upload the flyer as a photo. Example: `/manualpromo 2026-10-20 18:00 | Forks Meetup | Community Space | Publication text`.
+*   `/manualpromo AAAA-MM-DD HH:MM | Title | Location | Publication text`: Stage an existing flyer for scheduled subscriber reminders, then upload the flyer as a photo. Example: `/manualpromo 2027-05-20 18:00 | Community Meetup | Community Center | Publication text`.
     The final preview and delivery caption preserve the publication text and append the formatted Spanish date, time, and location when those details are not already included.
     Links found in the publication text are moved to the end of the caption, after the event details.
     The preview includes **🧪 Enviar prueba**, which sends the flyer only to the administrator's DM without changing reminder state.

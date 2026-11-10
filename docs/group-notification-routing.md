@@ -30,11 +30,12 @@ Run these commands from the private administrator chat:
 
 ```text
 /groupnotifications
-/groupnotifications add events -100123456789
-/groupnotifications remove events -100123456789
-/groupnotifications add payments -100123456789
+/groupnotifications add events <GROUP_CHAT_ID>
+/groupnotifications remove events <GROUP_CHAT_ID>
+/groupnotifications add payments <GROUP_CHAT_ID>
 ```
 
+Replace `<GROUP_CHAT_ID>` with the numeric Telegram chat ID of your group.
 The list command shows stored group names, usernames when available, numeric
 IDs, and every category assignment. The command also accepts `eventos` and
 `pagos` as category aliases.

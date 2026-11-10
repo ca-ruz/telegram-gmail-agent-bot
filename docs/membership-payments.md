@@ -12,7 +12,7 @@ PAYMENT_ADMIN_ID=telegram_user_id_for_the_payment_admin
 MEMBERS_FILE=data/members.json
 MEMBERSHIP_PLANS_FILE=data/membership_plans.json
 PAYMENT_STATE_FILE=data/payment_state.json
-MEMBERS_GROUP_ID=-1001234567890
+MEMBERS_GROUP_ID=0
 PAYMENT_REMINDER_HOUR=9
 PAYMENT_ADVANCE_REMINDER_DAYS=3
 PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS=2
@@ -32,7 +32,8 @@ PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS=300
 `TELEGRAM_ADMIN_ID` is the primary administrator. That account and
 `PAYMENT_ADMIN_ID` may manage payment records. `MEMBERS_GROUP_ID` is the one
 Telegram group that receives anonymous public payment reminders. It is not the
-same as the general broadcast-group list.
+same as the general broadcast-group list. Replace `0` with your group's
+numeric Telegram chat ID before enabling public payment reminders.
 
 The reminder hour uses `America/Mexico_City`. The payment and member JSON files
 are runtime data and must remain outside Git.
@@ -87,9 +88,12 @@ Use this command to inspect the current result:
 ```
 
 The bot sends a private success message only after settlement is
-cryptographically verified. The lookup must contain the exact payment hash and
-amount, an explicit settled or paid state, and a payment preimage whose
-SHA-256 matches the payment hash. A settled label by itself is not sufficient.
+verified. The raw wallet lookup must contain the exact payment hash and amount,
+`state=settled`, a positive `settled_at` timestamp, and a payment preimage
+whose SHA-256 matches the payment hash. The bot ignores the NWC SDK's derived
+`paid` flag because an unpaid invoice may already expose its preimage. Leave
+the test invoice unpaid through at least two verification polls and confirm it
+remains pending before paying it. See [the payment test guide](payment-test.md).
 
 A successful test does not mark any real member or billing period as paid, does
 not send a group message, and does not trigger member reminders. It only
@@ -182,7 +186,8 @@ MXN total, converts it to millisatoshis using the configured MXN-per-BTC
 provider, and creates or reuses one invoice per unpaid member and billing
 period in private reminders. A separate verification job checks pending invoices using
 `PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS`; it marks the matching period as
-paid only after NWC reports that exact invoice as settled. Wallet errors,
+paid only after the wallet reports that exact invoice as settled with a
+settlement timestamp and matching preimage. Wallet errors,
 expired invoices, and hash mismatches do not mark a member paid, and the manual
 `/payments` workflow remains available.
 The amount returned by NWC must match the amount calculated for that member and
@@ -221,15 +226,17 @@ Telegram IDs, payment amounts, or payment notes in public reminder text.
 
 ## Updating a Running Installation
 
-From the deployed checkout, as the service account or deployment user:
+From the deployed checkout, use the example service name from
+[the deployment guide](orange-pi-deployment.md), replacing it with the name
+used by your installation:
 
 ```bash
 git switch main
 git pull --ff-only origin main
 .venv/bin/pip install -r requirements.txt
-sudo systemctl restart btcgdl-message-bot
-sudo systemctl status btcgdl-message-bot --no-pager
-sudo journalctl -u btcgdl-message-bot -n 50 --no-pager
+sudo systemctl restart community-bot.service
+sudo systemctl status community-bot.service --no-pager
+sudo journalctl -u community-bot.service -n 50 --no-pager
 ```
 
 Do not overwrite `.env`, `data/members.json`, or `data/payment_state.json` while
