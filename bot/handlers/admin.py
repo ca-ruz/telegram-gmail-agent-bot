@@ -64,14 +64,20 @@ from core.membership_payments import (
     build_member,
     can_manage_payments,
     current_billing_period,
+    deliver_member_payment_invoice,
+    get_active_payment_invoice,
+    get_or_create_payment_invoice,
+    invoice_delivery_key,
     next_billing_period,
     next_member_id,
+    quote_member_payment_invoice,
     save_multi_period_payment_state,
     save_members,
     save_payment_state,
     synchronize_multi_period_payment_state,
     recheck_archived_payment_test_invoice,
 )
+from core.payment_delivery_policy import resolve_payment_delivery_policy
 from core.imported_events import (
     assign_imported_event_flyer,
     get_events_missing_flyers,
@@ -766,6 +772,263 @@ async def manage_members(
         "/members add | Nombre | Telegram ID | Plan | Cantidad\n"
         "/members update | member-id | Nombre | Telegram ID | Plan | Cantidad\n"
         "/members deactivate | member-id"
+    )
+
+
+def _member_invoice_target(member_id, state, config):
+    """Validate one current-period pilot target without changing payment state."""
+    members = state.get("members", {})
+    policy = resolve_payment_delivery_policy(config, members)
+    if policy.mode != "pilot" or not policy.allows_member(member_id):
+        return "❌ El miembro no coincide con el piloto configurado.", None
+    if not config.get("PAYMENT_VERIFICATION_ENABLED", False):
+        return "❌ La verificación automática de pagos está desactivada.", None
+
+    member = members.get(member_id)
+    if not isinstance(member, dict) or not member.get("active", True):
+        return "❌ El miembro no existe o está inactivo.", None
+    try:
+        telegram_id = int(member.get("telegram_id"))
+    except (TypeError, ValueError):
+        telegram_id = 0
+    if telegram_id <= 0:
+        return "❌ El miembro no tiene un Telegram ID válido.", None
+    if not is_notification_enabled(
+        state.get("notification_preferences"), telegram_id, "payments"
+    ):
+        return "❌ El miembro tiene desactivados los avisos de pagos.", None
+
+    period = current_billing_period()
+    payment_state = state.get("payment_state", {})
+    period_state = payment_state.get("periods", {}).get(period)
+    if not isinstance(period_state, dict):
+        return "❌ No hay estado de pagos para el periodo actual.", None
+    member_record = period_state.get("members", {}).get(member_id)
+    if not isinstance(member_record, dict):
+        return "❌ El miembro no está registrado en el periodo actual.", None
+    if member_record.get("status") == "paid":
+        return "❌ El miembro ya está marcado como pagado para el periodo actual.", None
+    invoice_history = member_record.get("payment_invoices", {})
+    if isinstance(invoice_history, dict) and any(
+        isinstance(invoice, dict) and invoice.get("state") == "settled"
+        for invoice in invoice_history.values()
+    ):
+        return "❌ Ya hay una factura liquidada en este periodo. Revisa /payments.", None
+    if get_active_payment_invoice(payment_state, period, member_id) is not None:
+        return "❌ Ya existe una factura pendiente o sin resolver para este periodo.", None
+
+    today = datetime.now(COFFEE_TIMEZONE).date()
+    delivery_key = invoice_delivery_key(period, today, member_id)
+    if delivery_key in period_state.get("personal_reminders_sent", {}):
+        return "❌ Ya se envió una factura a este miembro hoy.", None
+    return None, {
+        "member": member,
+        "period": period,
+        "period_state": period_state,
+        "telegram_id": telegram_id,
+        "delivery_key": delivery_key,
+    }
+
+
+async def member_invoice_test(
+    update,
+    context,
+    primary_admin_id,
+    payment_admin_id,
+    state,
+    config,
+):
+    """Preview one allowlisted member invoice and request administrator confirmation."""
+    if not can_manage_payments(
+        update.effective_user.id,
+        primary_admin_id,
+        payment_admin_id,
+    ):
+        return
+    if getattr(update.effective_chat, "type", None) != "private":
+        await update.message.reply_text("❌ Usa este comando en el chat privado.")
+        return
+
+    args = update.message.text.split()[1:]
+    if len(args) != 1:
+        await update.message.reply_text("Uso: /memberinvoice <member-id>")
+        return
+    member_id = args[0].strip()
+    error, target = _member_invoice_target(member_id, state, config)
+    if error:
+        await update.message.reply_text(error)
+        return
+
+    try:
+        amount_msat, pricing_snapshot = quote_member_payment_invoice(
+            target["member"],
+            state.get("membership_plans", {}),
+            config,
+        )
+    except Exception:
+        logger.exception("Could not quote targeted membership invoice.")
+        await update.message.reply_text(
+            "❌ No se pudo calcular el monto. No se creó ninguna factura."
+        )
+        return
+
+    context.user_data["member_invoice_quote"] = {
+        "member_id": member_id,
+        "period": target["period"],
+        "amount_msat": amount_msat,
+        "pricing_snapshot": pricing_snapshot,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    confirmation = (
+        "⚠️ Se creará una factura real para un miembro.\n\n"
+        f"Miembro: {target['member'].get('name', member_id)} ({member_id})\n"
+        f"Periodo: {target['period']}\n"
+        f"Plan: {pricing_snapshot['plan']} x {pricing_snapshot['quantity']}\n"
+        f"Precio: MXN {pricing_snapshot['amount_mxn']}\n"
+        f"Factura: {amount_msat / 1000:,.3f} sats ({amount_msat} msat)\n\n"
+        "Solo se enviará al miembro seleccionado. Confirma que los datos y el "
+        "monto sean correctos."
+    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "✅ Crear y enviar factura",
+                callback_data=f"member_invoice_confirm:{member_id}",
+            ),
+            InlineKeyboardButton(
+                "Cancelar",
+                callback_data=f"member_invoice_cancel:{member_id}",
+            ),
+        ]
+    ])
+    await update.message.reply_text(confirmation, reply_markup=keyboard)
+
+
+async def handle_member_invoice_confirmation(
+    update,
+    context,
+    primary_admin_id,
+    payment_admin_id,
+    state,
+    config,
+):
+    """Revalidate a pilot quote, then issue and privately deliver its invoice."""
+    query = update.callback_query
+    if not can_manage_payments(
+        query.from_user.id, primary_admin_id, payment_admin_id
+    ):
+        await query.answer("No tienes permisos para crear facturas.", show_alert=True)
+        return
+    if getattr(query.message.chat, "type", None) != "private":
+        await query.answer("Usa este comando en el chat privado.", show_alert=True)
+        return
+
+    action, member_id = query.data.split(":", 1)
+    quote = context.user_data.get("member_invoice_quote", {})
+    if quote.get("member_id") != member_id:
+        await query.answer(
+            "La confirmación expiró. Inicia el comando nuevamente.",
+            show_alert=True,
+        )
+        return
+    if action == "member_invoice_cancel":
+        context.user_data.pop("member_invoice_quote", None)
+        await query.answer("Factura cancelada.")
+        await query.edit_message_text("La factura no se creó ni se envió.")
+        return
+
+    created_at = datetime.fromisoformat(quote["created_at"])
+    if (datetime.now(timezone.utc) - created_at).total_seconds() > 600:
+        context.user_data.pop("member_invoice_quote", None)
+        await query.answer("La cotización expiró. Vuelve a iniciar el comando.", show_alert=True)
+        return
+    error, target = _member_invoice_target(member_id, state, config)
+    if error or target["period"] != quote.get("period"):
+        context.user_data.pop("member_invoice_quote", None)
+        await query.answer(
+            error or "Cambió el periodo. Inicia el comando nuevamente.",
+            show_alert=True,
+        )
+        return
+
+    try:
+        current_quote = quote_member_payment_invoice(
+            target["member"],
+            state.get("membership_plans", {}),
+            config,
+        )
+    except Exception:
+        logger.exception("Could not refresh targeted membership invoice quote.")
+        await query.answer("No se pudo validar el precio. No se creó factura.", show_alert=True)
+        return
+    if current_quote != (quote["amount_msat"], quote["pricing_snapshot"]):
+        context.user_data.pop("member_invoice_quote", None)
+        await query.answer("El precio cambió. Revisa la nueva cotización.", show_alert=True)
+        return
+
+    invoice, created = await get_or_create_payment_invoice(
+        state["payment_state"],
+        target["period"],
+        member_id,
+        config,
+        member=target["member"],
+        membership_plans=state.get("membership_plans", {}),
+        expected_pricing_snapshot=quote["pricing_snapshot"],
+    )
+    if invoice is None or not created:
+        context.user_data.pop("member_invoice_quote", None)
+        await query.answer(
+            "No se creó factura. Revisa el estado del miembro e inténtalo de nuevo.",
+            show_alert=True,
+        )
+        return
+
+    delivered = await deliver_member_payment_invoice(
+        context,
+        target["telegram_id"],
+        str(target["member"].get("name", member_id)),
+        target["period"],
+        "manual_pilot",
+        invoice,
+    )
+    if not delivered:
+        context.user_data.pop("member_invoice_quote", None)
+        await query.answer(
+            "Factura guardada, pero no se pudo entregar. No la recrees.",
+            show_alert=True,
+        )
+        await query.edit_message_text(
+            "La factura quedó guardada y no se pudo entregar. "
+            "Revisa el estado antes de reintentar."
+        )
+        return
+
+    target["period_state"].setdefault("personal_reminders_sent", {})[
+        target["delivery_key"]
+    ] = datetime.now(timezone.utc).isoformat()
+    context.user_data.pop("member_invoice_quote", None)
+    try:
+        save_multi_period_payment_state(
+            config["PAYMENT_STATE_FILE"],
+            state["payment_state"],
+            raise_on_error=True,
+        )
+    except Exception:
+        logger.exception("Could not persist targeted invoice delivery history.")
+        await query.answer(
+            "Factura enviada, pero no se guardó el historial de entrega. No reintentes.",
+            show_alert=True,
+        )
+        await query.edit_message_text(
+            "La factura fue enviada y su registro de pago está guardado, pero no se "
+            "pudo guardar el historial de entrega. Verifica /payments antes de actuar."
+        )
+        return
+    await query.answer("Factura enviada solo al miembro seleccionado.")
+    await query.edit_message_text(
+        f"Factura enviada a {target['member'].get('name', member_id)} "
+        f"({member_id}) para {target['period']}. "
+        "El verificador automático confirmará el pago."
     )
 
 

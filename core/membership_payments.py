@@ -688,6 +688,7 @@ async def get_or_create_payment_invoice(
     now=None,
     member=None,
     membership_plans=None,
+    expected_pricing_snapshot=None,
 ):
     """Return a reusable invoice, creating and persisting one when necessary."""
     settings = _payment_invoice_settings(config)
@@ -717,6 +718,11 @@ async def get_or_create_payment_invoice(
             config,
             now=now,
         )
+        if (
+            expected_pricing_snapshot is not None
+            and pricing_snapshot != expected_pricing_snapshot
+        ):
+            return None, False
         invoice = await NwcInvoiceClient(connection_uri).make_invoice(
             amount_msat=amount_msat,
             description=(
@@ -759,6 +765,11 @@ async def get_or_create_payment_invoice(
         member_id,
     )
     return get_active_payment_invoice(payment_state, period, member_id), True
+
+
+def quote_member_payment_invoice(member, membership_plans, config, now=None):
+    """Return the exact amount and pricing snapshot used for an invoice quote."""
+    return _member_invoice_pricing(member, membership_plans, config, now=now)
 
 
 def _invoice_status_timestamp(value, fallback=None):
@@ -1354,7 +1365,12 @@ def format_personal_payment_reminder(member_name, period, stage, invoice=None):
     """Build a private payment reminder for one unpaid member."""
     month_label = format_payment_period(period)
     greeting = f"Hola, {member_name}.\n\n"
-    if stage == "overdue_5d":
+    if stage == "manual_pilot":
+        message = (
+            f"{greeting}⚡ Factura de membresía de {month_label}.\n"
+            "Paga esta factura para completar el periodo indicado."
+        )
+    elif stage == "overdue_5d":
         message = (
             f"{greeting}💳 Pago de membresía de {month_label}: sigue pendiente.\n"
             "Ponte al corriente cuando puedas."
@@ -1570,8 +1586,15 @@ def _personal_reminder_key(period, stage, local_date, member_id):
     return f"{period}:{stage}:{member_id}"
 
 
+def invoice_delivery_key(period, local_date, member_id):
+    """Build a same-day deduplication key shared by command and scheduler."""
+    return f"{period}:invoice:{local_date}:{member_id}"
+
+
 def _payment_group_ids(config, state):
     """Return configured groups that receive payment reminders."""
+    if not config.get("PAYMENT_GROUP_BROADCASTS_ENABLED", False):
+        return set()
     configured_group_id = config.get("MEMBERS_GROUP_ID", 0)
     if "group_notification_categories" in state:
         return get_group_targets(state, "payments")
@@ -1579,6 +1602,59 @@ def _payment_group_ids(config, state):
         return {int(configured_group_id)} if configured_group_id else set()
     except (TypeError, ValueError):
         return set()
+
+
+def _payment_broadcasts_enabled(config, policy):
+    """Require both full delivery and explicit public-message consent."""
+    return policy.allows_broadcasts and config.get(
+        "PAYMENT_GROUP_BROADCASTS_ENABLED", False
+    )
+
+
+async def deliver_member_payment_invoice(
+    context,
+    telegram_id,
+    member_name,
+    period,
+    stage,
+    invoice,
+):
+    """Send one member's invoice using the production QR/text fallback path."""
+    message_text = format_personal_payment_invoice_message(
+        member_name,
+        period,
+        stage,
+        invoice,
+    )
+    try:
+        send_photo = getattr(context.bot, "send_photo", None)
+        if send_photo is None:
+            raise RuntimeError("Telegram bot does not support photo delivery")
+        await send_photo(
+            chat_id=telegram_id,
+            photo=build_invoice_qr(_invoice_field(invoice, "invoice")),
+            caption=message_text,
+        )
+        return True
+    except Exception:
+        logger.exception(
+            "Failed to send membership invoice QR to %s for %s; using text fallback.",
+            telegram_id,
+            period,
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=telegram_id,
+                text=message_text,
+            )
+            return True
+        except Exception:
+            logger.exception(
+                "Failed to send membership invoice to %s for %s.",
+                telegram_id,
+                period,
+            )
+            return False
 
 
 async def _check_multi_period_payment_reminders(context, config, state, now, policy):
@@ -1609,7 +1685,9 @@ async def _check_multi_period_payment_reminders(context, config, state, now, pol
     state_changed = False
     public_error = None
     payment_group_ids = (
-        _payment_group_ids(config, state) if policy.allows_broadcasts else set()
+        _payment_group_ids(config, state)
+        if _payment_broadcasts_enabled(config, policy)
+        else set()
     )
     public_entries = []
     for schedule in schedules:
@@ -1710,7 +1788,12 @@ async def _check_multi_period_payment_reminders(context, config, state, now, pol
                 local_date,
                 member_id,
             )
-            if reminder_key in personal_reminders:
+            invoice_key = invoice_delivery_key(
+                period,
+                local_date,
+                member_id,
+            )
+            if reminder_key in personal_reminders or invoice_key in personal_reminders:
                 continue
             personal_deliveries.setdefault(telegram_id, []).append({
                 "member_id": member_id,
@@ -1740,6 +1823,7 @@ async def _check_multi_period_payment_reminders(context, config, state, now, pol
                 invoices[entry["period"]] = invoice
 
         delivered_keys = set()
+        invoice_delivered_keys = set()
         text_only_entries = []
         for entry in entries:
             invoice = invoices.get(entry["period"])
@@ -1751,41 +1835,17 @@ async def _check_multi_period_payment_reminders(context, config, state, now, pol
                 text_only_entries.append(entry)
                 continue
 
-            message_text = format_personal_payment_invoice_message(
+            delivered = await deliver_member_payment_invoice(
+                context,
+                telegram_id,
                 member_name,
                 entry["period"],
                 entry["stage"],
                 invoice,
             )
-            try:
-                send_photo = getattr(context.bot, "send_photo", None)
-                if send_photo is None:
-                    raise RuntimeError("Telegram bot does not support photo delivery")
-                await send_photo(
-                    chat_id=telegram_id,
-                    photo=build_invoice_qr(_invoice_field(invoice, "invoice")),
-                    caption=message_text,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to send membership invoice QR to %s for %s; "
-                    "using text fallback.",
-                    telegram_id,
-                    entry["period"],
-                )
-                try:
-                    await context.bot.send_message(
-                        chat_id=telegram_id,
-                        text=message_text,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to send membership invoice to %s for %s.",
-                        telegram_id,
-                        entry["period"],
-                    )
-                    continue
-            delivered_keys.add(entry["key"])
+            if delivered:
+                delivered_keys.add(entry["key"])
+                invoice_delivered_keys.add(entry["key"])
 
         if text_only_entries:
             try:
@@ -1812,10 +1872,18 @@ async def _check_multi_period_payment_reminders(context, config, state, now, pol
                 entry["period_state"]["personal_reminders_sent"][entry["key"]] = (
                     now.astimezone(timezone.utc).isoformat()
                 )
+                if entry["key"] in invoice_delivered_keys:
+                    entry["period_state"]["personal_reminders_sent"][
+                        invoice_delivery_key(
+                            entry["period"],
+                            local_date,
+                            entry["member_id"],
+                        )
+                    ] = now.astimezone(timezone.utc).isoformat()
                 state_changed = True
 
     payment_admin_id = _normalize_user_id(config.get("PAYMENT_ADMIN_ID"))
-    if payment_admin_id is not None and policy.allows_broadcasts:
+    if payment_admin_id is not None and _payment_broadcasts_enabled(config, policy):
         delay_hours = config.get("PAYMENT_ADMIN_FOLLOWUP_DELAY_HOURS", 2)
         try:
             delay_hours = int(delay_hours)
@@ -1889,7 +1957,9 @@ async def check_payment_reminders(context, config, state, now=None):
     period_state = payment_state
 
     payment_group_ids = (
-        _payment_group_ids(config, state) if policy.allows_broadcasts else set()
+        _payment_group_ids(config, state)
+        if _payment_broadcasts_enabled(config, policy)
+        else set()
     )
 
     public_reminders = period_state.setdefault("public_reminders_sent", {})
@@ -1975,7 +2045,7 @@ async def check_payment_reminders(context, config, state, now=None):
                 state_changed = True
 
     payment_admin_id = _normalize_user_id(config.get("PAYMENT_ADMIN_ID"))
-    if payment_admin_id is not None and policy.allows_broadcasts:
+    if payment_admin_id is not None and _payment_broadcasts_enabled(config, policy):
         followups = period_state.setdefault("payment_admin_followups_sent", {})
         if not isinstance(followups, dict):
             followups = {}

@@ -101,6 +101,7 @@ def _config(tmp_path, mode="pilot", allowlist="member-001"):
         "PAYMENT_REMINDER_HOUR": 9,
         "PAYMENT_ADMIN_ID": 777,
         "MEMBERS_GROUP_ID": -100123,
+        "PAYMENT_GROUP_BROADCASTS_ENABLED": True,
     }
 
 

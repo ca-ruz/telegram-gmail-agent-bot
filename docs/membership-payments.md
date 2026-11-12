@@ -121,6 +121,56 @@ workflow.
 Changing from `pilot` to `off` does not turn on full delivery. Selecting
 `full` with a non-empty pilot allowlist is invalid and suppresses delivery.
 
+### Create One Real Member Invoice
+
+`/memberinvoice` is a production-invoice pilot, not a low-value test. It
+creates an invoice for the member's actual current-period plan and quantity,
+using the current MXN/BTC rate. The member is responsible for the full quoted
+amount if they pay it. Use `/paymenttest` first to test NWC connectivity with
+the isolated, capped test invoice.
+
+To prepare one real member pilot:
+
+1. Set `PAYMENT_DELIVERY_MODE=pilot`,
+   `PAYMENT_PILOT_MEMBER_IDS=<one-member-id>`, and
+   `PAYMENT_VERIFICATION_ENABLED=true`. Keep the NWC URI private.
+2. Confirm the allowlisted member has agreed to receive an invoice. Verify
+   their active status, Telegram ID, payment-notification preference, plan,
+   quantity, current-period payment status, and configured plan price.
+3. As the primary or payment administrator, open a private chat with the bot
+   and run:
+
+   ```text
+   /memberinvoice member-001
+   ```
+
+4. Review the member ID, billing period, plan, MXN price, and exact sats/msat
+   quote. The command does not create an invoice until you confirm. The
+   confirmation expires after ten minutes; if the quote changes, start again
+   and review the new amount.
+5. After confirmation, the bot creates or records one real invoice and sends
+   it privately to that member. No payment-group or payment-administrator
+   reminder is sent by this command.
+6. Verify the saved invoice and delivery record with `/payments` and inspect
+   the service logs without exposing the NWC URI. Leave the invoice unpaid
+   through at least two verifier polls. It must remain unpaid; after the
+   member actually pays, the normal verifier must mark only that member and
+   period paid.
+
+The command refuses non-allowlisted, inactive, paid, opted-out, or otherwise
+ineligible members, and refuses a member-period with an existing pending,
+unresolved, settled, or already-delivered invoice. If Telegram delivery fails
+after invoice creation, the invoice remains recorded. Do not rerun the command
+or create a replacement until you inspect `/payments` and reconcile the
+existing invoice. Do not manually mark the member paid based only on a message,
+screenshot, or claimed payment; use the verified settlement state.
+
+After the pilot, keep delivery in `off` or `pilot` while reviewing its
+results. Passing one member's test is not itself authorization to invoice
+everyone. Enabling `full` delivery requires a separate operational decision:
+clear the pilot allowlist, confirm member consent and all roster/pricing data,
+then monitor the first scheduled delivery and verification cycle.
+
 ## Testing NWC Payment Automation
 
 Before allowing the bot to create invoices for members, the primary
