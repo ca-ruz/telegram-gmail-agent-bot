@@ -490,14 +490,52 @@ def test_invoice_creation_rejects_unexpected_amount(monkeypatch, tmp_path):
     ]
 
 
-def test_settled_invoice_with_wrong_amount_stays_unpaid(monkeypatch, tmp_path):
-    """A conflicting settled amount cannot confirm the member payment."""
+def test_settled_invoice_with_amount_discrepancy_is_paid_with_valid_proof(
+    monkeypatch, tmp_path, caplog
+):
+    """A lookup amount discrepancy does not override verified settlement."""
     FakeNwcInvoiceClient.calls = []
     FakeNwcInvoiceClient.status = NwcInvoiceStatus(
         payment_hash=TEST_PAYMENT_HASH,
         state="settled",
-        amount_msat=1_000,
+        amount_msat=24_288,
         settled_at=1_800_000_100,
+        preimage=TEST_PAYMENT_PREIMAGE,
+    )
+    monkeypatch.setattr(
+        membership_payments,
+        "NwcInvoiceClient",
+        FakeNwcInvoiceClient,
+    )
+    state = {"payment_state": _invoice_state()}
+
+    asyncio.run(
+        check_payment_invoice_status(
+            _config(tmp_path),
+            state,
+            now=datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    member = state["payment_state"]["periods"]["2026-11"]["members"][
+        "member-001"
+    ]
+    assert member["status"] == "paid"
+    assert member["payment_invoices"][TEST_PAYMENT_HASH]["state"] == "settled"
+    assert "NWC lookup amount differs for settled membership invoice" in caplog.text
+
+
+def test_settled_invoice_amount_discrepancy_still_requires_valid_preimage(
+    monkeypatch, tmp_path
+):
+    """A mismatched lookup amount cannot bypass cryptographic settlement proof."""
+    FakeNwcInvoiceClient.calls = []
+    FakeNwcInvoiceClient.status = NwcInvoiceStatus(
+        payment_hash=TEST_PAYMENT_HASH,
+        state="settled",
+        amount_msat=24_288,
+        settled_at=1_800_000_100,
+        preimage="11" * 32,
     )
     monkeypatch.setattr(
         membership_payments,

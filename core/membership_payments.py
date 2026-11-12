@@ -790,17 +790,26 @@ def _normalized_invoice_status(status):
     return state if state in PAYMENT_INVOICE_STATES else "unmatched"
 
 
-def _invoice_status_matches(status, payment_hash, amount_msat):
-    """Return whether an NWC status identifies the tracked invoice exactly."""
+def _invoice_status_hash_matches(status, payment_hash):
+    """Return whether an NWC status identifies the tracked payment hash."""
     returned_hash = str(getattr(status, "payment_hash", ""))
+    return returned_hash == str(payment_hash)
+
+
+def _invoice_status_amount_matches(status, amount_msat):
+    """Return whether an NWC status reports the expected invoice amount."""
     returned_amount = _normalize_invoice_integer(
         getattr(status, "amount_msat", None)
     )
     expected_amount = _normalize_invoice_integer(amount_msat)
-    return returned_hash == str(payment_hash) and (
-        returned_amount is not None
-        and returned_amount == expected_amount
-    )
+    return returned_amount is not None and returned_amount == expected_amount
+
+
+def _invoice_status_matches(status, payment_hash, amount_msat):
+    """Return whether an NWC status matches both invoice identity and amount."""
+    return _invoice_status_hash_matches(
+        status, payment_hash
+    ) and _invoice_status_amount_matches(status, amount_msat)
 
 
 def _invoice_status_has_settlement_proof(status, payment_hash):
@@ -918,10 +927,14 @@ async def check_payment_invoice_status(config, state, now=None):
                     continue
 
                 status_state = _normalized_invoice_status(status)
-                if not _invoice_status_matches(
-                    status,
-                    payment_hash,
-                    invoice.get("amount_msat"),
+                hash_matches = _invoice_status_hash_matches(
+                    status, payment_hash
+                )
+                amount_matches = _invoice_status_amount_matches(
+                    status, invoice.get("amount_msat")
+                )
+                if not hash_matches or (
+                    status_state != "settled" and not amount_matches
                 ):
                     status_state = "unmatched"
                 elif status_state == "settled" and not _invoice_status_has_settlement_proof(
@@ -933,6 +946,16 @@ async def check_payment_invoice_status(config, state, now=None):
                         "keeping the invoice unmatched."
                     )
                     status_state = "unmatched"
+                elif status_state == "settled" and not amount_matches:
+                    logger.warning(
+                        "NWC lookup amount differs for settled membership invoice "
+                        "for %s in %s (expected=%s msat, returned=%s msat); "
+                        "accepting only after hash and settlement proof validation.",
+                        member_id,
+                        period,
+                        invoice.get("amount_msat"),
+                        getattr(status, "amount_msat", None),
+                    )
                 elif status_state == "failed":
                     status_state = "unmatched"
                 if status_state == "pending" and _invoice_is_expired(
