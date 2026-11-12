@@ -48,7 +48,11 @@ from tools.local.data_manager import load_json
 
 async def check_payment_reminders(context, config, state, now=None):
     """Run existing reminder expectations under explicit full delivery."""
-    full_config = {**config, "PAYMENT_DELIVERY_MODE": "full"}
+    full_config = {
+        **config,
+        "PAYMENT_DELIVERY_MODE": "full",
+        "PAYMENT_GROUP_BROADCASTS_ENABLED": True,
+    }
     return await _check_payment_reminders(context, full_config, state, now=now)
 
 

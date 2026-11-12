@@ -28,6 +28,7 @@ def _config(tmp_path):
     """Build enabled invoice settings for scheduler tests."""
     return {
         "PAYMENT_DELIVERY_MODE": "full",
+        "PAYMENT_GROUP_BROADCASTS_ENABLED": True,
         "PAYMENT_STATE_FILE": str(tmp_path / "payment_state.json"),
         "PAYMENT_VERIFICATION_ENABLED": True,
         "PAYMENT_NWC_URI": NWC_URI,
