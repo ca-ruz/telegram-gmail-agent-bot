@@ -14,6 +14,7 @@ from bot.handlers.admin import (
     coffee_host, remind, manual_promo, linked_promo, linked_promo_done,
     linked_promo_cancel, handle_admin_photo, monthly_calendar, payments,
     handle_payment_review, handle_payment_period, handle_payment_status,
+    member_invoice_test, handle_member_invoice_confirmation,
     handle_status_detail,
     payment_test,
     manage_members,
@@ -346,6 +347,7 @@ def main():
             BotCommand("members", "Administrar miembros"),
             BotCommand("payments", "Revisar pagos"),
             BotCommand("paymenttest", "Probar pagos NWC"),
+            BotCommand("memberinvoice", "Probar una factura de miembro"),
         ]
         if CONFIG['ADMIN_ID']:
             await application.bot.set_my_commands(
@@ -357,6 +359,7 @@ def main():
                 public_commands + [
                     BotCommand("members", "Administrar miembros"),
                     BotCommand("payments", "Revisar pagos"),
+                    BotCommand("memberinvoice", "Probar una factura de miembro"),
                 ],
                 scope=BotCommandScopeChat(chat_id=CONFIG['PAYMENT_ADMIN_ID']),
             )
@@ -534,6 +537,14 @@ def main():
             state=STATE,
             config=CONFIG,
         )))
+    app.add_handler(CommandHandler("memberinvoice",
+        partial(
+            member_invoice_test,
+            primary_admin_id=CONFIG['ADMIN_ID'],
+            payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        )))
     
     # Callback Handlers
     app.add_handler(CallbackQueryHandler(
@@ -611,6 +622,15 @@ def main():
             config=CONFIG,
         ),
         pattern="^payment_toggle"))
+    app.add_handler(CallbackQueryHandler(
+        partial(
+            handle_member_invoice_confirmation,
+            primary_admin_id=CONFIG['ADMIN_ID'],
+            payment_admin_id=CONFIG['PAYMENT_ADMIN_ID'],
+            state=STATE,
+            config=CONFIG,
+        ),
+        pattern="^member_invoice_(?:confirm|cancel):"))
     app.add_handler(CallbackQueryHandler(
         partial(
             handle_status_detail,
