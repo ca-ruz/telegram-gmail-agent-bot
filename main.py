@@ -48,6 +48,7 @@ from core.membership_payments import (
     check_payment_test_invoice_status,
     check_payment_reminders,
     current_billing_period,
+    deliver_membership_settlement_notifications,
     load_members,
     load_multi_period_payment_state,
     next_billing_period,
@@ -385,6 +386,11 @@ def main():
 
     async def payment_verification_job(context):
         await check_payment_invoice_status(config=CONFIG, state=STATE)
+        await deliver_membership_settlement_notifications(
+            context,
+            config=CONFIG,
+            state=STATE,
+        )
         await check_payment_test_invoice_status(
             context,
             config=CONFIG,

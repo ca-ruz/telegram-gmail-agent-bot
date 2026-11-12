@@ -129,14 +129,16 @@ detected within about one or two minutes after the payment is confirmed.
 The bot should send a private confirmation after settlement.
 
 The confirmation is sent only when the raw wallet lookup matches the tracked
-payment hash and amount, returns a payment preimage whose SHA-256 matches the
-hash, and reports either `state=settled` or a positive `settled_at` when
-`state` is absent. An explicit `pending` state cannot be overridden by a
-timestamp or preimage. A preimage alone does not establish settlement: an
-unpaid invoice can already have one. The bot ignores the NWC SDK's derived
-`paid` flag. Missing, malformed, or mismatched lookup data does not produce a
-paid confirmation. An `unmatched` test is rechecked by later verification
-polls; `/paymenttest reset` archives it when a new test is needed.
+payment hash, returns a payment preimage whose SHA-256 matches the hash, and
+reports either `state=settled` or a positive `settled_at` when `state` is
+absent. A settled response may report a different amount; matching invoice
+identity and valid settlement proof are required, but exact amount equality is
+not. An explicit `pending` state cannot be overridden by a timestamp or
+preimage. A preimage alone does not establish settlement: an unpaid invoice
+can already have one. The bot ignores the NWC SDK's derived `paid` flag.
+Missing, malformed, or mismatched identity/proof data does not produce a paid
+confirmation. An `unmatched` test is rechecked by later verification polls;
+`/paymenttest reset` archives it when a new test is needed.
 
 These requirements prevent a pending invoice with a known preimage from being
 mistaken for a payment.

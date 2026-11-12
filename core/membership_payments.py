@@ -87,6 +87,61 @@ def _normalize_invoice_integer(value):
     return normalized if normalized >= 0 else None
 
 
+def _normalize_settlement_notifications(raw_notifications):
+    """Normalize durable private notification delivery state for an invoice."""
+    if not isinstance(raw_notifications, dict):
+        return None
+
+    try:
+        member_chat_id = int(raw_notifications.get("member_chat_id") or 0)
+    except (TypeError, ValueError):
+        member_chat_id = 0
+    member_chat_id = member_chat_id if member_chat_id > 0 else None
+
+    admin_chat_ids = []
+    raw_admin_ids = raw_notifications.get("admin_chat_ids", [])
+    if isinstance(raw_admin_ids, list):
+        for raw_admin_id in raw_admin_ids:
+            try:
+                admin_chat_id = int(raw_admin_id)
+            except (TypeError, ValueError):
+                continue
+            if admin_chat_id > 0 and admin_chat_id not in admin_chat_ids:
+                admin_chat_ids.append(admin_chat_id)
+
+    raw_admin_sent_at = raw_notifications.get("admin_sent_at", {})
+    admin_sent_at = {}
+    if isinstance(raw_admin_sent_at, dict):
+        for admin_chat_id in admin_chat_ids:
+            sent_at = raw_admin_sent_at.get(str(admin_chat_id))
+            admin_sent_at[str(admin_chat_id)] = (
+                sent_at if isinstance(sent_at, str) and sent_at else None
+            )
+
+    member_sent_at = raw_notifications.get("member_sent_at")
+    return {
+        "period": str(raw_notifications.get("period", "")),
+        "member_id": str(raw_notifications.get("member_id", "")),
+        "member_name": str(raw_notifications.get("member_name", "")),
+        "member_chat_id": member_chat_id,
+        "member_sent_at": (
+            member_sent_at
+            if isinstance(member_sent_at, str) and member_sent_at
+            else None
+        ),
+        "admin_chat_ids": admin_chat_ids,
+        "admin_sent_at": admin_sent_at,
+        "amount_mxn": (
+            str(raw_notifications["amount_mxn"])
+            if raw_notifications.get("amount_mxn") is not None
+            else None
+        ),
+        "amount_msat": _normalize_invoice_integer(
+            raw_notifications.get("amount_msat")
+        ),
+    }
+
+
 def _normalize_payment_invoice(raw_invoice):
     """Normalize one persisted invoice record without exposing credentials."""
     if not isinstance(raw_invoice, dict):
@@ -126,6 +181,9 @@ def _normalize_payment_invoice(raw_invoice):
         "settled_at": settled_at,
         "last_checked_at": last_checked_at,
         "pricing_snapshot": pricing_snapshot,
+        "settlement_notifications": _normalize_settlement_notifications(
+            raw_invoice.get("settlement_notifications")
+        ),
     }
 
 
@@ -790,17 +848,26 @@ def _normalized_invoice_status(status):
     return state if state in PAYMENT_INVOICE_STATES else "unmatched"
 
 
-def _invoice_status_matches(status, payment_hash, amount_msat):
-    """Return whether an NWC status identifies the tracked invoice exactly."""
+def _invoice_status_hash_matches(status, payment_hash):
+    """Return whether an NWC status identifies the tracked payment hash."""
     returned_hash = str(getattr(status, "payment_hash", ""))
+    return returned_hash == str(payment_hash)
+
+
+def _invoice_status_amount_matches(status, amount_msat):
+    """Return whether an NWC status reports the expected invoice amount."""
     returned_amount = _normalize_invoice_integer(
         getattr(status, "amount_msat", None)
     )
     expected_amount = _normalize_invoice_integer(amount_msat)
-    return returned_hash == str(payment_hash) and (
-        returned_amount is not None
-        and returned_amount == expected_amount
-    )
+    return returned_amount is not None and returned_amount == expected_amount
+
+
+def _invoice_status_matches(status, payment_hash, amount_msat):
+    """Return whether an NWC status matches both invoice identity and amount."""
+    return _invoice_status_hash_matches(
+        status, payment_hash
+    ) and _invoice_status_amount_matches(status, amount_msat)
 
 
 def _invoice_status_has_settlement_proof(status, payment_hash):
@@ -809,6 +876,44 @@ def _invoice_status_has_settlement_proof(status, payment_hash):
         str(payment_hash),
         getattr(status, "preimage", None),
     )
+
+
+def _build_settlement_notification_record(
+    period,
+    member_id,
+    member,
+    invoice,
+    config,
+):
+    """Capture private notification recipients and settled invoice details."""
+    admin_chat_ids = []
+    for admin_id in (
+        config.get("ADMIN_ID"),
+        config.get("PAYMENT_ADMIN_ID"),
+    ):
+        normalized_admin_id = _normalize_user_id(admin_id)
+        if normalized_admin_id and normalized_admin_id not in admin_chat_ids:
+            admin_chat_ids.append(normalized_admin_id)
+
+    pricing_snapshot = invoice.get("pricing_snapshot")
+    amount_mxn = (
+        pricing_snapshot.get("amount_mxn")
+        if isinstance(pricing_snapshot, dict)
+        else None
+    )
+    return _normalize_settlement_notifications({
+        "period": period,
+        "member_id": member_id,
+        "member_name": str(member.get("name", member_id)),
+        "member_chat_id": _normalize_user_id(member.get("telegram_id")),
+        "member_sent_at": None,
+        "admin_chat_ids": admin_chat_ids,
+        "admin_sent_at": {
+            str(admin_chat_id): None for admin_chat_id in admin_chat_ids
+        },
+        "amount_mxn": amount_mxn,
+        "amount_msat": invoice.get("amount_msat"),
+    })
 
 
 def _verified_test_invoice_state(status, invoice):
@@ -918,10 +1023,14 @@ async def check_payment_invoice_status(config, state, now=None):
                     continue
 
                 status_state = _normalized_invoice_status(status)
-                if not _invoice_status_matches(
-                    status,
-                    payment_hash,
-                    invoice.get("amount_msat"),
+                hash_matches = _invoice_status_hash_matches(
+                    status, payment_hash
+                )
+                amount_matches = _invoice_status_amount_matches(
+                    status, invoice.get("amount_msat")
+                )
+                if not hash_matches or (
+                    status_state != "settled" and not amount_matches
                 ):
                     status_state = "unmatched"
                 elif status_state == "settled" and not _invoice_status_has_settlement_proof(
@@ -933,6 +1042,16 @@ async def check_payment_invoice_status(config, state, now=None):
                         "keeping the invoice unmatched."
                     )
                     status_state = "unmatched"
+                elif status_state == "settled" and not amount_matches:
+                    logger.warning(
+                        "NWC lookup amount differs for settled membership invoice "
+                        "for %s in %s (expected=%s msat, returned=%s msat); "
+                        "accepting only after hash and settlement proof validation.",
+                        member_id,
+                        period,
+                        invoice.get("amount_msat"),
+                        getattr(status, "amount_msat", None),
+                    )
                 elif status_state == "failed":
                     status_state = "unmatched"
                 if status_state == "pending" and _invoice_is_expired(
@@ -971,6 +1090,25 @@ async def check_payment_invoice_status(config, state, now=None):
                     )
                     continue
 
+                if status_state == "settled" and invoice["state"] != "settled":
+                    settled_member = state.get("members", {}).get(
+                        str(member_id), {}
+                    )
+                    settled_invoice = (
+                        normalized_state["periods"][str(period)]["members"][
+                            str(member_id)
+                        ]["payment_invoices"][payment_hash]
+                    )
+                    settled_invoice["settlement_notifications"] = (
+                        _build_settlement_notification_record(
+                            str(period),
+                            str(member_id),
+                            settled_member if isinstance(settled_member, dict) else {},
+                            settled_invoice,
+                            config,
+                        )
+                    )
+
                 member_record = _replace_payment_member_record(
                     payment_state,
                     normalized_state,
@@ -989,6 +1127,130 @@ async def check_payment_invoice_status(config, state, now=None):
             config["PAYMENT_STATE_FILE"],
             payment_state,
         )
+    return result
+
+
+def _settlement_member_message(notification):
+    """Format the private payment confirmation sent to the member."""
+    return (
+        "✅ Confirmamos tu pago de membresía para "
+        f"{format_payment_period(notification['period'])}. ¡Gracias!"
+    )
+
+
+def _settlement_admin_message(notification):
+    """Format the private settlement alert sent to payment administrators."""
+    lines = [
+        "✅ Pago de membresía confirmado",
+        f"Miembro: {notification['member_name']} "
+        f"({notification['member_id']})",
+        f"Periodo: {format_payment_period(notification['period'])}",
+    ]
+    amount_msat = notification.get("amount_msat")
+    if amount_msat is not None:
+        amount_line = f"Monto: {amount_msat / 1000:,.3f} sats"
+        if notification.get("amount_mxn") is not None:
+            amount_line = (
+                f"Monto: MXN {notification['amount_mxn']} / {amount_line}"
+            )
+        lines.append(amount_line)
+    return "\n".join(lines)
+
+
+async def deliver_membership_settlement_notifications(context, config, state):
+    """Deliver queued private settlement notices and persist each success."""
+    result = {"sent": 0, "failed": 0}
+    payment_state = state.get("payment_state", {})
+    periods = payment_state.get("periods", {})
+    if not isinstance(periods, dict):
+        return result
+
+    for period, period_state in periods.items():
+        members = period_state.get("members", {})
+        if not isinstance(members, dict):
+            continue
+        for member_id, member_record in members.items():
+            if not isinstance(member_record, dict):
+                continue
+            invoices = member_record.get("payment_invoices", {})
+            if not isinstance(invoices, dict):
+                continue
+            for invoice in invoices.values():
+                if not isinstance(invoice, dict) or invoice.get("state") != "settled":
+                    continue
+                if member_record.get("status") != "paid":
+                    continue
+                notification = _normalize_settlement_notifications(
+                    invoice.get("settlement_notifications")
+                )
+                if notification is None:
+                    continue
+                invoice["settlement_notifications"] = notification
+
+                recipients = []
+                member_chat_id = notification.get("member_chat_id")
+                if member_chat_id and not notification.get("member_sent_at"):
+                    recipients.append((
+                        member_chat_id,
+                        _settlement_member_message(notification),
+                        "member",
+                    ))
+                for admin_chat_id in notification["admin_chat_ids"]:
+                    recipient_key = str(admin_chat_id)
+                    if not notification["admin_sent_at"].get(recipient_key):
+                        recipients.append((
+                            admin_chat_id,
+                            _settlement_admin_message(notification),
+                            recipient_key,
+                        ))
+
+                for chat_id, message, recipient_key in recipients:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=message,
+                        )
+                    except Exception:
+                        result["failed"] += 1
+                        logger.exception(
+                            "Could not deliver membership settlement notice "
+                            "to recipient %s for %s in %s.",
+                            recipient_key,
+                            member_id,
+                            period,
+                        )
+                        continue
+
+                    sent_at = datetime.now(timezone.utc).isoformat()
+                    if recipient_key == "member":
+                        previous_sent_at = notification["member_sent_at"]
+                        notification["member_sent_at"] = sent_at
+                    else:
+                        previous_sent_at = notification["admin_sent_at"].get(
+                            recipient_key
+                        )
+                        notification["admin_sent_at"][recipient_key] = sent_at
+                    result["sent"] += 1
+                    try:
+                        save_multi_period_payment_state(
+                            config["PAYMENT_STATE_FILE"],
+                            payment_state,
+                            raise_on_error=True,
+                        )
+                    except Exception:
+                        if recipient_key == "member":
+                            notification["member_sent_at"] = previous_sent_at
+                        else:
+                            notification["admin_sent_at"][recipient_key] = (
+                                previous_sent_at
+                            )
+                        result["failed"] += 1
+                        logger.exception(
+                            "Could not persist membership settlement notice "
+                            "delivery state for %s in %s.",
+                            member_id,
+                            period,
+                        )
     return result
 
 
