@@ -155,7 +155,8 @@ To prepare one real member pilot:
    the service logs without exposing the NWC URI. Leave the invoice unpaid
    through at least two verifier polls. It must remain unpaid; after the
    member actually pays, the normal verifier must mark only that member and
-   period paid.
+   period paid, then privately notify the member and configured payment
+   administrators.
 
 The command refuses non-allowlisted, inactive, paid, opted-out, or otherwise
 ineligible members, and refuses a member-period with an existing pending,
@@ -192,19 +193,29 @@ Use this command to inspect the current result:
 /paymenttest status
 ```
 
-The bot sends a private success message only after settlement is verified. The
-raw wallet lookup must match the exact payment hash and amount, include a
-preimage whose SHA-256 matches that hash, and report either `state=settled` or
-a positive `settled_at` when `state` is absent. An explicit `pending` state is
-never treated as paid. The bot ignores the NWC SDK's derived `paid` flag
-because an unpaid invoice may already expose its preimage. Leave the test
-invoice unpaid through at least two verification polls and confirm it remains
-pending before paying it. See [the payment test guide](payment-test.md).
+The bot sends private success messages only after settlement is verified. The
+raw wallet lookup must match the exact payment hash, include a preimage whose
+SHA-256 matches that hash, and report either `state=settled` or a positive
+`settled_at` when `state` is absent. An explicit `pending` state is never
+treated as paid. When the wallet reports a settled invoice, a difference in
+the returned amount does not block confirmation: the matching payment hash,
+valid preimage, and settlement evidence identify the tracked invoice. The bot
+ignores the NWC SDK's derived `paid` flag because an unpaid invoice may already
+expose its preimage. Leave the test invoice unpaid through at least two
+verification polls and confirm it remains pending before paying it. See [the
+payment test guide](payment-test.md).
 
 A successful test does not mark any real member or billing period as paid, does
 not send a group message, and does not trigger member reminders. It only
-confirms invoice creation, payment lookup, exact amount validation, settlement
-proof, and expiry handling. Keep the NWC URI private during the test.
+confirms invoice creation, payment lookup, settlement proof, and expiry
+handling. Keep the NWC URI private during the test.
+
+When a real membership invoice settles, the bot sends a private confirmation
+to the member and private alerts to the configured primary and payment
+administrators. The member message confirms the billing period. Administrator
+messages include the member identity, period, and recorded invoice amount.
+Successful recipient deliveries are recorded separately so a failed notice
+can be retried without resending notices already recorded as delivered.
 
 Private membership reminders include a QR code for each generated Lightning
 invoice. The QR caption includes the billing period, amount, expiration, and
@@ -298,14 +309,16 @@ available for retry after a restart.
 A separate verification job checks pending and unresolved invoices using
 `PAYMENT_VERIFICATION_POLL_INTERVAL_SECONDS`. It marks the matching period as
 paid only after the wallet reports that exact invoice as settled, or omits
-`state` but includes a settlement timestamp, with the correct amount and a
-matching preimage. Wallet errors, incomplete responses, and mismatches leave
-the invoice unresolved for a later check. Legacy invoices that were marked
-expired from their local timestamp alone are also rechecked. The manual
-`/payments` workflow remains available.
-The amount returned by NWC must match the amount calculated for that member and
-period. NWC amounts are handled in millisatoshis. Each invoice stores a pricing
-snapshot containing the plan, quantity, MXN total, and exchange rate used.
+`state` but includes a settlement timestamp, and provides a matching payment
+hash and preimage whose SHA-256 matches that hash. An explicit `pending` state
+cannot be overridden by a timestamp or preimage. A settled response may report
+a different amount: the wallet's amount is not required to equal the locally
+quoted millisatoshi amount once invoice identity and settlement proof match.
+Wallet errors or incomplete identity/proof data leave the invoice unresolved
+for a later check. Legacy invoices that were marked expired from their local
+timestamp alone are also rechecked. The manual `/payments` workflow remains
+available. Each invoice stores a pricing snapshot containing the plan,
+quantity, MXN total, and exchange rate used.
 The local expiry timestamp stops an old invoice from being sent again, but
 does not prove that it was unpaid. The bot checks the wallet before deciding
 whether a late settlement should mark the period paid. A replacement invoice
