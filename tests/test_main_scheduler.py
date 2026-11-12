@@ -154,7 +154,13 @@ def test_main_configures_public_and_admin_command_scopes():
     assert "website" not in admin_names
     assert "manualpromo" in admin_names
     assert "groupnotifications" in admin_names
+    assert "memberinvoice" in admin_names
     assert command_calls[1].kwargs["scope"].chat_id == 42
+    registered_commands = [
+        handler for handler in application.handlers
+        if getattr(handler, "commands", set()) == {"memberinvoice"}
+    ]
+    assert len(registered_commands) == 1
 
 
 def test_parse_env_bool_accepts_common_values(monkeypatch):
